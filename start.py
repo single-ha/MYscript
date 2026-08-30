@@ -227,7 +227,8 @@ def main():
     frozen = getattr(sys, "frozen", False)
 
     if not frozen:
-        no_elevate = os.environ.get(_ELEVATED_FLAG) == "1"
+        no_elevate =True
+        # no_elevate = os.environ.get(_ELEVATED_FLAG) == "1"
         deps_ok = _deps_present()
 
         # —— 依赖缺失：需要可见控制台跑 pip（仅首次）——
@@ -258,8 +259,8 @@ def main():
                   "  建议右键『启动.bat』→『以管理员身份运行』，或在 UAC 弹窗点『是』。\n")
 
         # 仍带控制台（如提权被拒、或本就以管理员+console 启动）：用 pythonw 去黑窗。
-        if _has_console() and _relaunch_windowless():
-            return
+        # if _has_console() and _relaunch_windowless():
+        #     return
 
     _launch_gui()
 

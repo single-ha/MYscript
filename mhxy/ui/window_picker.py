@@ -18,6 +18,7 @@ import time
 import customtkinter as ctk
 
 from . import theme as T
+from .data import data
 from ..core import config as cfg_mod
 from ..core import window as win_mod
 
@@ -36,7 +37,7 @@ class WindowPickerDialog(ctk.CTkToplevel):
         所选窗口里的序号写入 cfg.tasks.<captain_ns>.captain_index（如组队走 captain_ns="teaming"）。"""
         super().__init__(app)
         self.app = app
-        self.fonts = app.fonts
+        self.fonts = T.fonts
         self.on_done = on_done
         self.captain_ns = captain_ns
 
@@ -284,14 +285,13 @@ class WindowPickerDialog(ctk.CTkToplevel):
         else:
             self.targets["single_index"] = int(self._single_var.get())
         # 读盘再写，避免覆盖其它地方刚改的配置
-        cfg = cfg_mod.load_config()
+        cfg = data.cfg
         cfg["targets"] = {**cfg.get("targets", {}), **self.targets}
         if captain_index is not None:
             team_tc = cfg_mod.task_config(cfg, self.captain_ns)
             team_tc["captain_index"] = captain_index
             cfg_mod.set_task_config(cfg, self.captain_ns, team_tc)
         cfg_mod.save_config(cfg)
-        self.app.cfg = cfg
         self._close()
 
     def _cancel(self):

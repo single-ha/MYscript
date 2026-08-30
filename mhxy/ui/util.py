@@ -1,8 +1,11 @@
 ﻿import ctypes
 import os
+import traceback
+
 import customtkinter as ctk
 
 from . import theme as T
+from . import data
 
 from ..core import config as cfg_mod
 
@@ -19,6 +22,8 @@ HOTKEY_VK = {
     "Pause": 0x13, "ScrollLock": 0x91, "Home": 0x24, "End": 0x23,
     "Insert": 0x2D, "Delete": 0x2E, "`(~)": 0xC0,
 }
+
+app = None
 
 
 def card(master, **kw):
@@ -109,3 +114,62 @@ def load_thumb(template_rel, thumbs_list, max_h=40):
         return cimg
     except Exception:
         return None
+
+
+def open_window_picker(after=None, captain_ns=None):
+    """打开「选择窗口」对话框（各任务页共用）。关闭后刷新配置并强制刷新药丸。
+    captain_ns: 传入则多开模式下可在卡片上直接指定队长，写入 tasks.<captain_ns>.captain_index。"""
+    from .window_picker import WindowPickerDialog
+
+    def _done():
+        data._game_connected = None  # 选择可能变了，强制下次 tick 刷新药丸
+        if callable(after):
+            try:
+                after()
+            except Exception:
+                pass
+
+    try:
+        WindowPickerDialog(app, on_done=_done, captain_ns=captain_ns)
+    except Exception as e:
+        traceback.print_exc()
+        app.main_view.toast(f"打开窗口错误：{e}")
+        pass
+
+
+def calib_singleton(attr, only, fail_msg, exclude=None):
+    """打开一个标定窗并按 attr 去重：已开着就 lift 回来，不叠开多个写同一处 teaming 的窗
+  （叠开会「后关的覆盖先关的」，让用户以为没生效）。"""
+    existing = getattr(app, attr, None)
+    if existing is not None:
+        try:
+            if existing.winfo_exists():
+                existing.lift()
+                existing.focus_force()
+                return
+        except Exception:
+            pass
+    from .calibrate_dialog import CalibrateDialog
+
+    def _after():
+        setattr(app, attr, None)
+        app.refresh()
+
+    try:
+        setattr(app, attr, CalibrateDialog(app, task_name="teaming",
+                                           only=only, exclude=exclude, on_done=_after))
+    except Exception as e:
+        setattr(app, attr, None)
+        traceback.print_exc()
+        app.main_view.toast(f"{fail_msg}：{e}")
+
+
+def open_leader_gallery(on_done):
+    """打开「队长ID 库」：当前+最近3历史可切换（共享 teaming.leader_id，与通用页同步）。"""
+    from .leader_gallery import LeaderIdGallery
+    LeaderIdGallery.open(app, on_done)
+
+
+def get_screen_size():
+    sw, sh = app.winfo_screenwidth(), app.winfo_screenheight()
+    return sw, sh

@@ -67,7 +67,9 @@ def _deps_present():
 def ensure_deps():
     """依赖缺失时联网安装。注意：探测用 _deps_present()（廉价），这里只负责装。"""
     print("首次运行，正在安装依赖，请稍候（只需这一次）……\n")
-    ret = subprocess.call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    ret = subprocess.call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], env=env)
     if ret != 0:
         print("\n依赖安装失败：请确认已联网、Python 安装正常。")
         return False

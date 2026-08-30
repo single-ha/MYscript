@@ -51,11 +51,7 @@ SP_6 = 24  # 页面内容区左右外边距、侧栏左内距
 FONT_FAMILY = "Microsoft YaHei UI"
 MONO_FAMILY = "Consolas"
 
-fonts = []
-
-
-def init():
-    fonts = build_fonts()
+fonts = {}
 
 
 def build_fonts():
@@ -82,6 +78,10 @@ def resolve(token):
         mode = ctk.get_appearance_mode()  # "Light" / "Dark"
         return token[0] if mode == "Light" else token[1]
     return token
+
+
+def unbind(label_master, bind_id):
+    label_master.unbind("<Configure>", bind_id)
 
 
 def bind_wraplength(label, padding=4):
@@ -134,7 +134,8 @@ def bind_wraplength(label, padding=4):
         # 父容器 <Configure> 时子单元宽可能还没重排好，延到空闲再读 winfo_width 取到新值。
         label.after_idle(_apply)
 
-    master.bind("<Configure>", _on)
+    bind_id = master.bind("<Configure>", _on)
+    return master, bind_id
 
 
 def tune_scroll_speed(scrollable, pixels_per_notch=60):

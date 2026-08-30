@@ -142,7 +142,7 @@ class CalibrateDialog(ctk.CTkToplevel):
         「标定队长ID」按钮单独标）。only 与 exclude 写入的都是同一命名空间，多处入口天然同步。"""
         super().__init__(app)
         self.app = app
-        self.fonts = app.fonts
+        self.fonts = T.fonts
         self.on_done = on_done
         self.task_name = task_name
 

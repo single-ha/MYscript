@@ -42,14 +42,13 @@ class MainView:
 
     def __init__(self, master):
         super().__init__()
-        self.master = master
-        self.master.configure(fg_color=T.BG)
+        self.app = master
+        self.app.configure(fg_color=T.BG)
         win_mod.set_game_process(data.cfg.get("window_process", "MyGame_x64r.exe"))
         self.game_win = win_mod.GameWindow(data.cfg.get("window_title", "梦幻西游"))
 
         self._tick_count = 0
-        self._game_connected = None  # 缓存连接状态，只在变化时刷新药丸
-        self._locating = False  # 防止多个后台定位线程叠加 
+        self._locating = False  # 防止多个后台定位线程叠加
         self._current_key = None  # 记当前可见页，全局热键只控它
 
         self._build_sidebar()
@@ -61,7 +60,7 @@ class MainView:
         self._show("general")
 
     def _build_sidebar(self):
-        bar = ctk.CTkFrame(self.master, fg_color=T.SIDEBAR, corner_radius=0, width=210)
+        bar = ctk.CTkFrame(self.app, fg_color=T.SIDEBAR, corner_radius=0, width=210)
         bar.grid(row=0, column=0, sticky="nsew")
         bar.grid_propagate(False)
         bar.grid_rowconfigure(99, weight=1)
@@ -99,8 +98,8 @@ class MainView:
         p.grid(row=1, column=0, sticky="nsew")
         self.pages[key] = p
         # 新建的可运行页要补一次游戏连接状态（药丸初值为空，否则要等下一轮 tick 才更新）
-        if self._game_connected and hasattr(p, "update_game_pill"):
-            found, summary = self._game_connected
+        if data._game_connected and hasattr(p, "update_game_pill"):
+            found, summary = data._game_connected
             p.update_game_pill(found, summary)
         return p, True
 
@@ -128,7 +127,7 @@ class MainView:
             self.btn_appearance.configure(text="🌙  夜间模式")
 
     def _build_pages(self):
-        self.container = ctk.CTkFrame(self.master, fg_color="transparent")
+        self.container = ctk.CTkFrame(self.app, fg_color="transparent")
         self.container.grid(row=0, column=1, sticky="nsew", padx=24, pady=20)
         self.container.grid_rowconfigure(1, weight=1)
         self.container.grid_columnconfigure(0, weight=1)
@@ -205,23 +204,23 @@ class MainView:
     def update_game_pill(self):
         if self.pill_game is None:
             return
-        if self._game_connected and self._game_connected[0]:
-            self.pill_game.configure(text="● " + (self._game_connected[1] or "目标窗口已连接"),
+        if data._game_connected and data._game_connected[0]:
+            self.pill_game.configure(text="● " + (data._game_connected[1] or "目标窗口已连接"),
                                      fg_color=T.PILL_OK_BG, text_color=T.SUCCESS)
         else:
             self.pill_game.configure(text="○ 未检测到目标窗口", fg_color=T.SURFACE_2, text_color=T.TEXT_DIM)
 
     def _apply_game_state(self, found, summary=""):
         state = (found, summary)
-        if state == self._game_connected:
+        if state == data._game_connected:
             return  # 状态没变就不动控件，省掉无谓重绘
-        self._game_connected = state
+        data._game_connected = state
         self.update_game_pill()
 
     def _build_log_panel(self):
         """右侧常驻日志列：各页面/任务的日志统一汇到这里，按来源（秒装备/组队/整理背包…）打标签。
         以前每个页面各有一个日志框，功能一多就散乱；现在收敛成这一处，谁产生的日志靠行首来源标签区分。"""
-        panel = ctk.CTkFrame(self.master, fg_color=T.SIDEBAR, corner_radius=0, width=340)
+        panel = ctk.CTkFrame(self.app, fg_color=T.SIDEBAR, corner_radius=0, width=340)
         panel.grid(row=0, column=2, sticky="nsew")
         panel.grid_propagate(False)
         panel.grid_columnconfigure(0, weight=1)
@@ -280,18 +279,19 @@ class MainView:
         log.configure(state="disabled")
 
     def after(self, ms, func=None, *args):
-        self.master.after(ms, func, *args)
+        self.app.after(ms, func, *args)
 
     def _tick(self):
         # 抽日志：所有可运行任务页
-        # for k in self.RUNNABLE_KEYS:
-        #     p = self.pages.get(k)
-        #     if p:
-        #         p.pump()
+        if self._current_key:
+            p = self.pages.get(self._current_key)
+            if p:
+                p.pump()
         # 每约 1.2s 检测一次游戏窗口（放后台线程，避免阻塞 UI 造成滑动卡顿）
         self._tick_count += 1
         if self._tick_count % 8 == 0:
             self._kick_locate()
+            self._tick_count = 0
         self.after(150, self._tick)
 
     def _kick_locate(self):
@@ -374,13 +374,10 @@ class MainView:
 
     def toast(self, msg):
         """简单的右下角浮层提示。"""
-        lbl = ctk.CTkLabel(self.master, text=msg, font=T.fonts["body"], fg_color=T.ACCENT,
+        lbl = ctk.CTkLabel(self.app, text=msg, font=T.fonts["body"], fg_color=T.ACCENT,
                            text_color=T.ON_ACCENT, corner_radius=T.RADIUS_SM, padx=16, pady=8)
         lbl.place(relx=0.99, rely=0.97, anchor="se")
         self.after(16000, lbl.destroy)
-
-    def calib_singleton(self, attr, only, fail_msg, exclude=None):
-        self.master.calib_singleton(attr, only, fail_msg, exclude)
 
     @staticmethod
     def _compute_target_state(all_wins, targets):

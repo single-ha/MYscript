@@ -245,7 +245,7 @@ class GameWindow:
                 if r is None:
                     return False
             return abs(r[2] - int(w)) <= 4 and abs(r[3] - int(h)) <= 4
-        except Exception:
+        except Exception as e:
             return False
 
     # ---- 坐标换算 ----

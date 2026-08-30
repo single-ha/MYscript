@@ -11,10 +11,9 @@ class PageBase(ABC, ctk.CTkFrame):
         self.master = master
         self.main_view = main_view
         self.main_view = main_view
-        self.cfg = main_view.cfg
-        self.fonts = main_view.fonts
         self.configure(fg_color=T.BG)
-
+    def pump(self):
+        pass
     @abstractmethod
     def get_title(self):
         pass
