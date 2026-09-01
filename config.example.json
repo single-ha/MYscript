@@ -1,0 +1,527 @@
+{
+  "window_title": "梦幻西游",
+  "window_process": "MyGame_x64r.exe",
+  "input_backend": "sendinput",
+  "window_offset": [
+    0,
+    0
+  ],
+  "hotkey_stop": "ctrl+alt+F12",
+  "failsafe_corner": "top_right",
+  "appearance": "dark",
+  "targets": {
+    "multi": false,
+    "single_index": 0,
+    "multi_indices": [],
+    "max_windows": 3,
+    "switch_delay_sec": 0.15,
+    "base_size": null
+  },
+  "humanize": {
+    "speed": 2.0,
+    "snipe_speed": 5.0,
+    "click_radius": 4,
+    "px_per_step": 12,
+    "interval_jitter": 0.4,
+    "idle_chance": 0.0,
+    "idle_min_sec": 1.5,
+    "idle_max_sec": 5.0
+  },
+  "hotkeys": {
+    "close_panel": [
+      "esc"
+    ],
+    "open_bag": [
+      "alt",
+      "e"
+    ],
+    "open_task": [
+      "alt",
+      "y"
+    ],
+    "open_activity": [
+      "alt",
+      "c"
+    ],
+    "open_character": [
+      "alt",
+      "w"
+    ],
+    "open_skill": [
+      "alt",
+      "s"
+    ],
+    "open_summon": [
+      "alt",
+      "q"
+    ],
+    "open_team": [
+      "alt",
+      "t"
+    ],
+    "open_friend": [
+      "alt",
+      "f"
+    ],
+    "open_rank": [
+      "alt",
+      "r"
+    ],
+    "open_map": [
+      "alt",
+      "m"
+    ],
+    "open_minimap": [
+      "tab"
+    ],
+    "open_system": [
+      "alt",
+      "j"
+    ],
+    "open_mount": [
+      "alt",
+      "k"
+    ],
+    "open_guide": [
+      "alt",
+      "h"
+    ],
+    "open_shop": [
+      "alt",
+      "a"
+    ],
+    "open_welfare": [
+      "alt",
+      "d"
+    ],
+    "open_strengthen": [
+      "alt",
+      "v"
+    ],
+    "open_guild": [
+      "alt",
+      "b"
+    ],
+    "open_home": [
+      "alt",
+      "n"
+    ],
+    "open_helper": [
+      "alt",
+      "z"
+    ],
+    "open_chat": [
+      "alt",
+      "x"
+    ],
+    "hide_ui": [
+      "alt",
+      "p"
+    ],
+    "afk": [
+      "alt",
+      "g"
+    ],
+    "boss_key": [
+      "alt",
+      "l"
+    ],
+    "pin_window": [
+      "alt",
+      "u"
+    ]
+  },
+  "game_hotkeys": {
+    "field": {
+      "f7": "横竖屏切换",
+      "tab": "小地图",
+      "alt+q": "召唤灵",
+      "alt+w": "人物",
+      "alt+e": "包裹",
+      "alt+r": "排行",
+      "alt+t": "队伍",
+      "alt+y": "任务",
+      "alt+u": "置顶客户端",
+      "alt+p": "隐藏界面",
+      "alt+a": "商城",
+      "alt+s": "技能",
+      "alt+d": "福利",
+      "alt+f": "好友",
+      "alt+g": "挂机",
+      "alt+h": "指引",
+      "alt+j": "系统",
+      "alt+k": "坐骑",
+      "alt+l": "老板键",
+      "alt+z": "助战",
+      "alt+x": "聊天",
+      "alt+c": "活动",
+      "alt+v": "强化",
+      "alt+b": "帮派",
+      "alt+n": "家园",
+      "alt+m": "大地图"
+    },
+    "battle": {
+      "f7": "横竖屏切换",
+      "alt+q": "默认随机法术",
+      "alt+w": "法术",
+      "alt+e": "道具",
+      "alt+r": "召唤",
+      "alt+t": "保护",
+      "alt+y": "任务",
+      "alt+u": "置顶客户端",
+      "alt+a": "攻击",
+      "alt+s": "默认法术",
+      "alt+d": "防御",
+      "alt+f": "好友",
+      "alt+g": "捕捉",
+      "alt+h": "指引",
+      "alt+j": "系统",
+      "alt+k": "坐骑",
+      "alt+l": "老板键",
+      "alt+z": "特技",
+      "alt+x": "聊天",
+      "alt+c": "法宝",
+      "alt+v": "强化",
+      "alt+b": "帮派",
+      "alt+n": "家园"
+    }
+  },
+  "tasks": {
+    "sniper": {
+      "dry_run": true,
+      "loop": {
+        "refresh_interval_sec": 0.2,
+        "shelf_load_wait_sec": 1.2,
+        "shelf_load_min_sec": 0.15,
+        "match_threshold": 0.85,
+        "after_buy_cooldown_sec": 2.0
+      },
+      "regions": {
+        "listing": [
+          120,
+          200,
+          600,
+          360
+        ],
+        "category_button": [
+          40,
+          240,
+          96,
+          36
+        ],
+        "product_entry": [
+          180,
+          300,
+          160,
+          40
+        ],
+        "buy_button": [
+          760,
+          480,
+          90,
+          36
+        ],
+        "confirm_button": [
+          430,
+          360,
+          100,
+          40
+        ]
+      },
+      "watchlist": [
+        {
+          "name": "wujibie_xianglian",
+          "template": "templates/wujibie_xianglian.png",
+          "max_price": null
+        }
+      ]
+    },
+    "treasure_map": {
+      "dry_run": true,
+      "skip_collect": false,
+      "loop": {
+        "time_limit_min": 30,
+        "match_threshold": 0.85,
+        "tick_interval_sec": 0.6,
+        "still_min_sec": 0.3,
+        "still_wait_sec": 2.0,
+        "still_diff": 8.0,
+        "collect_idle_sec": 4.0,
+        "activity_timeout_sec": 30,
+        "dialog_timeout_sec": 30,
+        "collect_timeout_sec": 600,
+        "dig_timeout_sec": 120,
+        "scroll_step": -3,
+        "scroll_max_tries": 8,
+        "scroll_settle_sec": 0.35,
+        "scroll_reset_top": true,
+        "scroll_end_diff": 2.0,
+        "scroll_reset_max": 20,
+        "activity_columns": 2,
+        "max_stuck_recover": 3
+      },
+      "regions": {
+        "scene": [
+          0,
+          0,
+          1024,
+          768
+        ],
+        "activity_list": [
+          600,
+          200,
+          360,
+          420
+        ],
+        "bag_list": [
+          560,
+          220,
+          380,
+          360
+        ]
+      },
+      "templates": {
+        "flag_treasure_entry": "templates/tm_flag_treasure_entry.png",
+        "flag_join": "templates/tm_flag_join.png",
+        "flag_tingting": "templates/tm_flag_tingting.png",
+        "flag_battle": "templates/tm_flag_battle.png",
+        "flag_next_map": "templates/tm_flag_next_map.png",
+        "treasure_item": "templates/tm_treasure_item.png"
+      }
+    },
+    "escort": {
+      "dry_run": true,
+      "loop": {
+        "time_limit_min": 30,
+        "match_threshold": 0.85,
+        "tick_interval_sec": 0.5,
+        "max_escorts": 3,
+        "done_idle_sec": 6.0,
+        "dialog_timeout_sec": 60,
+        "confirm_timeout_sec": 10,
+        "escort_timeout_sec": 600,
+        "still_min_sec": 0.3,
+        "still_wait_sec": 2.0,
+        "scroll_step": -3,
+        "scroll_max_tries": 8,
+        "scroll_settle_sec": 0.35,
+        "scroll_reset_top": true,
+        "scroll_end_diff": 2.0,
+        "scroll_reset_max": 20,
+        "activity_columns": 2,
+        "max_stuck_recover": 3
+      },
+      "regions": {
+        "scene": [
+          0,
+          0,
+          1024,
+          768
+        ],
+        "activity_list": [
+          600,
+          200,
+          360,
+          420
+        ]
+      },
+      "templates": {
+        "escort_entry": "templates/tm_escort_entry.png",
+        "escort_join": "templates/tm_escort_join.png",
+        "escort_silver": "templates/tm_escort_silver.png",
+        "escort_confirm": "templates/tm_escort_confirm.png",
+        "escort_ongoing": "templates/tm_escort_ongoing.png",
+        "escort_battle": "templates/tm_escort_battle.png"
+      }
+    },
+    "secret_realm": {
+      "dry_run": true,
+      "loop": {
+        "time_limit_min": 30,
+        "match_threshold": 0.85,
+        "max_runs": 1,
+        "tick_interval_sec": 0.5,
+        "dialog_timeout_sec": 30,
+        "dungeon_select_wait_sec": 6,
+        "step_timeout_sec": 20,
+        "battle_timeout_sec": 1800,
+        "dungeon_enter_box": [
+          0.0,
+          0.5,
+          0.55,
+          1.0
+        ],
+        "still_min_sec": 0.3,
+        "still_wait_sec": 2.0,
+        "scroll_step": -3,
+        "scroll_max_tries": 8,
+        "scroll_settle_sec": 0.35,
+        "scroll_reset_top": true,
+        "scroll_end_diff": 2.0,
+        "scroll_reset_max": 20,
+        "activity_columns": 2,
+        "max_stuck_recover": 3
+      },
+      "regions": {
+        "scene": [
+          0,
+          0,
+          1024,
+          768
+        ],
+        "activity_list": [
+          600,
+          200,
+          360,
+          420
+        ]
+      },
+      "templates": {
+        "sr_entry": "templates/tm_sr_entry.png",
+        "sr_join": "templates/tm_sr_join.png",
+        "sr_select": "templates/tm_sr_select.png",
+        "sr_dungeon_enter": "templates/tm_sr_dungeon_enter.png",
+        "sr_confirm": "templates/tm_sr_confirm.png",
+        "sr_continue": "templates/tm_sr_continue.png",
+        "sr_challenge": "templates/tm_sr_challenge.png",
+        "sr_enter_battle": "templates/tm_sr_enter_battle.png",
+        "sr_leave": "templates/tm_sr_leave.png",
+        "sr_fail": "templates/tm_sr_fail.png",
+        "sr_battle": "templates/tm_sr_battle.png"
+      }
+    },
+    "teaming": {
+      "dry_run": false,
+      "captain_index": 0,
+      "loop": {
+        "match_threshold": 0.85,
+        "tick_interval_sec": 0.5,
+        "form_timeout_sec": 180,
+        "create_timeout_sec": 15,
+        "accept_timeout_sec": 90,
+        "find_leader_timeout_sec": 60,
+        "apply_timeout_sec": 15,
+        "scroll_step": -3,
+        "scroll_max_tries": 10,
+        "scroll_settle_sec": 0.35,
+        "scroll_reset_top": true,
+        "scroll_end_diff": 2.0,
+        "scroll_reset_max": 20,
+        "arrow_band_w": 80,
+        "arrow_offset_x": 28,
+        "max_stuck_recover": 3
+      },
+      "regions": {
+        "team_panel": [
+          600,
+          120,
+          380,
+          460
+        ],
+        "friend_list": [
+          600,
+          160,
+          360,
+          420
+        ]
+      },
+      "templates": {
+        "team_create": "templates/tm_team_create.png",
+        "team_apply": "templates/tm_team_apply.png",
+        "team_accept": "templates/tm_team_accept.png",
+        "team_apply_join": "templates/tm_team_apply_join.png",
+        "team_arrow": "templates/tm_team_arrow.png",
+        "leader_id": "templates/tm_leader_id.png"
+      },
+      "leader_id_history": [
+        { "slot": "templates/tm_leader_id_slot0.png", "label": "06-25 14:30" }
+      ],
+      "leader_id_active": 0
+    },
+    "organize_bag": {
+      "dry_run": true,
+      "loop": {
+        "match_threshold": 0.85,
+        "open_item_click": "right",
+        "action_settle_sec": 0.4,
+        "confirm_timeout_sec": 6,
+        "passes": 1,
+        "scroll_step": -3,
+        "scroll_max_tries": 30,
+        "scroll_settle_sec": 0.35,
+        "scroll_reset_top": true,
+        "scroll_end_diff": 2.0,
+        "scroll_reset_max": 20
+      },
+      "regions": {
+        "bag_list": null
+      },
+      "templates": {
+        "discard_button": null,
+        "sell_button": null,
+        "confirm_button": null,
+        "sort_button": null
+      },
+      "items": []
+    },
+    "dungeon": {
+      "selected": "taohaiqu"
+    },
+    "taohaiqu": {
+      "dry_run": true,
+      "skip_team": false,
+      "captain_index": 0,
+      "loop": {
+        "match_threshold": 0.85,
+        "npc_dialog_sec": 60,
+        "step_timeout_sec": 30,
+        "entry_skip_sec": 60,
+        "battle_timeout_sec": 600,
+        "enter_box": null,
+        "scroll_step": -3,
+        "scroll_max_tries": 8,
+        "scroll_settle_sec": 0.35,
+        "scroll_reset_top": true,
+        "scroll_end_diff": 2.0,
+        "scroll_reset_max": 20,
+        "activity_columns": 2
+      },
+      "regions": {
+        "scene": null,
+        "activity_list": null
+      },
+      "templates": {
+        "thq_entry": null,
+        "thq_join": null,
+        "thq_select": null,
+        "thq_enter": null,
+        "thq_skip": null,
+        "thq_task": null,
+        "thq_teleport": null,
+        "thq_opt1": null,
+        "thq_opt2": null,
+        "thq_opt3": null,
+        "thq_clock": null
+      }
+    },
+    "daily": {
+      "steps": [
+        {
+          "task": "treasure_map",
+          "enabled": true
+        },
+        {
+          "task": "escort",
+          "enabled": true
+        },
+        {
+          "task": "secret_realm",
+          "enabled": true
+        }
+      ],
+      "loop": {
+        "time_limit_min": 0
+      }
+    }
+  }
+}
