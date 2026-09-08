@@ -208,6 +208,8 @@ class GeneralPage(ctk.CTkFrame):
                      font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left").pack(
                          anchor="w", padx=16, pady=(8, 2))
         # 窗口枚举（getAllWindows）很慢、绝不能卡主线程：先放占位、后台线程枚举完再回主线程填。
+        # 每次重建卡片重置「空结果重试」计数（一次全新枚举失败重试有限次，不会死循环）。
+        self._enum_empty_retries = 0
         rows_holder = ctk.CTkFrame(c2, fg_color="transparent")
         rows_holder.pack(fill="x")
         ctk.CTkLabel(rows_holder, text="正在检测窗口…", font=self.fonts["body"],
@@ -335,7 +337,8 @@ class GeneralPage(ctk.CTkFrame):
         self._build_organize_card()
 
     def _kick_enum_windows(self, holder, base):
-        """后台枚举窗口，完成后回主线程把列表填进 holder。用 token 丢弃过期结果（连续切页/刷新时）。"""
+        """后台枚举窗口，完成后回主线程把列表填进 holder。用 token 丢弃过期结果（连续切页/刷新时）。
+        每次重建卡片都会重设空结果重试计数。"""
         cfg = self.cfg
         title = cfg.get("window_title", "梦幻西游")
         offset = cfg.get("window_offset", [0, 0])
@@ -356,19 +359,35 @@ class GeneralPage(ctk.CTkFrame):
         threading.Thread(target=work, daemon=True).start()
 
     def _fill_win_rows(self, holder, data, base, token):
-        """在主线程把枚举结果渲染进 holder。过期结果/控件已销毁则丢弃。"""
+        """在主线程把枚举结果渲染进 holder。过期结果/控件已销毁则丢弃。
+        空结果（开局时与 _kick_locate 的 getAllWindows 并发会瞬时读到空）自动重试几次再放弃，
+        不必等用户手动点「刷新」。"""
         if token is not getattr(self, "_enum_token", None):
             return
         try:
             if not holder.winfo_exists():
                 return
-            for w in holder.winfo_children():
-                w.destroy()
         except Exception:
             return
         if not data:
+            # 空结果多半是并发 getAllWindows 的瞬时抖动：稍后再试（最多 _enum_empty_retries 上限）
+            n = getattr(self, "_enum_empty_retries", 0)
+            if n < 3:
+                self._enum_empty_retries = n + 1
+                self.app.after(400, lambda: self._kick_enum_windows(holder, base))
+                return
+            try:
+                for w in holder.winfo_children():
+                    w.destroy()
+            except Exception:
+                pass
             ctk.CTkLabel(holder, text="没检测到游戏窗口，请先打开游戏再点「刷新」。",
                          font=self.fonts["body"], text_color=T.TEXT_DIM).pack(anchor="w", padx=16, pady=(2, 14))
+            return
+        try:
+            for w in holder.winfo_children():
+                w.destroy()
+        except Exception:
             return
         for i, (w, r) in enumerate(data):
             row = ctk.CTkFrame(holder, fg_color=T.SURFACE_2, corner_radius=T.RADIUS_SM)
