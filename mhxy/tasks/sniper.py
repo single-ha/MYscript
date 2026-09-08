@@ -121,7 +121,7 @@ class SniperTask(Task):
         if not wins:
             return []
         if multi:
-            return [ctx.make_child(w, f"号{i + 1}") for i, w in enumerate(wins)]
+            return [ctx.make_child(w, f"号{self._window_no(w, i)}") for i, w in enumerate(wins)]
         ctx.window = wins[0]        # 单开：直接操作选中的那个窗口（不再每轮 locate 选最大）
         return [ctx]
 

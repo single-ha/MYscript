@@ -43,8 +43,10 @@ S_ESCORTING = "ESCORTING"           # 运镖中：监控运镖中标志/对话�
 #   标定存盘按 templates/tm_<key>.png 命名，只按 key 区分，不区分任务）。
 _FLAG_KEYS = ["escort_entry", "escort_join", "escort_silver", "escort_confirm",
               "escort_ongoing", "escort_battle"]
+# 必备模板（缺失则 preflight 阻断）：escort_battle 虽不点它，但运镖结束判定要在战斗期暂停——
+# 不标它进战斗就被误判「运镖结束」，故必标。
 _REQUIRED_FLAGS = ["escort_entry", "escort_join", "escort_silver", "escort_confirm",
-                   "escort_ongoing"]
+                   "escort_ongoing", "escort_battle"]
 
 
 @register
@@ -57,7 +59,7 @@ class EscortTask(Task):
     CALIBRATION = {
         "regions": [
             ("scene", "主识别区", "留空=整个窗口当识别区(推荐)；对话框/战斗等标志都在这里找", True),
-            ("activity_list", "活动列表区域", "「活动」界面里那片列表，滚轮在此翻找「运镖」条目"),
+            # activity_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
         ],
         "templates": [
             ("escort_entry", "运镖入口", "活动列表里「运镖」那一条，框图标+文字、要独特"),
@@ -66,7 +68,7 @@ class EscortTask(Task):
             ("escort_confirm", "「确认」按钮", "点完「押送普通镖银」后再弹出的确认按钮，框按钮本身、要独特"),
             ("escort_ongoing", "「运镖中」标志", "运镖途中一直挂在屏幕上的标志（如镖银图标/运镖任务追踪条），"
                                               "只要它在就说明还在运镖、不会停。框它独特的部分"),
-            ("escort_battle", "战斗界面标志(可选)", "战斗独有的画面元素，用于避免战斗期被误判为运镖结束"),
+            ("escort_battle", "战斗界面标志", "战斗独有的画面元素。战斗期帧差会误判成运镖结束，不标它必误判——必标"),
         ],
         "watchlist": False,
     }
@@ -78,10 +80,10 @@ class EscortTask(Task):
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
 
-        # scene 留空=整窗检测，不再强制标定；活动列表区仍需标（滚轮翻找运镖条目）
+        # activity_list 属公共区域（全任务共用），在「通用」页标定；task_config 已把 tasks.shared 叠加进来，直接读即可
         for rk, label in [("activity_list", "活动列表区域")]:
             if not regions.get(rk):
-                problems.append(f"『{label}』未标定 —— 请先做标定")
+                problems.append(f"『{label}』未标定 —— 请到「通用」页点「标定（公共区域）」框选（所有任务共用）")
 
         for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
@@ -94,10 +96,6 @@ class EscortTask(Task):
         if not ctx.select_windows():
             problems.append(f"没找到/没选中目标窗口（标题含「{ctx.window.title_substr}」）"
                             "，请先打开游戏并在「选择窗口」里选好")
-
-        # 可选模板缺失只提示
-        if not templates.get("escort_battle") or vision.load_template(templates.get("escort_battle")) is None:
-            ctx.log("提示：可选模板『escort_battle』未标定，将降级靠帧差+超时推进（可靠性略降）。", level="warn")
 
         return (len(problems) == 0), problems
 
@@ -177,7 +175,7 @@ class EscortTask(Task):
         if not wins:
             return []
         if multi:
-            return [ctx.make_child(w, f"号{i + 1}") for i, w in enumerate(wins)]
+            return [ctx.make_child(w, f"号{self._window_no(w, i)}") for i, w in enumerate(wins)]
         ctx.window = wins[0]
         return [ctx]
 
@@ -188,6 +186,7 @@ class EscortTask(Task):
                 "escorts": 0,            # 本号已开始/进行中的趟数（首趟点押送银即 1）
                 "seen_ongoing": False,   # 本趟是否出现过「运镖中」标志（出现过才允许靠它消失判结束）
                 "gone_since": None,      # 「运镖中」标志消失起点
+                "no_dlg_since": None,    # 「仍在押、但标志消失且无新对话框」的起点（超 no_dialog_giveup_sec 判本号结束）
                 "t_trip": 0.0,          # 最近一次「明确在运镖/战斗/起步」的时间，用于单趟超时兜底
                 "t_diag": 0.0, "scrolls": 0, "recover": 0,
                 "done": False, "dead_logged": False}
@@ -308,6 +307,7 @@ class EscortTask(Task):
         """进入运镖监控前，重置该趟的「运镖中/结束」计时。"""
         rec["seen_ongoing"] = False
         rec["gone_since"] = None
+        rec["no_dlg_since"] = None
         rec["t_trip"] = time.time()
         self._goto(rec, S_ESCORTING)
 
@@ -320,6 +320,7 @@ class EscortTask(Task):
             → 持续 done_idle_sec 秒后判定本号运镖全部结束。
         既不会在「点完确认刚开始、人物还没动」时误停，也不会在两趟之间的空档误停。"""
         done_grace = loop.get("done_idle_sec", 6.0)
+        no_dlg_giveup = float(loop.get("no_dialog_giveup_sec", 90.0))
         per_trip_timeout = loop.get("escort_timeout_sec", 600)
         scene_rect = self._scene_rect(ctx, regions)
         cur = win_mod.grab(scene_rect)
@@ -348,25 +349,38 @@ class EscortTask(Task):
             if ongoing:
                 rec["seen_ongoing"] = True
             rec["gone_since"] = None
+            rec["no_dlg_since"] = None
             rec["t_trip"] = time.time()
         else:
             # 既没在运镖也没在战斗、也没对话框
+            now_t = time.time()
             if rec["seen_ongoing"] and rec["escorts"] >= self.max_escorts:
-                # 这趟运镖中标志出现过又消失了 + 已是最后一趟 + 没有新对话框 → 准备收尾
+                # 最后这一趟已开始过、标志消失且无新对话框 → 短时(6s)判结束
                 if rec["gone_since"] is None:
-                    rec["gone_since"] = time.time()
-                elif time.time() - rec["gone_since"] >= done_grace:
+                    rec["gone_since"] = now_t
+                elif now_t - rec["gone_since"] >= done_grace:
                     ctx.log("「运镖中」标志已消失且无更多对话框 → 本号运镖全部结束。", level="hit")
                     self._finish_escort(ctx, rec)
                     return
-            # 否则：要么还没开始（运镖中标志还没出现），要么还有次数要等下一个对话框 → 继续等
+            elif rec["seen_ongoing"] and no_dlg_giveup > 0:
+                # 还有剩余趟数：等下一趟「押送普通镖银」对话框重新弹出。
+                # 标志消失、对话框却迟迟不来 → 给个最大耐心（默认 90s），超了按本号结束，
+                # 免得「活动实际只剩 1 趟 / 对话框识别 miss / 卡住」时干等单趟超时(600s)。
+                if rec["no_dlg_since"] is None:
+                    rec["no_dlg_since"] = now_t
+                elif now_t - rec["no_dlg_since"] >= no_dlg_giveup:
+                    ctx.log(f"标志已消失且 {no_dlg_giveup:.0f}s 没等到下一趟对话框，按本号结束处理"
+                            f"（可调 loop.no_dialog_giveup_sec）。", level="warn")
+                    self._finish_escort(ctx, rec)
+                    return
+            # 否则：要么还没开始（运镖中标志还没出现），要么还在等下一趟对话框 → 继续等
 
-        self._diag_escorting(ctx, rec, ongoing, in_battle, done_grace)
+        self._diag_escorting(ctx, rec, ongoing, in_battle, done_grace, no_dlg_giveup)
         if time.time() - rec["t_trip"] > per_trip_timeout:
             ctx.log("长时间既无『运镖中』也无对话框，按本号结束处理。", level="warn")
             self._finish_escort(ctx, rec)
 
-    def _diag_escorting(self, ctx, rec, ongoing, in_battle, done_grace):
+    def _diag_escorting(self, ctx, rec, ongoing, in_battle, done_grace, no_dlg_giveup):
         """每 ~5s 打印一次该号运镖状态诊断。"""
         now = time.time()
         if now - rec["t_diag"] < 5.0:
@@ -377,9 +391,15 @@ class EscortTask(Task):
             st = "战斗中"
         elif not rec["seen_ongoing"]:
             st = "等运镖开始/过场"
-        else:
+        elif rec["escorts"] >= self.max_escorts:
             held = (now - rec["gone_since"]) if rec["gone_since"] else 0.0
             st = f"运镖中标志已消失 {held:.1f}/{done_grace}s（等满即判结束）"
+        else:
+            held = (now - rec["no_dlg_since"]) if rec["no_dlg_since"] else 0.0
+            if no_dlg_giveup > 0:
+                st = f"运镖中标志已消失、等下一趟对话框 {held:.1f}/{no_dlg_giveup:.0f}s（超时按本号结束）"
+            else:
+                st = f"运镖中标志已消失、等下一趟对话框 {held:.1f}s（未设超时）"
         ctx.log(f"监控…{st}（已完成 {rec['escorts']}/{self.max_escorts} 趟）")
         rec["t_diag"] = now
 

@@ -90,7 +90,7 @@ class DungeonTask(Task):
         cap_pair = None
         member_pairs = []
         for i, w in enumerate(wins):
-            child = ctx.make_child(w, f"号{i + 1}")
+            child = ctx.make_child(w, f"号{self._window_no(w, i)}")
             if i == cap:
                 cap_pair = (child, TeamFormation.ROLE_CAPTAIN)
             else:

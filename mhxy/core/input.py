@@ -256,6 +256,14 @@ class Mouse:
         self._rup()
         time.sleep(random.uniform(0.02, 0.08) / spd)
 
+    def hold(self):
+        """按住左键不放（按住拖动描摹/区域填扫用），配合 release() 成对使用。"""
+        self._down()
+
+    def release(self):
+        """松开左键。"""
+        self._up()
+
     def double_click(self, x, y, speed=None):
         """拟人化双击：先移到目标，再快速两次按下/抬起（间隔在系统双击阈值内）。"""
         spd = self._speed(speed)

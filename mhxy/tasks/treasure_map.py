@@ -5,9 +5,12 @@
 游戏自带「自动战斗」全托管，脚本只做导航 + 状态监控 + 关键点击：
 
 阶段 A 收图：
-  开「活动」(快捷键 Alt+C) → 滚轮找「宝图任务」条目 → 点该行【右侧的「参加」按钮】(按行匹配，不是点条目本身)
-  → 传送+自动寻路到 NPC 对话 → 弹框选「听听无妨」→ 自动寻宝(自动战斗)
-  → 所有藏宝图拿完后人物站着不动(帧差判静止=收集完成)。
+  开「活动」(快捷键 Alt+C) → 滚轮找「宝图任务」条目 → 用右侧「参加」判定是否已有宝图：
+      · 找到该行【右侧的「参加」按钮】→ 还没领过图 → 点参加 → 传送寻路 → 弹框选「听听无妨」→ 自动寻宝
+        → 所有藏宝图拿完后人物站着不动(帧差判静止=收集完成)。
+      · 认出「宝图任务」卡片但【没找到「参加」按钮】(按钮已变「已参加」)→ 视为**已有宝图**，
+        跳过阶段A、直接进阶段B开背包挖包裹里的藏宝图。
+  自动判断逐号进行：各号进度不同(有的有图有的没)也能各自走对分支。
 阶段 B 挖宝：
   开背包(快捷键) → 滚轮找藏宝图 → 双击用 → 自动传送挖宝 → 挖完游戏弹「下一张使用」按钮 → 点它
   → 循环到不再弹 → 再开背包确认无图 →【关上背包】→ 该号结束。
@@ -57,8 +60,10 @@ _STILL_DIFF = 8.0   # 帧差低于此视为画面静止（人物不动）的默�
 #   flag_join=活动列表里「宝图任务」那一行右侧的「参加」按钮——按行匹配点它（不是点条目本身）。
 _FLAG_KEYS = ["flag_treasure_entry", "flag_join", "flag_tingting",
               "flag_battle", "flag_next_map", "treasure_item"]
+# 必备模板（缺失则 preflight 阻断）：flag_battle 虽不点它，但「静止判定」要在战斗期暂停——
+# 不标它一进战斗就被误判（收集提前完成/挖完），故必标。
 _REQUIRED_FLAGS = ["flag_treasure_entry", "flag_join", "flag_tingting",
-                   "flag_next_map", "treasure_item"]
+                   "flag_next_map", "flag_battle", "treasure_item"]
 
 
 @register
@@ -71,8 +76,7 @@ class TreasureMapTask(Task):
     CALIBRATION = {
         "regions": [
             ("scene", "主识别区", "留空=整个窗口当识别区(推荐)；战斗/对话/下一张等标志都在这里找", True),
-            ("activity_list", "活动列表区域", "「活动」界面里那片列表，滚轮在此翻找「宝图任务」条目"),
-            ("bag_list", "背包列表区域", "背包里道具格那片区域，滚轮在此翻找藏宝图"),
+            # activity_list / bag_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
         ],
         "templates": [
             ("flag_treasure_entry", "宝图任务入口", "活动列表里「宝图任务」那一条，框图标+文字、要独特"),
@@ -80,7 +84,7 @@ class TreasureMapTask(Task):
             ("flag_tingting", "「听听无妨」选项", "和 NPC 对话弹框里要点的那个选项"),
             ("flag_next_map", "「下一张使用」按钮", "挖完一张后游戏自动弹出的继续按钮"),
             ("treasure_item", "藏宝图道具", "背包里藏宝图那个图标的样子"),
-            ("flag_battle", "战斗界面标志(可选)", "战斗独有的画面元素，用于避免战斗期被误判卡死"),
+            ("flag_battle", "战斗界面标志", "战斗独有的画面元素。战斗期画面在动，静止判定要暂停，不标它会误判收集/挖宝——必标"),
         ],
         "watchlist": False,
     }
@@ -91,27 +95,21 @@ class TreasureMapTask(Task):
         problems = []
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
-        skip_collect = tc.get("skip_collect", False)   # 已有宝图：跳过阶段A
 
-        # scene 留空=整窗检测，不再强制标定；背包区始终要、活动列表区仅阶段A要
-        need_regions = [("bag_list", "背包列表区域")]
-        if not skip_collect:
-            need_regions.append(("activity_list", "活动列表区域"))
-        for rk, label in need_regions:
+        # 活动列表区/背包区属公共区域（全任务共用），已在「通用」页标定；这里只判若任务命名空间
+        # 还残留旧值则无需重标，且 task_config 已把 tasks.shared 叠加进来，直接 regions.get 即可。
+        for rk, label in [("activity_list", "活动列表区域"), ("bag_list", "背包列表区域")]:
             if not regions.get(rk):
-                problems.append(f"『{label}』未标定 —— 请先做标定")
+                problems.append(f"『{label}』未标定 —— 请到「通用」页点「标定（公共区域）」框选（所有任务共用）")
 
-        # 模板：挖宝必备始终要；领宝图相关仅阶段A要（含「参加」按钮）
-        need_flags = ["flag_next_map", "treasure_item"]
-        if not skip_collect:
-            need_flags += ["flag_treasure_entry", "flag_join", "flag_tingting"]
-        for tk in need_flags:
+        # 模板：判是否已有宝图(入口/参加/听听无妨) + 挖宝(下一张/藏宝图) + 战斗标志（静止判定要排除战斗期）都要
+        for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
             if not path or vision.load_template(path) is None:
                 problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
-        # 活动入口仅阶段A需要：必须有 open_activity 快捷键（默认 Alt+C）
-        if not skip_collect and not ctx.hotkeys.get("open_activity"):
+        # 判「是否已有宝图」要开活动列表找入口/参加，必须有 open_activity 快捷键（默认 Alt+C）
+        if not ctx.hotkeys.get("open_activity"):
             problems.append("打开『活动』缺快捷键：请在 config.hotkeys.open_activity 填上（如 alt+c）")
         # 开背包必须有快捷键（没有背包按钮可点）
         if not ctx.hotkeys.get("open_bag"):
@@ -121,12 +119,6 @@ class TreasureMapTask(Task):
             problems.append(f"没找到/没选中目标窗口（标题含「{ctx.window.title_substr}」）"
                             "，请先打开游戏并在「选择窗口」里选好")
 
-        # 可选模板缺失只提示
-        optional = ["flag_battle"]
-        for tk in optional:
-            if not templates.get(tk) or vision.load_template(templates.get(tk)) is None:
-                ctx.log(f"提示：可选模板『{tk}』未标定，将降级靠帧差+超时推进（可靠性略降）。", level="warn")
-
         return (len(problems) == 0), problems
 
     # ------------------------------------------------------------------
@@ -135,8 +127,7 @@ class TreasureMapTask(Task):
         loop = tc["loop"]
         regions = tc["regions"]
         dry_run = tc.get("dry_run", True)
-        self._skip_collect = tc.get("skip_collect", False)
-        self._start_state = S_DIG_OPEN_BAG if self._skip_collect else S_OPEN_ACTIVITY
+        self._start_state = S_OPEN_ACTIVITY   # 是否已有宝图走运行期自动判断，号号从开活动开始
         threshold = loop["match_threshold"]
         self.flags = self._load_flags(tc)
 
@@ -158,20 +149,14 @@ class TreasureMapTask(Task):
             return
 
         if dry_run:
-            if self._skip_collect:
-                hint = "打开背包，看日志能否认出 藏宝图/下一张/战斗"
-            else:
-                hint = "手动打开对应界面，看日志能否认出 宝图入口/参加按钮/听听无妨/战斗/下一张/藏宝图"
+            hint = "手动打开对应界面，看日志能否认出 宝图入口/参加按钮/听听无妨/战斗/下一张/藏宝图"
             ctx.log("演练模式：不会真正推进副本，仅对各号当前屏幕循环做『各标志识别自检』。"
                     + hint + ("（多号逐个扫描）" if multi else "") + "。", level="warn")
-            self._dry_run_selfcheck(ctx, contexts, multi, regions, threshold, switch_delay,
-                                    deadline, self._skip_collect)
+            self._dry_run_selfcheck(ctx, contexts, multi, regions, threshold, switch_delay, deadline)
             return
 
-        if self._skip_collect:
-            ctx.log("★ 实战模式（已有宝图）：跳过领取，直接开背包挖包裹里的藏宝图 ★", level="warn")
-        else:
-            ctx.log("★ 实战模式：会真开活动、真用宝图、真领奖 ★", level="warn")
+        ctx.log("★ 实战模式：会真开活动、真用宝图、真领奖；各号自动判『已有宝图』则跳过领取直接挖 ★",
+                level="warn")
         ctx.log(f"★ {('多开轮转 ' + str(len(contexts)) + ' 个号' if multi else '单号')}，"
                 "号与号之间逐步轮转；每号终止条件=背包藏宝图挖空 ★", level="warn")
         if time_limit > 0:
@@ -204,14 +189,13 @@ class TreasureMapTask(Task):
         """给定单窗口上下文，返回 (record, step_fn)。step_fn() 推进该窗口本任务状态机一步
         （沿用 run() 同款 _step_once），record["done"]=本任务在该窗口完成。
         与 run() 共用 _new_record/_step_once，不自跑 rotation、不切前台（由一条龙总轮转统一切）。
-        注意：_new_record 依赖 self._skip_collect/_start_state，须先在此设好（同 run() 开头）。"""
+        注意：_new_record 依赖 self._start_state，须先在此设好（同 run() 开头）。"""
         tc = wctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]
         threshold = loop["match_threshold"]
         self.flags = self._load_flags(tc)
-        self._skip_collect = tc.get("skip_collect", False)
-        self._start_state = S_DIG_OPEN_BAG if self._skip_collect else S_OPEN_ACTIVITY
+        self._start_state = S_OPEN_ACTIVITY
         rec = self._new_record(wctx)
         return rec, (lambda: self._step_once(wctx, rec, loop, regions, threshold))
 
@@ -225,7 +209,7 @@ class TreasureMapTask(Task):
         if not wins:
             return []
         if multi:
-            return [ctx.make_child(w, f"号{i + 1}") for i, w in enumerate(wins)]
+            return [ctx.make_child(w, f"号{self._window_no(w, i)}") for i, w in enumerate(wins)]
         ctx.window = wins[0]
         return [ctx]
 
@@ -234,7 +218,7 @@ class TreasureMapTask(Task):
         phase_b：是否已进入挖宝阶段（决定卡死兜底回开活动还是回重开背包）。
         last/still_since/t0/t_diag：收集/挖宝监控的逐帧状态（原内部 while 循环搬到这里、跨访问保留）。"""
         return {"ctx": wctx, "state": self._start_state, "t_state": time.time(),
-                "scrolls": 0, "dug": 0, "phase_b": self._skip_collect,
+                "scrolls": 0, "dug": 0, "phase_b": False,
                 "last": None, "still_since": None, "t0": 0.0, "t_diag": 0.0,
                 "recover": 0, "done": False, "dead_logged": False}
 
@@ -303,14 +287,19 @@ class TreasureMapTask(Task):
             if hit is None:
                 return (scan.SCROLL, None)
             entry_xy = (rect[0] + hit[0], rect[1] + hit[1])
-            join = self._find_join_on_row(ctx, list_region, entry_xy, threshold, loop)
-            if join is not None:
-                ctx.mouse.click(join[0], join[1])
-                ctx.log(f"找到「宝图任务」（{hit[2]:.3f}）→ 点「参加」（{join[2]:.3f}），开始传送找 NPC。",
-                        level="hit")
-                return (scan.ACCEPT, join)
-            ctx.log("认出「宝图任务」但没找到右侧「参加」（检查 flag_join 模板/阈值）。", level="warn")
-            return (scan.STAY, None)
+            # 稳定再确认几次「参加」：滚动/加载瞬间可能没匹配上，连错几次才算「已有宝图」，
+            # 避免卡片刚出现的一两帧误判为已领过、把还没领的号直接送去挖宝。
+            for _ in range(max(1, int(loop.get("join_confirm_tries", 3)))):
+                join = self._find_join_on_row(ctx, list_region, entry_xy, threshold, loop)
+                if join is not None:
+                    ctx.mouse.click(join[0], join[1])
+                    ctx.log(f"找到「宝图任务」（{hit[2]:.3f}）→ 点「参加」（{join[2]:.3f}），"
+                            "开始传送找 NPC。", level="hit")
+                    return (scan.ACCEPT, {"join": True, "pos": join})
+                self._interruptible_sleep(ctx, self._jitter(0.15, ctx))
+            ctx.log("认出「宝图任务」但连确认多次都没找到其「参加」按钮 "
+                    "→ 判定「已有宝图」，跳过领取、直接挖包裹里的藏宝图。", level="hit")
+            return (scan.ACCEPT, {"join": False, "pos": None})
 
         res = scan.scroll_search(
             grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
@@ -324,7 +313,13 @@ class TreasureMapTask(Task):
             reset_max=loop.get("scroll_reset_max", 20),
             log=ctx.log, label="活动列表")
         if res.found:
-            self._goto(rec, S_DIALOG)
+            if res.payload and res.payload.get("join"):
+                self._goto(rec, S_DIALOG)
+            else:
+                # 已有宝图：Esc 关掉活动面板再进挖宝，避免遮屏
+                if ctx.send_hotkey("close_panel"):
+                    self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
+                self._goto_dig(rec)
             return
         if res.stopped:
             return
@@ -613,16 +608,12 @@ class TreasureMapTask(Task):
             self._interruptible_sleep(ctx, self._jitter(0.25, ctx))
 
     def _dry_run_selfcheck(self, ctx, contexts, multi, regions, threshold, switch_delay,
-                           deadline, skip_collect=False):
+                           deadline):
         """演练：周期性对【每个号】当前屏幕识别各标志，报告命中，便于用户验证模板/阈值。
-        已有宝图(skip_collect)时只自检挖宝相关标志，不提阶段A的宝图入口/听听无妨/对话框。"""
-        if skip_collect:
-            keys = [("flag_battle", "战斗"), ("flag_next_map", "下一张使用"),
-                    ("treasure_item", "藏宝图")]
-        else:
-            keys = [("flag_treasure_entry", "宝图入口"), ("flag_join", "参加按钮"),
-                    ("flag_tingting", "听听无妨"), ("flag_battle", "战斗"),
-                    ("flag_next_map", "下一张使用"), ("treasure_item", "藏宝图")]
+        是否已有宝图走运行期自动判，故阶段A(宝图入口/参加/听听无妨)与阶段B(下一张/藏宝图)标志全自检。"""
+        keys = [("flag_treasure_entry", "宝图入口"), ("flag_join", "参加按钮"),
+                ("flag_tingting", "听听无妨"), ("flag_battle", "战斗"),
+                ("flag_next_map", "下一张使用"), ("treasure_item", "藏宝图")]
         while not ctx.should_stop():
             if deadline and time.time() >= deadline:
                 ctx.log("演练时间上限到，停止。")

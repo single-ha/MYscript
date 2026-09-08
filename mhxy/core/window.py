@@ -282,7 +282,19 @@ def locate_all(title_substr, offset=(0, 0), max_n=0):
     found.sort(key=lambda x: (int(x.top) // 120, int(x.left)))
     if max_n and max_n > 0:
         found = found[:max_n]
-    return [GameWindow(title_substr, offset).bind(w) for w in found]
+    out = []
+    for gi, w in enumerate(found):
+        gwin = GameWindow(title_substr, offset).bind(w)
+        gwin._g_index = gi           # 全局序号：全部检测窗口里左→右第几个（供任务日志显示真实「号N」）
+        out.append(gwin)
+    return out
+
+
+def global_no(w, fallback):
+    """窗口的真实号数（1 起）：优先用 locate_all 给的全局序号 _g_index；拿不到时退回 fallback+1。
+    单开选了号2 → 返回 2，而不是"选中列表里的第1个"。"""
+    gi = getattr(w, "_g_index", None)
+    return (gi + 1) if isinstance(gi, int) and gi >= 0 else fallback + 1
 
 
 def resolve_targets(title_substr, offset, targets):
@@ -361,6 +373,24 @@ def restore_targets_size(title_substr, offset, targets, base_size):
         if success:
             ok += 1
     return (ok, len(wins), actual)
+
+
+def work_area():
+    """返回可用工作区（排除任务栏）矩形 [left, top, width, height]；取不到回退全屏。
+    供「调整窗口」按屏幕可用区域排布多开号：第一排贴屏幕顶、最后一行贴任务栏、第5个居中。"""
+    try:
+        rect = ctypes.wintypes.RECT()
+        # SPI_GETWORKAREA = 0x0030：得到「排除任务栏后的工作区」屏幕矩形。
+        ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)
+        left, top = int(rect.left), int(rect.top)
+        return [left, top, int(rect.right) - left, int(rect.bottom) - top]
+    except Exception:
+        try:
+            sw = int(ctypes.windll.user32.GetSystemMetrics(0))   # SM_CXSCREEN
+            sh = int(ctypes.windll.user32.GetSystemMetrics(1))   # SM_CYSCREEN
+            return [0, 0, sw, sh]
+        except Exception:
+            return [0, 0, 1920, 1080]
 
 
 # ---- 截图 ----

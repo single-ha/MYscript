@@ -57,10 +57,6 @@ _ACTION_SPECS = {
         "label": "丢弃", "open": None, "confirm": True, "close": "panel",
         "steps": [{"tpl": "discard_button", "label": "丢弃"}],
     },
-    "sell": {   # 旧·笼统单按钮出售（兼容旧配置；新建议用 shop_sell/stall_sell）
-        "label": "出售", "open": None, "confirm": True, "close": "panel",
-        "steps": [{"tpl": "sell_button", "label": "出售"}],
-    },
     "shop_sell": {
         "label": "商会出售", "open": "left", "confirm": False, "close": "auto",
         "steps": [
@@ -80,7 +76,7 @@ _ACTION_SPECS = {
     },
 }
 
-# 物品清单 GUI 下拉的动作顺序（不列旧 sell）；标签表含 sell 以便显示遗留配置。
+# 物品清单 GUI 下拉的动作顺序（内部值，见 _ACTION_SPECS）。
 ACTION_ORDER = ["use", "discard", "shop_sell", "stall_sell"]
 ACTION_LABELS = {k: v["label"] for k, v in _ACTION_SPECS.items()}
 

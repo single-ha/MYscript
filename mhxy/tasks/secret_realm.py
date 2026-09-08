@@ -63,7 +63,7 @@ class SecretRealmTask(Task):
     CALIBRATION = {
         "regions": [
             ("scene", "主识别区", "留空=整个窗口当识别区(推荐)；对话框/各按钮/失败等标志都在这里找", True),
-            ("activity_list", "活动列表区域", "「活动」界面里那片列表，滚轮在此翻找秘境降妖那张卡片"),
+            # activity_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
         ],
         "templates": [
             ("sr_entry", "活动卡片入口", "活动列表里要点「参加」的那张卡片，框图标+文字、要独特"),
@@ -89,10 +89,10 @@ class SecretRealmTask(Task):
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
 
-        # scene 留空=整窗检测，不强制标定；活动列表区仍需标（滚轮翻找卡片）
+        # activity_list 属公共区域（全任务共用），在「通用」页标定；task_config 已把 tasks.shared 叠加进来，直接读即可
         for rk, label in [("activity_list", "活动列表区域")]:
             if not regions.get(rk):
-                problems.append(f"『{label}』未标定 —— 请先做标定")
+                problems.append(f"『{label}』未标定 —— 请到「通用」页点「标定（公共区域）」框选（所有任务共用）")
 
         for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
@@ -189,7 +189,7 @@ class SecretRealmTask(Task):
         if not wins:
             return []
         if multi:
-            return [ctx.make_child(w, f"号{i + 1}") for i, w in enumerate(wins)]
+            return [ctx.make_child(w, f"号{self._window_no(w, i)}") for i, w in enumerate(wins)]
         ctx.window = wins[0]
         return [ctx]
 

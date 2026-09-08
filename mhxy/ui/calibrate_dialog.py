@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 标定对话框（全部在 GUI 内完成，无黑窗、无子进程）。
 
@@ -19,12 +19,32 @@ from .roi_overlay import select_roi_on_screen
 from ..core import config as cfg_mod
 from ..core import window as win_mod
 from ..core import vision
+from ..core.config import EXCLUSIVE_SHARED_REGIONS, SHARED_REGION_KEYS
 from ..core.teaming import TEAM_CALIBRATION
 from ..tasks import get_task
+from ..tasks.dungeon_base import DUNGEON_CALIBRATION
 
 # 非注册的「共享命名空间」标定 spec（key = 写入 cfg.tasks.<key>）。
-# 组队是跨任务共享资产、不是可运行任务，故 get_task("teaming") 拿不到，走这里。
-_VIRTUAL_SPECS = {"teaming": ("组队（全局共享）", TEAM_CALIBRATION)}
+# 组队/刷副本/公共区域都是跨任务共享资产、不是可运行任务（或同名任务不合用），故 get_task 拿不到，走这里。
+# 取 spec 时先查 _VIRTUAL_SPECS 再 get_task，保证「dungeon」一定用共享副本标定、而非 DungeonTask 的组队标定。
+_VIRTUAL_SPECS = {
+    "teaming": ("组队（全局共享）", TEAM_CALIBRATION),
+    "dungeon": ("刷副本（一次标定所有副本）", DUNGEON_CALIBRATION),
+    "shared": ("公共区域（活动/背包列表 + 拓印临摹，全局共享）", {
+        "regions": [
+            ("activity_list", "活动列表区域（所有任务共用）",
+             "「活动」界面里那片卡片列表，滚轮在此翻找卡片。只标一次，宝图/运镖/秘境降妖/三界奇缘/抓鬼/刷副本全部通用。"),
+            ("bag_list", "背包列表区域（所有任务共用）",
+             "打开背包后那片物品列表，滚轮在此翻找道具。只标一次，宝图挖宝/整理背包通用。"),
+            ("tuoying_area", "拓印描摹绘制区(可选)", "(可选)「拓印」临摹界面里图案所在那块区域：刷副本自动描摹就是按住鼠标把它盖满；只标一次，所有副本共用。留空/用整窗=遇拓印弹窗只能转手动临摹。", True),
+        ],
+        "templates": [
+            ("tuoying_title", "「拓印」界面标题", "(可选)刷副本点「进入」后，队长窗口偶尔会弹「拓印」临摹界面：框标题或独特边框即可识别。所有副本共用，标一次即可。不标=遇弹窗转手动临摹。", True),
+            ("tuoying_upload", "「上传」按钮", "(可选)拓印临摹完要点的「上传」按钮。所有副本共用。不标=自动描完后需手动点上传。", True),
+        ],
+        "watchlist": False,
+    }),
+}
 
 
 # ----------------------------------------------------------------------
@@ -146,16 +166,17 @@ class CalibrateDialog(ctk.CTkToplevel):
         self.on_done = on_done
         self.task_name = task_name
 
-        task_cls = get_task(task_name)
-        if task_cls is not None:
-            self.spec = getattr(task_cls, "CALIBRATION",
-                                {"regions": [], "templates": [], "watchlist": False})
-            title_name = getattr(task_cls, "title", task_name)
-        elif task_name in _VIRTUAL_SPECS:
+        if task_name in _VIRTUAL_SPECS:
             title_name, self.spec = _VIRTUAL_SPECS[task_name]
         else:
-            self.spec = {"regions": [], "templates": [], "watchlist": False}
-            title_name = task_name
+            task_cls = get_task(task_name)
+            if task_cls is not None:
+                self.spec = getattr(task_cls, "CALIBRATION",
+                                    {"regions": [], "templates": [], "watchlist": False})
+                title_name = getattr(task_cls, "title", task_name)
+            else:
+                self.spec = {"regions": [], "templates": [], "watchlist": False}
+                title_name = task_name
 
         if only:
             only = set(only)
@@ -174,6 +195,9 @@ class CalibrateDialog(ctk.CTkToplevel):
 
         self.cfg = cfg_mod.load_config()
         self.tc = cfg_mod.task_config(self.cfg, task_name)
+
+        # 标定坐标依赖窗口尺寸：若当前选择的窗口和基准尺寸不一致，打开时提醒先去「调整窗口」还原。
+        self._base_warn = self._base_size_mismatch()
 
         # 缩略图画廊列数：模板/装备越多列越多，行尽量匀（_pick_cols）；窗口随列数适当加宽。
         n_items = len(self.spec.get("templates", []))
@@ -208,6 +232,29 @@ class CalibrateDialog(ctk.CTkToplevel):
         except Exception:
             pass
 
+    def _base_size_mismatch(self):
+        """当前选中的窗口里，有没有和基准尺寸 targets.base_size 不一致的？
+        有则返回 (base_w, base_h, [(w,h), ...])，没有/找不到窗口返回 None。
+        选择逻辑与任务一致（单开 single_index / 多开 multi_indices），见 core.window.resolve_targets。"""
+        try:
+            target = self.cfg.get("targets") or {}
+            base = target.get("base_size")
+            if not base or len(base) < 2:
+                return None
+            wins = win_mod.resolve_targets(self.cfg.get("window_title", "梦幻西游"),
+                                           self.cfg.get("window_offset", [0, 0]), target)
+            if not wins:
+                return None
+            bw, bh = int(base[0]), int(base[1])
+            off = []
+            for w in wins:
+                r = w.rect()
+                if r and (int(r[2]), int(r[3])) != (bw, bh):
+                    off.append((int(r[2]), int(r[3])))
+            return (bw, bh, off) if off else None
+        except Exception:
+            return None
+
     def _build(self):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -226,23 +273,44 @@ class CalibrateDialog(ctk.CTkToplevel):
         sub.pack(fill="x", pady=(4, 0))
         T.bind_wraplength(sub)
 
+        # 窗口尺寸和基准不一致时的提醒条（标定坐标依赖窗口尺寸，先还原到基准再标）
+        bwarn = getattr(self, "_base_warn", None)
+        if bwarn is not None:
+            bw, bh, off = bwarn
+            sizes = "、".join(f"{w}×{h}" for w, h in dict.fromkeys(off))
+            warn = ctk.CTkFrame(body, fg_color=T.WARN, corner_radius=T.RADIUS_SM)
+            warn.grid(row=row, column=0, sticky="ew", padx=16, pady=(0, 10)); row += 1
+            wt = (f"⚠ 当前选中的窗口是 {sizes}，和基准尺寸 {bw}×{bh} 不一致！"
+                  f"框选坐标是按窗口尺寸记的——请先去「通用」页点「调整窗口」还原到基准"
+                  f"（或在窗口清单里重新「设为基准」），否则标出来的坐标会和跑任务时对不上。")
+            wl = ctk.CTkLabel(warn, text=wt, font=self.fonts["small"],
+                              text_color="#302405", justify="left")
+            wl.pack(fill="x", padx=12, pady=10)
+            T.bind_wraplength(wl, padding=24)
+
         # ① 区域与按钮
         regions = self.spec.get("regions", [])
         if regions:
             rcard = self._card(body, row); row += 1
             ctk.CTkLabel(rcard, text="① 区域与按钮", font=self.fonts["h2"], text_color=T.TEXT).grid(
                 row=0, column=0, columnspan=3, sticky="w", padx=16, pady=(14, 6))
-            rhint = ctk.CTkLabel(rcard, text="这些只是记录屏幕上一块位置（坐标），本身没有图片，标好显示「● 已框选」即可。",
+            has_shared = any(it[0] in SHARED_REGION_KEYS for it in regions)
+            rhint_text = "这些只是记录屏幕上一块位置（坐标），本身没有图片，标好显示「● 已框选」即可。"
+            if has_shared:
+                rhint_text += "「活动列表区域 / 背包列表区域」是所有任务【共用】的区域：在这里标一次，宝图/运镖/秘境/奇缘/抓鬼/刷副本等各任务自动通用。"
+            rhint_text += "「拓印描摹绘制区（可选）」刷副本遇拓印临摹时自动描；不标=遇弹窗转手动。"
+            rhint = ctk.CTkLabel(rcard, text=rhint_text,
                          font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
             rhint.grid(row=1, column=0, columnspan=3, sticky="ew", padx=16, pady=(0, 4))
             T.bind_wraplength(rhint, padding=32)
             for i, item in enumerate(regions):
-                key, name, desc = item[0], item[1], item[2]
+                key, orig_name, desc = item[0], item[1], item[2]
+                name = orig_name + "（全局共用）" if key in EXCLUSIVE_SHARED_REGIONS else orig_name
                 full_window = len(item) > 3 and bool(item[3])   # 第4元素=True 表示可整窗
                 if full_window:
                     self._full_window_keys.add(key)
                 self._spec_row(rcard, 2 + i, key, name, desc, self.region_rows,
-                               lambda k=key, n=name: self._calibrate_region(k, n),
+                               lambda k=key, n=orig_name: self._calibrate_region(k, n),
                                full_window=full_window)
             ctk.CTkFrame(rcard, fg_color="transparent", height=8).grid(row=99, column=0)
 
@@ -307,8 +375,9 @@ class CalibrateDialog(ctk.CTkToplevel):
 
     def _use_full_window(self, key, name):
         """把某个可整窗的大检测区清空 → 运行时用整个窗口当检测区。"""
-        self.tc.setdefault("regions", {})[key] = None
-        self._save()
+        regions, save = self._target_regions(key)
+        regions[key] = None
+        save()
         self._refresh()
         self._toast(f"「{name}」已设为整窗检测（无需框选）", T.SUCCESS)
 
@@ -342,14 +411,31 @@ class CalibrateDialog(ctk.CTkToplevel):
                                toast=self._toast, alpha_windows=(self.app, self))
 
     # ---- 区域标定 ----
+    def _shared_tc(self):
+        """共享公共区域配置块（tasks.shared）：activity_list/bag_list 标定都写这里。"""
+        return cfg_mod.task_config(self.cfg, "shared")
+
+    def _target_regions(self, key):
+        """区域 key 的归属：共享区（活动/背包列表、拓印绘制区等，见 EXCLUSIVE_SHARED_REGIONS）写 tasks.shared，
+        其余写本任务自身。返回 (regions 字典, 入库保存函数)——共享键只存共享件，绝不复写到各任务命名空间。"""
+        if key in EXCLUSIVE_SHARED_REGIONS:
+            return self._shared_tc().setdefault("regions", {}), self._save_shared
+        return self.tc.setdefault("regions", {}), self._save
+
+    def _save_shared(self):
+        cfg_mod.set_task_config(self.cfg, "shared", self._shared_tc())
+        cfg_mod.save_config(self.cfg)
+
     def _calibrate_region(self, key, name):
         rel, _crop = self._grab_roi(f"框选「{name}」")
         if rel is None:
             return
-        self.tc.setdefault("regions", {})[key] = rel
-        self._save()
+        regions, save = self._target_regions(key)
+        regions[key] = rel
+        save()
         self._refresh()
-        self._toast(f"已记录 {name}：{rel}", T.SUCCESS)
+        suffix = "（全局共用，其余任务自动生效）" if key in SHARED_REGION_KEYS else ""
+        self._toast(f"已记录 {name}{suffix}：{rel}", T.SUCCESS)
 
     # ---- 标志模板标定（裁图存盘）----
     def _calibrate_template(self, key, name):
@@ -415,7 +501,11 @@ class CalibrateDialog(ctk.CTkToplevel):
     # ------------------------------------------------------------------
     def _refresh(self):
         self._thumbs.clear()
-        regions = self.tc.get("regions", {})
+        # 公共区域（activity_list/bag_list）读共享件；其余读任务自身。共享区后标定等场景
+        # 从共享件现读最新值（self.tc 是对话框打开时快照，不会自动带新写的共享值）。
+        regions = dict(self.tc.get("regions", {}) or {})
+        shared = self._shared_tc().get("regions", {}) or {}
+        regions.update({k: v for k, v in shared.items() if v})
         for key, status in self.region_rows.items():
             if regions.get(key):
                 status.configure(text="● 已框选", text_color=T.SUCCESS)
@@ -430,11 +520,11 @@ class CalibrateDialog(ctk.CTkToplevel):
     def _render_templates(self):
         if self.template_grid is None:
             return
-        from .app import load_thumb     # 延迟导入避免与 app.py 循环依赖
+        from .common import load_thumb   # 延迟导入避免循环依赖
         for w in self.template_grid.winfo_children():
             w.destroy()
         saved = self.tc.get("templates", {})
-        for i, (key, name, desc) in enumerate(self.spec.get("templates", [])):
+        for i, (key, name, desc, *_x) in enumerate(self.spec.get("templates", [])):
             r, col = divmod(i, self.n_cols)
             rel = saved.get(key)
             thumb = load_thumb(rel, self._thumbs, max_h=46) if rel else None
@@ -447,7 +537,7 @@ class CalibrateDialog(ctk.CTkToplevel):
     def _render_watchlist(self):
         if self.item_list is None:
             return
-        from .app import load_thumb
+        from .common import load_thumb
         for w in self.item_list.winfo_children():
             w.destroy()
         wl = self.tc.get("watchlist", [])
@@ -509,6 +599,13 @@ class CalibrateDialog(ctk.CTkToplevel):
                       command=btn_cmd).grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
 
     def _save(self):
+        # 共享区（活动/背包列表、拓印绘制区等，见 EXCLUSIVE_SHARED_REGIONS）走 _save_shared 单独存共享件，
+        # 不回写本任务——这里把 task_config 叠加进来自动带上来的共享值剥掉，避免污染本任务命名空间。
+        if self.task_name != "shared":
+            reg = self.tc.get("regions")
+            if reg:
+                for k in EXCLUSIVE_SHARED_REGIONS:
+                    reg.pop(k, None)
         cfg_mod.set_task_config(self.cfg, self.task_name, self.tc)
         cfg_mod.save_config(self.cfg)
 

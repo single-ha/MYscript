@@ -7,7 +7,8 @@
 「翻包裹 + 逐物使用/丢弃/出售」。每个号的背包整理是自带内循环、一气呵成式的扫描（与滚轮查找同原则：
 在同一个号上跑完再切下一个），故多开走简单的「逐号 activate→organize」循环，不需要非阻塞轮转。
 
-配置/标定都放共享命名空间 tasks.organize_bag（区域 bag_list、动作按钮模板、物品清单 items）。
+配置/标定放共享命名空间 tasks.organize_bag（动作按钮模板、物品清单 items）；
+背包列表区 bag_list 属公共区域，在「通用」页「标定（公共区域）」统一标定（全任务共用，留空=整窗检测）。
 """
 
 from ..core import vision
@@ -25,11 +26,10 @@ class OrganizeBagTask(Task):
 
     CALIBRATION = {
         "regions": [
-            ("bag_list", "背包列表区", "背包里那片物品列表，滚轮在此翻找物品；可留空=整窗检测", True),
+            # bag_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用，留空=整窗检测），见 tasks.shared
         ],
         "templates": [
-            ("discard_button", "「丢弃」按钮", "操作菜单里的「丢弃」按钮"),
-            ("more_button", "「更多」按钮", "左键点物品弹出的详情面板里的「更多」按钮（商会/摆摊出售前若有就点它展开）；没有可不标"),
+("discard_button", "「丢弃」按钮", "操作菜单里的「丢弃」按钮"),
             ("shop_sell_button", "「商会出售」按钮", "详情/更多里的「商会出售」按钮"),
             ("sell_full_button", "出售窗「满」按钮", "商会出售弹窗里把数量设到最大的「满」按钮"),
             ("sell_confirm_button", "出售窗「出售」按钮", "商会出售弹窗里最终确认的「出售」按钮"),
@@ -86,7 +86,7 @@ class OrganizeBagTask(Task):
         for i, w in enumerate(wins):
             if ctx.should_stop():
                 break
-            label = f"号{i + 1}" if multi else None
+            label = f"号{self._window_no(w, i)}" if multi else None
             child = ctx.make_child(w, label)
             # 单开/多开都先切前台并校验（约束9铁律）：activate 失败=没真正到前台，绝不在后台号瞎点，跳过。
             if not w.activate():

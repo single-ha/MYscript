@@ -79,6 +79,12 @@ class Task:
         except Exception:
             return True  # 非 Windows 或查询失败时不打扰
 
+    @staticmethod
+    def _window_no(w, fallback):
+        """窗口的真实号数（1 起）：优先用全局序号（单开选了号2→报'号2'），拿不到退回 fallback+1。
+        标签统一入口，避免日志里把选中列表当号数。"""
+        return win_mod.global_no(w, fallback)
+
     def _acquire_target_window(self, ctx):
         """基础特性：把 ctx.window 指向「选择窗口」里选中的目标窗口，并保持有效。
 

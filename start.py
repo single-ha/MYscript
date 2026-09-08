@@ -16,6 +16,11 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE)
 sys.path.insert(0, BASE)
 
+# 图形界面有两份：新版在 mhxy/ui（重构：分类页 + 全局「演练/实战」总开关），旧版在 mhxy/gui。
+# 二者共享同一套 mhxy/core · tasks · tools。下面的 _GUI_MOD 决定启动新版还是旧版。
+_GUI_MOD = "mhxy.ui.app"          # 新版（默认）
+# _GUI_MOD = "mhxy.gui.app"       # 想回退旧版就改这一行
+
 # 运行时依赖的 import 名（注意 Pillow 的 import 名是 PIL）。
 _DEP_MODULES = ["cv2", "mss", "numpy", "pyautogui", "pygetwindow", "customtkinter", "PIL"]
 
@@ -170,7 +175,7 @@ def _launch_gui():
 
         def _warm():
             try:
-                import mhxy.gui.app  # noqa: F401  —— 触发 cv2/numpy/customtkinter 一次性加载
+                importlib.import_module(_GUI_MOD)  # noqa: F401  —— 触发 cv2/numpy/customtkinter 一次性加载
             except Exception:
                 pass               # 预热失败无妨：主线程随后会再 import 并暴露真实错误
             finally:
@@ -199,8 +204,8 @@ def _launch_gui():
             pass
 
     # —— 阶段二：建主窗口；用主窗口自带的同根遮罩盖住「建全部页面」的过程，建完再撤遮罩 ——
-    from mhxy.gui.app import App
-    app = App()
+    _appmod = importlib.import_module(_GUI_MOD)
+    app = _appmod.App()
     if splash is not None:
         # 有过启动页时，亮界面前把其余页面也建好（同根遮罩盖住），杜绝「窗口出现后再逐页卡」。
         try:
@@ -227,8 +232,8 @@ def main():
     frozen = getattr(sys, "frozen", False)
 
     if not frozen:
-        no_elevate = True
-        # no_elevate = os.environ.get(_ELEVATED_FLAG) == "1"
+        # no_elevate = True
+        no_elevate = os.environ.get(_ELEVATED_FLAG) == "1"
         deps_ok = _deps_present()
 
         # —— 依赖缺失：需要可见控制台跑 pip（仅首次）——
@@ -259,8 +264,8 @@ def main():
                   "  建议右键『启动.bat』→『以管理员身份运行』，或在 UAC 弹窗点『是』。\n")
 
         # 仍带控制台（如提权被拒、或本就以管理员+console 启动）：用 pythonw 去黑窗。
-        # if _has_console() and _relaunch_windowless():
-        #     return
+        if _has_console() and _relaunch_windowless():
+            return
 
     _launch_gui()
 

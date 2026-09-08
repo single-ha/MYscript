@@ -38,7 +38,8 @@
    docstring 与 memory `ctklabel-wraplength-gotcha`——**改它前务必看懂，否则极易改回截断/振荡**。
 9. **多开通用约束（贯穿全部任务）**：多开各号窗口须**同尺寸**（共用标定点位）；一只鼠标，多开节奏天然慢于单开；
    操作某号前先 `window.activate()` 切前台（`_force_foreground` 绕过焦点抢占并校验，失败则跳过该号、下轮重试，
-   绝不在后台号瞎点）。
+   绝不在后台号瞎点）。通用页「调整窗口」排布为**用户拍板**：调基准尺寸 + **2列×2行**网格（第1排贴屏幕/工作区顶、
+   最后1排贴任务栏），**最多 5 个窗口，第 5 个居中放屏幕正中**；实现用 `window.work_area()`（SPI_GETWORKAREA）。
 
 ## 架构（三层，包名 mhxy/）
 > 文件树是「地图」，只给一句话功能；实现细节看各文件 docstring 与 memory，别往这里抄。
@@ -63,13 +64,19 @@ mhxy/
     base.py     Task 基类 + 注册表（register/get_task/all_tasks）+ _make_rotation()（包多开轮转）+ dungeon_tasks()
     sniper.py   SniperTask（秒装备）：preflight() 自检 + run() 主循环；刷新=每轮重进货架 _enter_shelf()
     escort.py        EscortTask（运镖）：开活动→参加→押送普通镖银→循环押满次数
-    treasure_map.py  TreasureMapTask（宝图）：开活动→收图→挖宝→领奖 两阶段状态机
+    treasure_map.py  TreasureMapTask（宝图）：开活动→自动判是否已有宝图(找不到「参加」=已有,
+                      跳过领取直接挖)→收图/挖宝 领奖 两阶段状态机
     secret_realm.py  SecretRealmTask（秘境降妖）：开活动→参加→挑战→盯「进入战斗」续战，可连跑 max_runs 轮
     dungeon.py       DungeonTask（组队/一键组队）：把所选多开窗口组成一队即停（通用页「一键组队」跑它，
                       角色参数存共享 tasks.teaming）。name 仍叫 "dungeon" 仅为兼容；刷副本页跑的是选中副本而非它。
     disband.py       DisbandTask（解散队伍/一键解散）：让所选各号都退出当前队伍（每号同一套流程，不分队长队员），
                       复用 teaming.run_disband；通用页「一键解散」跑它，副本勾「跑完解散队伍」也调它
-    taohaiqu.py      TaohaiquTask（蹈海去·50，is_dungeon=True）：组队后队长跑完整条剧情战斗，跑一遍即停
+    dungeon_base.py  DungeonBaseTask 通用副本基类：子类只写 name/title/cat(侠士 xiashi / 普通 common)；
+                     进副本「进入」按钮普通/侠士共用，侠士先进副本前先点「侠士区」标签页(cat 区分)，再用
+                     vision.match_multi 多命中点按(行,列)取同标签区第 N 个「进入」；侠士进副本后轮询各号点「确认」；
+                     副本内每轮=点跳过剧情→点小闹钟寻路→点进入战斗→等战斗，循环到副本结束
+    dt_70_xiashi.py / dt_60_xiashi.py / dt_70_common.py / dt_60_common1.py / dt_60_common2.py
+                      五副本薄子类（侠士×2 / 普通×3，is_dungeon=True）；已删 taohaiqu.py（蹈海去被这 5 个取代）
     organize_bag.py  OrganizeBagTask（整理背包）：通用页可单独跑的共享能力封装，逐号 activate→core/inventory 整理；详见 memory organize-bag-task
   tools/
     calibrate.py 旧的命令行标定（已不被 GUI 调用，仅留作 CLI 备用）
@@ -97,14 +104,53 @@ mhxy/
   页内 `_log_line` 照范式写成一行转发 `self.app.log_line(msg, level, getattr(self,"LOG_SOURCE",None))`，
   全局面板会按 source 打来源标签（如「秒装备 ›」）。一页里有多种来源（如通用页的组队/整理背包）就在
   `pump`/各消息处显式把第三个参 source 传成对应短名覆盖。
-- **副本中枢（「刷副本」页 = DungeonPage）**：副本统一收进该页用「选择副本」下拉切换、选谁跑谁。
-  **加新副本只需写个 `is_dungeon = True` 的 Task**（照 `taohaiqu.py`）、在 `tasks/__init__.py` import——
-  `base.dungeon_tasks()` 自动把它列进下拉，GUI 不用改。约定：选谁跑存 `tasks.dungeon.selected`；每个副本自己的
-  队长/演练实战/已组队(skip_team)/标定都在**该副本自己的命名空间**，中枢页只代理读写到选中副本。
+- **副本中枢（「刷副本」页 = DungeonPage）**：副本统一收进该页用**勾选框多选**、点「开始」按勾选顺序**一个个顺序刷**
+  （一个跑完自动接下一个；某副本 preflight/异常失败**跳过继续下一个**，最后汇总；「停止」即停整个队列）。
+  **加新副本只需写个 `is_dungeon = True` 的 Task**、在 `tasks/__init__.py` import——
+  `base.dungeon_tasks()` 自动把它列进勾选清单，GUI 不用改。约定：勾选结果存 `tasks.dungeon.selected`（字符串列表，按勾选顺序）。
+  **所有副本共用一套标定**（只按普通/侠士区分）：模板/区域/loop/dry_run 全存共享 `tasks.dungeon` 命名空间，一次标定覆盖全部副本。
+  **组队设置（队长 captain_index / 已组队 skip_team / 跑完解散
+  auto_disband）统一存共享 `tasks.teaming`**，各多人任务（蹈海去/抓鬼等）的 preflight/run 都读这份共享配置；
+  **UI 上只在「多人任务」页顶层放一份「组队设置」（`common.TeamSettingsCard`，已组队/跑完解散开关）供该页所有
+  多人任务共用；队长/队长ID 在「通用」页「选择窗口/队长」里选。任务子页（刷副本/抓鬼）不再放组队控件**，
+  杜绝多页各自设置的分歧。
   - **「已组队」开关（skip_team）**：勾上=已自行组好队，副本跳过组队握手、直接由队长开刷；preflight 随之放宽
     （不要求多开≥2、不查组队资产，只需队长那个号能定位）。
+  - **副本通用实现 + 多命中点「进入」定位（`tasks/dungeon_base.py`）**：副本逻辑统一抽成 `DungeonBaseTask`
+    子类只写 `name/title/cat(侠士 xiashi / 普通 common)`；PREF 已废弃。
+    「进入」按钮**普通/侠士共用**一张（`templates.enter_dungeon`）；`xiashi_tab` 为侠士区标签页——
+    侠士副本进副本前先点它切到侠士区再找「进入」（cat 区分，普通不用切）。
+    进副本列表里**同标签区几个「进入」长得一样**，无法靠图像区分 → 用 `vision.match_multi` 全屏检出该标签区
+    「进入」模板的**所有命中点**，按(行,列)排好，取「当前副本在该标签区展示顺序里的第几个」点
+    （以 GUI 该区展示顺序当基准，**不能用勾选队列算序号**——只勾一个时队列序=0，但物理位置未必是列表第一个，曾进错副本）。
+    「当前副本是第几个」由刷副本页启动前写入 `tasks.dungeon.enter_target={cat,pos}`（`dungeon._write_enter_target`）。
+    侠士副本在点完「进入」后多一段入本步骤：轮询所有选中窗口、用共用「确认」模板把各号确认点掉，
+    **确认超时 → 返回队长窗口重新点「进入」**（enter+confirm 外套 `enter_retry_max` 次重试）。
+    **「拓印」临摹弹窗（user 2026-09-08 反馈）**：点「进入」后**队长窗口偶发**弹「拓印」临摹界面（队员不弹、
+    无放弃按钮），需按住鼠标沿随机图案描一遍再点「上传」。处理：识别 tuoying_title → `core/scribble.py`
+    拟人化区域填扫（图案随机但绘制区固定，只盖满不认轮廓）→ 点 tuoying_upload → 等界面消失；
+    **资产全可选、不标不拖累就绪度**（人不标=遇弹窗转手动，描完脚本自动续跑；3 种触发见
+    `tasks/dungeon_base.py` `_auto_trace`）。普通副本顺带补「已进本验证+重试」，防拓印掩盖的失败傻等。
+    若真机校验严到必须贴合图案轮廓，再升级轮廓描摹（cv2 提沿描）。
+    ⚠ **标定位置（user 拍板 2026-09-08）**：`tuoying_title`/`tuoying_upload`/`tuoying_area` 全在**「通用」页「标定（公共区域）」**里标，
+    存 `tasks.shared`（模板键集 `TUOYING_TPL_KEYS`；绘制区键 `tuoying_area` 由
+    `core/config.TASK_SHARED_REGIONS["dungeon"]` 声明），读取 = `_load_flags`/`task_config` 的 shared 叠加（任务命名空间旧值兜底）。
+    标定对话框写共享键路由走 `core/config.EXCLUSIVE_SHARED_REGIONS`（=`SHARED_REGION_KEYS ∪ TASK_SHARED_REGIONS` 值）。
+- **日常一条龙分「个人/多人」两区（user 拍板，2026-09-07）**：`tasks/daily.py` 里
+  `CHAINABLE_SINGLE`=个人组（宝图/运镖/秘境/三界奇缘/帮派签到/活跃度奖励，每窗口独立链）、
+  `MULTI_BARRIER`=多人组（刷副本/抓鬼，集体屏障：所有活跃号停靠同一步等齐→组队→队长跑→放行）。
+  `group_of(name)` 由任务名判定分组；**steps 全局有序=执行顺序**（按 `tasks.daily.group_order` 两段拼接，
+  界面「⇅ 两区互换」整段对调、组内保留）。**进个人组的前提**是任务有 `CHAINS_PER_WINDOW=True` +
+  `make_chain_driver(wctx)`（每窗口 record + 单步推进，非阻塞；帮派签到/活跃度已是轮转状态机）。
+  多人步只走集体 `_run_collective`，不建独立链。
 - **组队是共享能力、单独可一键触发**：握手在 `core/teaming.TeamFormation`；通用页有「选队长 + 一键组队」
   （跑 `DungeonTask`），角色参数存共享 `tasks.teaming`。任何副本跑之前都先自动组队。
+- **公共区域标定（`tasks.shared`）**：活动列表区 `activity_list` / 背包列表区 `bag_list` 跨任务画面相同、共用一套标定，
+  统一存共享命名空间 `tasks.shared.regions`，**只在「通用」页「标定（公共区域）」标定一次**（各任务 CALIBRATION 不再列出这两项）；
+  `core/config.py task_config()` 读取时自动叠加进各任务 regions（运行时与就绪判定都吃到；新任务直接用 `tc["regions"]` 读即可，
+  别各标一份）。共享键集合在 `core/config.SHARED_REGION_KEYS`；各任务「就绪判定」还要查的共享键在 `core/config.TASK_SHARED_REQ`。
+  同一对话框同时标**拓印临摹资产**（`TUOYING_TPL_KEYS` 模板 + `TASK_SHARED_REGIONS` 绘制区，存 `tasks.shared`，各任务不重复列出、不参与就绪）。
+  ⚠ 标定对话框写共享键走 `tasks.shared`、绝不回写任务自身命名空间（`ui/calibrate_dialog.py` 的 `_target_regions`/`_save` 只看 `EXCLUSIVE_SHARED_REGIONS`）；先补共享标定时让旧任务自带值兜底。
 - **「队长ID 库」（`gui/leader_gallery.py` + 纯函数 `core/leader_history.py`）非显而易见的约束**：
   **激活图路径永远是 `templates/tm_leader_id.png`**（teaming 与 calibrate 都写死读它），切换当前队长 = 把选中历史图
   **字节复制覆盖**该文件、**绝不改 config 路径串**，故 `TeamFormation` 零改、零回归。⚠ 就绪度判定只看

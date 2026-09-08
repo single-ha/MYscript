@@ -3231,7 +3231,10 @@ class App(ctk.CTk):
 
     def log_line(self, msg, level="info", source=None):
         """统一日志出口（所有页面/任务都调它）。source 非空时在行首加暗色来源标签，如「秒装备 ›」。
-        超过约 2000 行就裁掉最旧的，避免长时间运行把内存吃满。"""
+        超过约 2000 行就裁掉最旧的，避免长时间运行把内存吃满。
+        debug 级别日志只在全局「调试日志」开关（config.debug_log，设置页可勾）打开时才显示。"""
+        if level == "debug" and not self.cfg.get("debug_log", False):
+            return
         log = getattr(self, "log", None)
         if log is None:
             return

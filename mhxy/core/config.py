@@ -26,6 +26,107 @@ CONFIG_PATH = DATA_ROOT / "config.json"
 TEMPLATES_DIR = DATA_ROOT / "templates"
 CAPTURES_DIR = DATA_ROOT / "captures"
 
+# 跨任务【共用】的区域键（见 tasks.shared.regions）：在任意任务页标定一次全任务通用。
+SHARED_REGION_KEYS = ("activity_list", "bag_list")
+SHARED_REGION_LABELS = {"activity_list": "活动列表区域", "bag_list": "背包列表区域"}
+
+# 拓印临摹资产（见 tasks.shared.templates，在「通用」页「标定（公共区域）」里标定，所有副本共用）：
+# 点「进入」偶发的「拓印」临摹弹窗（队长窗）的标题/上传按钮模板。可选：标了刷副本遇弹窗自动描摹，
+# 不标遇弹窗转手动。读方 = dungeon_base._load_flags（tasks.shared 优先，任务命名空间旧值兜底）。
+TUOYING_TPL_KEYS = ("tuoying_title", "tuoying_upload")
+
+# 各任务「就绪判定」还要查的共享区域键（这些键已从任务自身 CALIBRATION 移走、只在
+# 通用页「标定（公共区域）」里标定一次）。key 与任务名一致；dungeon 指共享 tasks.dungeon。
+TASK_SHARED_REQ = {
+    "escort": ("activity_list",),
+    "secret_realm": ("activity_list",),
+    "sanjie": ("activity_list",),
+    "zhuagui": ("activity_list",),
+    "treasure_map": ("activity_list", "bag_list"),
+    "dungeon": ("activity_list",),
+}
+
+# 各任务专属的**共享区域**键（从任务自身 CALIBRATION 移走、存 tasks.shared.regions，
+# 在「通用」页「标定（公共区域）」里标定一次；运行时由 task_config() 自动叠加进本任务 regions）。
+TASK_SHARED_REGIONS = {
+    "dungeon": ("tuoying_area",),  # 拓印临摹绘制区——所有副本共用一个画面位置
+}
+
+# 所有只存 tasks.shared.regions 的区域键（calibrate_dialog 写入路由 / _save 剥离用）：
+EXCLUSIVE_SHARED_REGIONS = frozenset(SHARED_REGION_KEYS) | frozenset(
+    k for ks in TASK_SHARED_REGIONS.values() for k in ks
+)
+
+
+def _mk_dungeon_shared():
+    """刷副本的【共享】默认配置块。所有副本进副本前/后流程一致、标定一套共用，只按普通/侠士区分。
+    整体存入 tasks.dungeon（同块还含勾选 selected 与运行时 enter_target）。
+    模板键含义：
+      entry_common / entry_xiashi  活动列表里的普通/侠士副本卡片
+      join / select                参加按钮 / 选择副本对话框按钮
+      skip / clock / enter         跳过剧情 / 小闹钟(寻路) / 进入战斗按钮
+      enter_dungeon                选择副本对话框里的「进入」按钮（普通/侠士两标签区共用）
+      xiashi_tab                   侠士进副本前先点的「侠士区」标签页
+      confirm                      侠士进副本后各号弹的「确认」按钮
+      settlement                   结算界面（副本结束信号，识别到即收尾）
+      tuoying_title / tuoying_upload   点「进入」偶发的「拓印」临摹弹窗（队长单窗弹）：识别标题/上传按钮
+    loop 各键同旧 _mk_dungeon；extra：enter_retry_*/confirm_sec 为侠士「进入+确认」重试参数、
+    tuoying_* / enter_check_sec 为拓印临摹处理参数。"""
+    return {
+        "dry_run": True,             # true=演练：不组队、不点，只识别副本+组队模板自检
+        "loop": {
+            "match_threshold": 0.85,     # 标志模板匹配阈值
+            "npc_dialog_sec": 60,        # 点「参加」后等角色寻路到 NPC、弹出「选择副本」对话框的超时
+            "step_timeout_sec": 30,      # 选择副本/进入/小闹钟/进入战斗 等每步按钮出现的超时
+            "npc_dialog_tap_sec": 5.0,   # 寻路后等「进入战斗」超这么久仍未出现，就点一下场景推进 NPC 对话（点任意处可继续，对话结束自动进战斗）；0=关
+            "entry_skip_sec": 60,        # 「进入」后传送动画结束、首个「跳过剧情」出现的超时
+            "battle_timeout_sec": 600,   # 单场战斗上限（也作为等上一场打完、下一轮「跳过剧情」的超时）
+            "max_rounds": 24,            # 副本内「跳过→小闹钟→进入战斗」最大轮数（防无限循环）
+            "settle_grace": 0.05,        # 结算界面匹配阈值放宽量（结算画面一闪而过，比统一阈值放宽些提高召回）
+            "post_skip_sec": 3.0,        # 点完「跳过剧情」后驻留多久专盯结算画面（结算在点完跳过剧情后才弹）
+            "still_end_sec": 20,         # 兜底判结束：画面连续静止这么久(秒)就判副本已结束（结算界面自动关闭后回到静止场景，不必干等超时）；0=关
+            "still_diff": 6.0,           # 平均帧差低于此值视为静止（战斗中画面一直在动，不会误判）
+            "enter_retry_max": 3,        # 侠士「进入+确认」重试上限
+            "enter_retry_pause": 1.2,    # 重试前回队长重点进入前的停顿
+            "confirm_sec": 40,           # 侠士各号点确认的总超时
+            "tuoying_detect_sec": 8.0,   # 点「进入」后轮询是否弹出「拓印」临摹界面的时长
+            "tuoying_passes": 2,         # 拓印临摹：区域填扫几遍（每遍是一笔，横/竖随机）
+            "tuoying_stripe_spacing": 8.0,  # 拓印临摹：行扫间距（像素），越小越密、描得越久
+            "tuoying_upload_sec": 6.0,   # 点完「上传」后等拓印界面关闭的超时；超时=自动描未被认可→转手动
+            "enter_check_sec": 10.0,     # 普通副本点「进入」后验证已进本的时长（出现结算/跳过剧情等即算进）；超时重试点「进入」
+            "scroll_step": -3,           # 活动列表每次滚轮格数(负=向下翻)
+            "scroll_max_tries": 8,       # 活动列表最多翻几屏找副本卡片
+            "scroll_settle_sec": 0.35,   # 每滚一屏后等画面落定再重找的间隔(带抖动)
+            "scroll_reset_top": True,    # 翻找前先把列表滚到顶
+            "scroll_end_diff": 2.0,      # 滚一屏后该区域帧差<此值=列表滚不动了(到顶/到底)
+            "scroll_reset_max": 20,      # 「滚到顶」最多上滚几屏的防死循环上限
+            "activity_columns": 2,       # 活动列表每排几张卡片：找「参加」只在条目所属那一列内
+        },
+        "regions": {
+            "scene": None,           # 主识别区(整窗或大半屏)
+            "activity_list": None,   # 活动列表区域(滚轮在此找本副本卡片)
+            "tuoying_area": None,    # 「拓印」临摹界面的图案绘制区（留空=未标定时检测到拓印转手动）
+        },
+        "templates": {
+            "entry_common": None,    # 活动列表里的普通副本卡片
+            "entry_xiashi": None,    # 活动列表里的侠士副本卡片
+            "join": None,            # 卡片右侧的「参加」按钮
+            "select": None,          # 对话框「选择副本」按钮
+            "skip": None,            # 「跳过剧情」按钮（每轮先点它，也用来判上一场打完）
+            "clock": None,           # 任务栏「小闹钟」按钮（点它寻路到当前目标）
+            "enter": None,           # 副本内「进入战斗」按钮（寻路到位后点它发起本场）
+            "enter_dungeon": None,   # 选择副本对话框里的「进入」按钮（普通/侠士共用）
+            "xiashi_tab": None,      # 侠士进副本前先点的「侠士区」标签页（仅侠士用）
+            "confirm": None,         # 侠士进副本后各号弹的「确认」按钮
+            "settlement": None,      # 结算界面（副本结束信号；每轮打完轮询它，识别到即收尾）
+            "tuoying_title": None,   # 「拓印」临摹界面的标题/标志（点「进入」后被它拦截时识别用）
+            "tuoying_upload": None,  # 拓印临摹完要点的「上传」按钮
+        },
+        "selected": ["dt_70_common", "dt_60_common1", "dt_60_common2",
+                     "dt_70_xiashi", "dt_60_xiashi"],
+        "enter_target": {"cat": "common", "pos": 0},
+    }
+
 
 DEFAULT_CONFIG = {
     # ---- 跨任务共享 ----
@@ -40,6 +141,7 @@ DEFAULT_CONFIG = {
     "failsafe_corner": "top_right",      # 失控急停：任务运行时把鼠标甩到屏幕哪个角即停（独立于鼠标后端，始终生效）。
                                          #   top_right/top_left/bottom_right/bottom_left/off(关闭)。设置里可改。
     "appearance": "dark",                # 界面外观：dark(夜间) / light(白天)，侧栏可切换
+    "debug_log": False,                  # 调试日志开关：开启后 level="debug" 的日志才进全局面板（设置页可勾）
 
     # ---- 目标窗口选择（基础特性，跨任务共享）----
     #   所有任务都基于它确定「操作哪个号」：单开=选 1 个窗口，多开=选多个号轮流操作。
@@ -51,8 +153,11 @@ DEFAULT_CONFIG = {
         "multi_indices": [],       # 多开：选中的序号列表；空=检测到的全部
         "max_windows": 3,          # 多开最多同时操作几个号(0=不限)
         "switch_delay_sec": 0.15,  # 号与号之间切换的停顿(秒,带抖动)，别太机械
-        "base_size": None          # 标定时记录的窗口尺寸[w,h]；「还原尺寸」按钮把被拉大的号拉回它。None=尚未标定
+        "base_size": [907, 707]    # 基准窗口尺寸[w,h]；「还原尺寸/调整窗口」把号拉回/排成它。默认 907×707，可点「设为基准」改
     },
+
+    # 「调整窗口」排布：最左一列距屏幕/工作区左边缘的空白(像素)。想贴边留白改成 0，想更靠右调大。
+    "arrange_left_margin": 100,
 
     "humanize": {
         "speed": 2.0,             # 整体速度倍率：>1 更快(按比例缩短鼠标移动/按键的拟人化延迟)，<1 更慢更稳【标准抢货档】
@@ -149,7 +254,6 @@ DEFAULT_CONFIG = {
         # ---- 刷副本·宝图（一次性两阶段状态机；游戏自带自动战斗全托管，脚本只导航+监控+关键点击）----
         "treasure_map": {
             "dry_run": True,             # true=演练：只识别+打日志，不发快捷键/不点关键操作/不真用图
-            "skip_collect": False,       # true=已有宝图：跳过阶段A(开活动领宝图任务)，直接开背包挖包裹里的藏宝图
             "loop": {
                 "time_limit_min": 30,        # 时间上限（分钟）安全网，0=不限；主终止是「背包挖空」
                 "match_threshold": 0.85,     # 标志模板匹配阈值
@@ -174,6 +278,8 @@ DEFAULT_CONFIG = {
                 "scroll_reset_max": 20,      # 「滚到顶」最多上滚几屏的防死循环上限
                 "activity_columns": 2,       # 活动列表每排几张卡片：找「参加」只在条目所属那一列内，
                                              #   避免两张卡片一排时扫到右邻卡片、点错右边的「参加」
+                "join_confirm_tries": 3,     # 认出「宝图任务」后连确认几次「参加」按钮；多次都找不到
+                                             #   才判定「已有宝图」(跳过领取直接挖)，防滚动/加载瞬间误判
                 "max_stuck_recover": 3       # 连续卡死多少次就主动停
             },
             "regions": {                 # 相对游戏窗口 [x,y,w,h]，标定向导写入
@@ -200,6 +306,7 @@ DEFAULT_CONFIG = {
                 "tick_interval_sec": 0.5,    # 多开轮转节拍：所有号各推进一步后的间隔（带抖动）
                 "max_escorts": 3,            # 押镖次数：做满即停（与「对话框不再弹出」互为保险）
                 "done_idle_sec": 6.0,        # 已是最后一趟、「运镖中」标志消失且无新对话框，持续这么久→判定全部结束
+                "no_dialog_giveup_sec": 90,   # 运镖中但标志消失、下一趟对话框迟迟不弹的最大耐心（s），超了按本号结束处理；0=不启用（干等单趟超时）
                 "dialog_timeout_sec": 60,    # 点「参加」后等首个「押送普通镖银」对话框的超时
                 "confirm_timeout_sec": 10,   # 点「押送普通镖银」后等「确认」按钮的超时（超时容错继续）
                 "escort_timeout_sec": 600,   # 单趟运镖（含自动战斗）超时，超了按本批结束处理
@@ -277,14 +384,95 @@ DEFAULT_CONFIG = {
             }
         },
 
+        # ---- 三界奇缘（答题型：开活动→参加→答题循环，识别到「完成」字样即停）----
+        "sanjie": {
+            "dry_run": True,             # true=演练：只识别+打日志，不发快捷键/不点关键操作
+            "loop": {
+                "time_limit_min": 30,        # 时间上限（分钟）安全网，0=不限
+                "match_threshold": 0.85,     # 标志模板匹配阈值
+                "answer_idle_sec": 15,       # 答题循环里长时间找不到选项按钮（答题界面可能已关）就按结束处理
+                "answer_pos": None,          # 不标定选项模板时的固定点位 [fx, fy]（答题选项在 scene 内的相对坐标 0~1）；有模板时可留空
+                "tick_interval_sec": 0.5,    # 多开轮转节拍：所有号各推进一步后的间隔（带抖动）
+                "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
+                "scroll_max_tries": 8,       # 滑动找卡片最多翻几屏
+                "scroll_settle_sec": 0.35,   # 每滚一屏后等画面落定再重找的间隔（带抖动）
+                "scroll_reset_top": True,    # 翻找前先把列表滚到顶，保证向下扫一遍能覆盖整段(不漏上半截)
+                "scroll_end_diff": 2.0,      # 滚一屏后该区域帧差<此值=列表滚不动了(到顶/到底)，据此判「整段翻完」；偏小更保守(动画/高亮时退回 max_tries)
+                "scroll_reset_max": 20,      # 「滚到顶」最多上滚几屏的防死循环上限
+                "activity_columns": 2,       # 活动列表每排几张卡片：找「参加」只在条目所属那一列内，
+                                             #   避免两张卡片一排时扫到右邻卡片、点错右边的「参加」
+                "max_stuck_recover": 3       # 连续卡死多少次就主动停
+            },
+            "regions": {                 # 相对游戏窗口 [x,y,w,h]，标定向导写入
+                "scene": None,           # 主识别区（整窗或大半屏，所有 flag 都在这里找）
+                "activity_list": None    # 活动列表区域（滚轮在此找三界奇缘卡片）
+            },
+            "templates": {               # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
+                "qq_entry": None,            # 活动列表里要点「参加」的那张卡片
+                "qq_join": None,             # 那张卡片右侧的「参加」按钮（按行匹配点它）
+                "qq_option": None,           # 答题界面里任意一个选项按钮（脚本点它作答本道题）
+                "qq_done": None,             # 答题「完成」标志（今日已答完/次数用完等字样），识别到即停
+                "qq_close": None             # 答题结束后的「关闭」按钮（可选）
+            }
+        },
+
+        # ---- 抓鬼（多人·组队可跳过，队长跑 N 轮抓鬼循环）----
+        #   组队设置（已组队/跑完解散/队长）统一在共享 tasks.teaming；这里只放抓鬼自己的模板/区域/流程超时。
+        "zhuagui": {
+            "dry_run": True,             # true=演练：只识别+打日志，不发快捷键/不点关键操作
+            "loop": {
+                "match_threshold": 0.85,     # 标志模板匹配阈值
+                "max_rounds": 2,             # 抓鬼轮数 = 领任务次数，跑满即停（默认 2）
+                "npc_dialog_sec": 60,        # 参加后等「领取抓鬼任务」对话框出现的超时
+                "step_timeout_sec": 30,      # 领下一轮 等按钮出现的超时
+                "nav_double_gap_sec": 0.3,   # 点任务条目需连点两次：两次点击的间隔（首击会被当聚焦吞掉）
+                "battle_timeout_sec": 2400,  # 一场战斗超时：挂够这么久没打完视为异常（默认 40 分钟）
+                "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
+                "scroll_max_tries": 8,       # 滑动找卡片最多翻几屏
+                "scroll_settle_sec": 0.35,   # 每滚一屏后等画面落定再重找的间隔（带抖动）
+                "scroll_reset_top": True,    # 翻找前先把列表滚到顶，保证向下扫一遍能覆盖整段(不漏上半截)
+                "scroll_end_diff": 2.0,      # 滚一屏后该区域帧差<此值=列表滚不动了(到顶/到底)，据此判「整段翻完」；偏小更保守(动画/高亮时退回 max_tries)
+                "scroll_reset_max": 20,      # 「滚到顶」最多上滚几屏的防死循环上限
+                "activity_columns": 2,       # 活动列表每排几张卡片：找「参加」只在条目所属那一列内，
+                                             #   避免两张卡片一排时扫到右邻卡片、点错右边的「参加」
+                "max_stuck_recover": 3       # 连续卡死多少次就主动停
+            },
+            "regions": {                 # 相对游戏窗口 [x,y,w,h]，标定向导写入
+                "scene": None,           # 主识别区（整窗或大半屏，所有 flag 都在这里找）
+                "activity_list": None    # 活动列表区域（滚轮在此找抓鬼卡片）
+            },
+            "templates": {               # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
+                "gg_entry": None,            # 活动列表里「抓鬼」那张卡片
+                "gg_join": None,             # 那张卡片右侧的「参加」按钮（按行匹配点它）
+                "gg_claim": None,            # 寻路到任务 NPC 后「领取抓鬼任务」按钮（每轮点它领当前轮）
+                "gg_nav": None,              # 任务条目标签（领取后点它触发自动寻路到鬼的位置）
+                "gg_cancel": None,           # 点「领取抓鬼任务」后可能弹出的提醒弹窗里的取消按钮（可选；没标=弹窗时不处理）
+                "gg_next": None             # 「是否继续」弹窗里的「继续」按钮（战斗打完弹出，点它寻路回 NPC 领下一轮）
+            }
+        },
+
+        # ---- 公共区域（全局共享）：活动列表区 / 背包列表区 ----
+        #   运镖/宝图/秘境降妖/三界奇缘/抓鬼/刷副本都要在「活动」界面那片卡片列表里翻找入口，
+        #   宝图挖宝/整理背包都要在「背包」那片物品列表里翻找道具——两片区域画面相同、跨任务共用，
+        #   故统一存 tasks.shared.regions：随便在哪个任务页标一次，所有任务自动通用（见 task_config 叠加）。
+        "shared": {
+            "regions": {
+                "activity_list": None,   # 「活动」界面里那一片卡片列表（滚轮翻找副本/运镖/宝图等入口）
+                "bag_list": None,        # 「背包」打开后那一片物品列表（滚轮翻找藏宝图/待整理物品）
+            },
+        },
+
         # ---- 组队（全局共享资产；不是可运行任务，只存「组队」用到的标定+参数）----
         #   组队是跨窗口握手：队长建队→队员申请→队长接受→双方关窗。多个任务（刷副本/师门/帮派…）都会复用。
         #   故标定的模板/区域放这个共享命名空间 tasks.teaming，与具体任务解耦。
         #   「一键组队」（通用页）的角色参数也放这里：captain_index=谁当队长、dry_run=是否演练。
-        #   各副本任务（蹈海去等）自己跑组队时，队长仍读各副本自己块里的 captain_index。
+        #   所有多人任务共享的组队设置也放这里（skip_team=是否已组队跳过组队、auto_disband=跑完是否解散），
+        #   各副本/抓鬼任务只读这份共享配置，不再各存一份（在 GUI 的「组队设置」组件里统一改）。
         "teaming": {
             "dry_run": False,            # 一键组队默认直接组（不是只识别）——它是显式的手动动作
-            "captain_index": 0,          # 一键组队：队长是所选多开窗口里的第几号（0 起），其余自动当队员
+            "captain_index": 0,          # 队长是所选多开窗口里的第几号（0 起），其余自动当队员
+            "skip_team": False,          # 已组队=跳过自动组队，直接由队长跑（无需组队标定）
+            "auto_disband": False,       # 跑完后是否自动解散队伍（所有号退队）
             "loop": {
                 "match_threshold": 0.85,     # 标志模板匹配阈值
                 "tick_interval_sec": 0.5,    # 多号轮转节拍：所有号各推进一步后的间隔（带抖动）
@@ -362,77 +550,76 @@ DEFAULT_CONFIG = {
                 "sell_confirm_button": None,     # 商会出售弹窗里最终确认的「出售」按钮
                 "stall_sell_button": None,       # 「摆摊出售」按钮
                 "stall_shelf_button": None,      # 摆摊出售的「本服上架」按钮
-                "sell_button": None,             # 旧·笼统「出售」单按钮（兼容旧配置；新建议用商会/摆摊出售）
-                "confirm_button": None,          # 丢弃/旧出售的「确定」确认按钮
+                "confirm_button": None,          # 丢弃的「确定」确认按钮
                 "bag_full_icon": None            # 背包满时常驻屏幕上的「满」图标（自动整理靠它判背包满）
             },
             "items": []                          # [{name, template, action}]，action ∈ use/discard/shop_sell/stall_sell（兼容旧 sell）
                                                  # 物品图存 templates/ob_<name>.png
         },
 
-        # ---- 刷副本（副本中枢：选一个已收录的副本来跑；副本本身的组队/流程都在该副本任务里）----
-        #   本块只存中枢级选择；各副本的队长/演练实战/标定都在各副本自己的命名空间（如 tasks.taohaiqu）。
-        #   "selected" = 当前选中的副本任务名（is_dungeon=True 的任务），刷副本页据此决定跑谁。
-        "dungeon": {
-            "selected": "taohaiqu"       # 默认选中蹈海去；以后收录更多副本后可在刷副本页下拉切换
+        # ---- 帮派签到（单人任务页一键操作，也可进日常一条龙个人组）----
+        #   对每个所选窗口：打开帮派界面 → 点「福利」页签 → 点「签到」按钮。scene 留空=整窗检测。
+        "guild_checkin": {
+            "dry_run": True,
+            "loop": {
+                "match_threshold": 0.85,
+                "step_timeout_sec": 30,           # 等「福利」页签/「签到」按钮出现的单步超时
+            },
+            "regions": {"scene": None},
+            "templates": {
+                "guild_welfare_tab": None,        # 「福利」页签
+                "guild_checkin_btn": None,        # 「签到」按钮
+            },
         },
 
-        # ---- 副本·蹈海去(50级)（先组队，再由队长跑整条剧情战斗流程，跑一遍即停）----
-        #   组队的标定/参数走共享的 tasks.teaming；这里放本副本自己的角色参数(队长序号)+模板/区域+流程超时。
-        "taohaiqu": {
-            "dry_run": True,             # true=演练：不组队、不点，只识别副本+组队模板自检
-            "skip_team": False,          # true=「已组队」：跳过组队握手，直接由队长跑副本流程
-            "auto_disband": False,       # true=副本跑完后自动解散队伍（所有号退队）；用共享 teaming 的退队标定
-            "captain_index": 0,          # 队长是「第几号」：所选多开窗口列表里的序号(0 起)；其余号自动当队员
+        # ---- 领取每日活跃度奖励（单人任务页一键操作，也可进日常一条龙个人组）----
+        #   对每个所选窗口：打开活动界面 → 依次点 20/40/60/80/100 五档「领取」按钮。scene 留空=整窗检测。
+        "activity_reward": {
+            "dry_run": True,
             "loop": {
-                "match_threshold": 0.85,     # 标志模板匹配阈值
-                "npc_dialog_sec": 60,        # 点「参加」后等角色寻路到 NPC、弹出「选择副本」对话框的超时
-                "step_timeout_sec": 30,      # 选副本/进入/马上传送/对话选项/小闹钟 等每步按钮出现的超时
-                "daily_wait_sec": 1,         # 任务弹窗「日常」按钮的短等待：打开任务列表就有它，超这么久没检测到就直接点蹈海去任务
-                "entry_skip_sec": 60,        # 「进入」后传送动画结束、首个「跳过剧情」出现的超时
-                "battle_timeout_sec": 600,   # 单场战斗上限：挂够这么久仍没等到下一个「跳过剧情」就判超时中止(按真实关卡时长调)
-                "enter_box": None,           # 蹈海去「进入」限定的比例框 [x0,y0,x1,y1](0~1)；None=整屏找。
-                                             #   几个「进入」长得一样靠位置区分：点错就收窄到蹈海去那块(如 [0,0,1,0.5])
-                "scroll_step": -3,           # 活动列表每次滚轮格数(负=向下翻)
-                "scroll_max_tries": 8,       # 活动列表最多翻几屏找蹈海去卡片
-                "scroll_settle_sec": 0.35,   # 每滚一屏后等画面落定再重找的间隔(带抖动)
-                "scroll_reset_top": True,    # 翻找前先把列表滚到顶，保证向下扫一遍能覆盖整段(不漏上半截)
-                "scroll_end_diff": 2.0,      # 滚一屏后该区域帧差<此值=列表滚不动了(到顶/到底)，据此判「整段翻完」；偏小更保守(动画/高亮时退回 max_tries)
-                "scroll_reset_max": 20,      # 「滚到顶」最多上滚几屏的防死循环上限
-                "activity_columns": 2        # 活动列表每排几张卡片：找「参加」只在条目所属那一列内，避免点到右邻卡片
+                "match_threshold": 0.85,
+                "step_timeout_sec": 30,           # 等每档「领取」按钮出现的单步超时
             },
-            "regions": {                 # 相对游戏窗口 [x,y,w,h]，标定向导写入
-                "scene": None,           # 主识别区(整窗或大半屏，所有 flag 都在这里找)
-                "activity_list": None    # 活动列表区域(滚轮在此找蹈海去卡片)
+            "regions": {"scene": None},
+            "templates": {
+                "act_reward20": None,             # 20 活跃度「领取」按钮
+                "act_reward40": None,             # 40 活跃度「领取」按钮
+                "act_reward60": None,             # 60 活跃度「领取」按钮
+                "act_reward80": None,             # 80 活跃度「领取」按钮
+                "act_reward100": None,            # 100 活跃度「领取」按钮
             },
-            "templates": {               # 副本标志模板路径(标定向导裁图写入，tm_thq_ 前缀)
-                "thq_entry": None,           # 活动列表里「蹈海去」卡片
-                "thq_join": None,            # 蹈海去卡片右侧的「参加」按钮
-                "thq_select": None,          # 对话框「选择副本」按钮
-                "thq_enter": None,           # 蹈海去下方的「进入」按钮(按位置区分)
-                "thq_skip": None,            # 「跳过剧情动画」按钮(每场战斗前后都点，重现也用来判战斗结束)
-                "thq_daily": None,           # 任务弹窗里的「日常」分类按钮(开任务弹窗后先点它才列出蹈海去任务)
-                "thq_task": None,            # 任务列表里「蹈海去」任务条目(点「日常」后先点中它，传送才对应)
-                "thq_teleport": None,        # 任务弹窗里的「马上传送」按钮
-                "thq_opt1": None,            # 第1场对话「竖子尔敢！」
-                "thq_opt2": None,            # 第2场对话「恕难从命」
-                "thq_opt3": None,            # 第3场对话「与尔一战！」
-                "thq_clock": None            # 结束「小闹钟」按钮
-            }
         },
+
+        # ---- 刷副本（副本中枢）----
+        #   所有副本进副本前/后流程一致、标定【共用一套】（只按普通/侠士区分），整体存这份共享块，
+        #   由 dungeon_base 读取；各副本本身不再有各自模板/区域/超时。
+        #   "selected" = 勾选的副本任务名列表（is_dungeon=True 的任务），按顺序一个个刷。
+        #   "enter_target" = 运行时字段：启动某副本前，刷副本页写入 {cat, pos}（该副本在其标签区的展示序号），
+        #     任务据此在全屏类别「进入」多命中点里取第 pos 个点。
+        "dungeon": _mk_dungeon_shared(),
 
         # ---- 日常一条龙（只做串联：把下面 steps 里勾选的任务按顺序依次跑完）----
-        #   完全沿用各子任务自身的流程/标定/演练实战/多开单开设置，本块只存「跑哪些、按什么顺序」。
-        #   steps 是【有序】列表，每项 {task, enabled}；界面可勾选 + 上下调序。
+        #   完全沿用各子任务自身的流程/标定/演练实战/多开单开设置，本块只存「跑哪些、按什么顺序、两区谁在前」。
+        #   steps 是【有序】列表，每项 {task, enabled}；界面分「个人/多人」两区、可勾选 + 区内调序 + 两区互换。
+        #   个人组=每窗口独立链（宝图/运镖/秘境/三界奇缘/帮派签到/活跃度奖励）；多人组=集体屏障（刷副本/抓鬼）。
+        #   group_order=["single","multi"] 或反序：两区谁跑在前（组内顺序保留，执行顺序=steps 全局序）。
         #   秒装备不在候选内（无限抢货、不会自己跑完，会卡死整条龙）。
         "daily": {
             "steps": [
                 {"task": "treasure_map", "enabled": True},
                 {"task": "escort", "enabled": True},
-                {"task": "secret_realm", "enabled": True}
+                {"task": "secret_realm", "enabled": True},
+                {"task": "sanjie", "enabled": True},
+                {"task": "guild_checkin", "enabled": True},
+                {"task": "activity_reward", "enabled": True},
+                {"task": "dungeon", "enabled": True},
+                {"task": "zhuagui", "enabled": True}
             ],
+            "group_order": ["single", "multi"],
             "loop": {
-                "time_limit_min": 0          # 整条龙的时间上限(分钟)安全网，0=不限；正常按各子任务自身条件跑完
+                "time_limit_min": 0,          # 整条龙的时间上限(分钟)安全网，0=不限；正常按各子任务自身条件跑完
+                "shutdown_after": False,      # 跑完关机：整条龙全部跑完（且有实跑任务）后延迟关机
+                "shutdown_delay_sec": 60,     # 关机延迟秒数（留缓冲，可 shutdown -a 取消）
             }
         }
     }
@@ -470,7 +657,43 @@ def save_config(cfg):
 def task_config(cfg, task_name):
     """取某任务的配置块，缺失则用默认补。"""
     default = DEFAULT_CONFIG["tasks"].get(task_name, {})
-    return _deep_merge(default, cfg.get("tasks", {}).get(task_name, {}))
+    tc = _deep_merge(default, cfg.get("tasks", {}).get(task_name, {}))
+    # 把共享公共区域（tasks.shared.regions）叠加进本任务 regions：已标定的覆盖、空的不动。
+    # 「活动列表区/背包列表区」跨任务画面相同，统一在此叠加 → 在任意任务页标一次，所有任务
+    # （运行时读取 + 各页就绪判定 + 标定状态）一律自动通用，无需逐任务标定。
+    if task_name != "shared":
+        shared_r = (cfg.get("tasks", {}) or {}).get("shared", {}) or {}
+        shared_r = shared_r.get("regions") or {}
+        # 只对「本身定义了 regions」的任务叠加——daily 等无 regions 的块不注入，
+        # 否则页面的 _save 会把叠加产物回写进配置、造成冗余（运行期也无意义）。
+        if shared_r and isinstance(tc.get("regions"), dict):
+            reg = dict(tc["regions"])
+            changed = False
+            for k, v in shared_r.items():
+                if v:
+                    reg[k] = v
+                    changed = True
+            if changed:
+                tc["regions"] = reg
+    return tc
+
+
+def apply_global_dry_run(cfg):
+    """把顶层全局 dry_run 同步进每个任务的 tasks.<名>.dry_run（总开关管控，一把写全套）。
+    任务运行时读的是任务级 dry_run（`tc.get("dry_run", True)`），只改顶层不生效会踩坑——
+    「切了实战仍按演练跑」就是这么来的。返回 cfg（同一对象）。"""
+    tasks = cfg.get("tasks")
+    if not isinstance(tasks, dict):
+        tasks = {}
+        cfg["tasks"] = tasks
+    value = bool(cfg.get("dry_run", True))
+    for name in DEFAULT_CONFIG["tasks"]:
+        t = tasks.get(name)
+        if not isinstance(t, dict):
+            t = {}
+            tasks[name] = t
+        t["dry_run"] = value
+    return cfg
 
 
 def set_task_config(cfg, task_name, task_cfg):
