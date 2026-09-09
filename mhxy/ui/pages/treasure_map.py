@@ -7,7 +7,7 @@ from .. import theme as T
 from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
-from ..common import Card, bind_wraplength, shared_region_hint
+from ..common import Card, bind_wraplength, calib_status, required_regions, required_templates, optional_templates
 
 
 class TreasureMapPage(ctk.CTkFrame):
@@ -124,15 +124,13 @@ class TreasureMapPage(ctk.CTkFrame):
         # 标定完成度概览：是否已有宝图运行期自动判，故阶段A(入口/参加/听听无妨)与阶段B(下一张/藏宝图)都要
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
-        need_r = ["scene", "activity_list", "bag_list"]
-        need_t = ["flag_treasure_entry", "flag_join", "flag_tingting",
-                  "flag_next_map", "treasure_item"]
-        rdone = sum(1 for k in need_r if regions.get(k))
-        tdone = sum(1 for k in need_t if templates.get(k))
-        self.lbl_calib.configure(
-            text=f"标定：必要区域 {rdone}/{len(need_r)}，必要模板 {tdone}/{len(need_t)}"
-                   + ("　✓ 可运行" if rdone == len(need_r) and tdone == len(need_t) else "　（还需标定）")
-                   + shared_region_hint(regions, self.TASK_NAME))
+        spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
+        need_r = required_regions(spec)   # scene 可留空（第4元素=True），自动排除；公共区域在「通用」页统一标定
+        need_t = required_templates(spec)
+        opt_tpl = optional_templates(spec)
+        _ready, txt, color = calib_status(regions=regions, templates=templates, task_name=self.TASK_NAME,
+                                          region_keys=need_r, tpl_keys=need_t, tpl_opt_keys=opt_tpl)
+        self.lbl_calib.configure(text=txt, text_color=color)
 
     # ---- 运行控制 ----
     def _toggle_run(self):

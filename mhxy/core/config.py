@@ -90,8 +90,10 @@ def _mk_dungeon_shared():
             "enter_retry_pause": 1.2,    # 重试前回队长重点进入前的停顿
             "confirm_sec": 40,           # 侠士各号点确认的总超时
             "tuoying_detect_sec": 8.0,   # 点「进入」后轮询是否弹出「拓印」临摹界面的时长
-            "tuoying_passes": 2,         # 拓印临摹：区域填扫几遍（每遍是一笔，横/竖随机）
-            "tuoying_stripe_spacing": 8.0,  # 拓印临摹：行扫间距（像素），越小越密、描得越久
+            "tuoying_passes": 2,         # 拓印临摹：沿图案骨架描几轮（每轮各笔画重新随机，提升覆盖）
+            "tuoying_lateral": 3.0,      # 拓印临摹：随描轨迹垂直于笔画走向的横向偏移上限(像素)，笔迹加宽更易达标
+            "tuoying_sample_step": 5.0,  # 拓印临摹：骨架采样间距(像素)，越小越贴笔画(也更慢)
+            "tuoying_stripe_spacing": 8.0,  # 已废弃（拓印改骨架描摹）——保留兼容旧配置读取
             "tuoying_upload_sec": 6.0,   # 点完「上传」后等拓印界面关闭的超时；超时=自动描未被认可→转手动
             "enter_check_sec": 10.0,     # 普通副本点「进入」后验证已进本的时长（出现结算/跳过剧情等即算进）；超时重试点「进入」
             "scroll_step": -3,           # 活动列表每次滚轮格数(负=向下翻)

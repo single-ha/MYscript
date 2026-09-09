@@ -180,6 +180,75 @@ def shared_region_hint(regions, task_name):
     return f"；公共区域「{names}」未标定 —— 请到「通用」页点「标定（公共区域）」（全任务共用）"
 
 
+def calib_status(*, regions, templates, task_name,
+                 region_keys=(), tpl_keys=(), tpl_opt_keys=(), label="标定", extra="", extra_ready=None):
+    """统一的任务页「标定」状态文本格式。
+
+    regions/templates 应为已叠加 tasks.shared 的 task_config（见 core/config.task_config）。
+    region_keys/tpl_keys 只传任务**自身**的必标区域/模板（公共区域不传，由内部按
+    TASK_SHARED_REQ 自动补判并附加提示）；tpl_opt_keys 传**可选**模板键——缺失不影响就绪，
+    仅作提示「另有可选 n 未标」（可选模板与必选模板应来自同一 CALIBRATION spec 的
+    required_templates/optional_templates 推导，勿手写）。
+    label 默认「标定」；extra 为可选追加说明（如 sanjie 的答题点位缺失提示，用「，」开头）。
+    extra_ready 可选：调用方的额外就绪条件（如组队/答题点位），给定时会并入最终显示的
+    「✓ 可运行/（还需标定）」判定；不给则只看自身必标＋公共区域。
+    返回 (ready, text, color)：
+      - ready：自身必标（不算可选）＋公共区域＋(extra_ready 若给定) 都齐。
+      - text：统一格式「{label}：必要模板 x/y（另有可选 n 未标）{extra}　✓ 可运行/（还需标定）
+         ＋公共区域未标定提示」。无区域时省略「必要区域」段、无模板时省略「必要模板」段；
+        可选模板全标齐则省略「另有可选」段。
+      - color：已就绪=SUCCESS（绿）/ 还需标定=WARN（黄），供标定状态标签着色的主题令牌。"""
+    region_keys = list(region_keys)
+    tpl_keys = list(tpl_keys)
+    tpl_opt_keys = [k for k in tpl_opt_keys if k not in tpl_keys]
+    rdone = sum(1 for k in region_keys if regions.get(k))
+    tdone = sum(1 for k in tpl_keys if templates.get(k))
+    tdone_opt = sum(1 for k in tpl_opt_keys if templates.get(k))
+    r_ok = (not region_keys) or rdone == len(region_keys)
+    t_ok = (not tpl_keys) or tdone == len(tpl_keys)
+    shared_msg = shared_region_hint(regions, task_name)
+    ready = r_ok and t_ok and not shared_msg
+    if extra_ready is not None:
+        ready = ready and bool(extra_ready)
+    seg = []
+    if region_keys:
+        seg.append(f"必要区域 {rdone}/{len(region_keys)}")
+    if tpl_keys:
+        seg.append(f"必要模板 {tdone}/{len(tpl_keys)}")
+    opt_txt = ""
+    if tpl_opt_keys and tdone_opt < len(tpl_opt_keys):
+        opt_txt = f"（另有可选 {len(tpl_opt_keys) - tdone_opt} 未标）"
+    body = "，".join(seg) if seg else "无必标项"
+    text = (f"{label}：{body}{opt_txt}{extra}"
+            + ("　✓ 可运行" if ready else "　（还需标定）")
+            + shared_msg)
+    color = T.SUCCESS if ready else T.WARN
+    return ready, text, color
+
+
+# ----------------------------------------------------------------------
+# 从任务 CALIBRATION spec 推导「必选 / 可选」集合（单一来源）
+# ----------------------------------------------------------------------
+def required_regions(spec):
+    """从任务的 CALIBRATION spec 取「非可选区域」键（第 4 元素为真 = 可留空，如 scene 主识别区）。"""
+    return [t[0] for t in spec.get("regions", []) if not _row_optional(t)] if spec else []
+
+
+def required_templates(spec):
+    """从任务的 CALIBRATION spec 取「必选模板」键（第 4 元素为真 = 可选，不参与就绪）。"""
+    return [t[0] for t in spec.get("templates", []) if not _row_optional(t)] if spec else []
+
+
+def optional_templates(spec):
+    """从任务的 CALIBRATION spec 取「可选模板」键（第 4 元素为真；缺失不影响就绪）。"""
+    return [t[0] for t in spec.get("templates", []) if _row_optional(t)] if spec else []
+
+
+def _row_optional(t):
+    """spec 行是否标「可选」：第 4 个及以上元素存在且为真。"""
+    return len(t) >= 4 and t[3]
+
+
 # ----------------------------------------------------------------------
 # 组队设置（多人任务公用）：读写共享 tasks.teaming 命名空间
 # ----------------------------------------------------------------------

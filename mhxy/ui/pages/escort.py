@@ -7,7 +7,7 @@ from .. import theme as T
 from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
-from ..common import Card, bind_wraplength, shared_region_hint
+from ..common import Card, bind_wraplength, calib_status, required_regions, required_templates, optional_templates
 
 
 class EscortPage(ctk.CTkFrame):
@@ -117,14 +117,13 @@ class EscortPage(ctk.CTkFrame):
         self.var_limit.set(str(loopc.get("time_limit_min", 30)))
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
-        need_r = ["scene", "activity_list"]
-        need_t = ["escort_entry", "escort_join", "escort_silver", "escort_confirm", "escort_ongoing"]
-        rdone = sum(1 for k in need_r if regions.get(k))
-        tdone = sum(1 for k in need_t if templates.get(k))
-        self.lbl_calib.configure(
-            text=f"标定：必要区域 {rdone}/{len(need_r)}，必要模板 {tdone}/{len(need_t)}"
-                   + ("　✓ 可运行" if rdone == len(need_r) and tdone == len(need_t) else "　（还需标定）")
-                   + shared_region_hint(regions, self.TASK_NAME))
+        spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
+        need_r = required_regions(spec)   # scene 可留空（第4元素=True），自动排除；公共区域在「通用」页统一标定
+        need_t = required_templates(spec)
+        opt_tpl = optional_templates(spec)
+        _ready, txt, color = calib_status(regions=regions, templates=templates, task_name=self.TASK_NAME,
+                                          region_keys=need_r, tpl_keys=need_t, tpl_opt_keys=opt_tpl)
+        self.lbl_calib.configure(text=txt, text_color=color)
 
     # ---- 运行控制 ----
     def _toggle_run(self):

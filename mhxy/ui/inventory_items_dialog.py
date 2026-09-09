@@ -118,9 +118,10 @@ class InventoryItemsDialog(ctk.CTkToplevel):
                 ctk.CTkLabel(row, text="🎒", font=self.fonts["h2"]).grid(row=0, column=0, padx=(10, 8), pady=8)
 
             nm = ctk.CTkLabel(row, text=it.get("name", "?"), font=self.fonts["body_b"],
-                              text_color=T.TEXT, justify="left", anchor="w")
+                              text_color=T.TEXT, justify="left", anchor="w", cursor="hand2")
             nm.grid(row=0, column=1, sticky="ew", padx=(0, 8))
             T.bind_wraplength(nm)
+            nm.bind("<Button-1>", lambda e, idx=i, cell=nm: self._start_edit(idx, cell))
 
             cur = it.get("action", "use")
             menu = ctk.CTkOptionMenu(
@@ -138,6 +139,79 @@ class InventoryItemsDialog(ctk.CTkToplevel):
                           command=lambda idx=i: self._delete_item(idx)).grid(row=0, column=3, padx=(0, 10))
 
     # ------------------------------------------------------------------
+    def _start_edit(self, idx, label):
+        """点击物品名 → 就地换成 Entry 开始改名。回车/失焦 = 确认，Esc = 取消。"""
+        items = self.tc.get("items", []) or []
+        if not (0 <= idx < len(items)):
+            return
+        cell = label.master                       # 行容器
+        old = items[idx].get("name", "")
+        done = False                              # 防 return/focusout 重复提交
+        entry = ctk.CTkEntry(cell, font=self.fonts["body_b"], text_color=T.TEXT,
+                             fg_color=T.SURFACE, border_color=T.ACCENT, border_width=1)
+        entry.insert(0, old)
+        entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        label.destroy()
+
+        def _commit(_=None, cancel=False):
+            nonlocal done
+            if done:
+                return
+            done = True
+            new = entry.get().strip().replace("/", "_").replace("\\", "_").replace(" ", "_")
+            if cancel or not new or new == old:
+                self._refresh()                     # 取消/空/没变 → 还原为标签
+                return
+            # 重名保护：与其他物品撞名则拒绝（加个提示）
+            others = [it.get("name") for i2, it in enumerate(items) if i2 != idx]
+            if new in others:
+                self._refresh()
+                self._toast(f"已有同名物品「{new}」，改名取消。", T.DANGER)
+                return
+            self._rename_item(idx, old, new)
+
+        entry.bind("<Return>", _commit)
+        entry.bind("<FocusOut>", lambda e: _commit())
+        entry.bind("<Escape>", lambda e: _commit(cancel=True))
+        entry.focus_set()
+        entry.select_range(0, "end")
+
+    def _rename_item(self, idx, old, new):
+        """改名：同步重命名模板文件（ob_<旧> → ob_<新>）、更新 item.name/template、存盘。"""
+        items = self.tc.get("items", []) or []
+        it = items[idx]
+        tpl_old = it.get("template") or f"templates/ob_{old}.png"
+        tpl_new = f"templates/ob_{new}.png"
+        renamed_ok = self._rename_template_file(tpl_old, tpl_new)
+        it["name"] = new
+        it["template"] = tpl_new if renamed_ok else tpl_old
+        self._save()
+        self._refresh()
+        if renamed_ok:
+            self._toast(f"已改名：{old} → {new}", T.SUCCESS)
+        else:
+            self._toast(f"已改名（模板文件未能重命名，名称变更不影响识别）：{old} → {new}", T.TEXT_DIM)
+
+    def _rename_template_file(self, old_rel, new_rel):
+        """把模板图文件从 old_rel 改名为 new_rel（兼容中文路径）。
+        返回 True=成功或无需改名；False=旧图存在但改名失败（调用方应保留旧路径）。"""
+        import os
+        from ..core import vision as vi
+        if old_rel == new_rel:
+            return True
+        p_old = vi._abspath(old_rel)
+        p_new = vi._abspath(new_rel)
+        if not os.path.exists(p_old):
+            return True                       # 无旧图（模板本就缺失），无需改
+        try:
+            os.makedirs(os.path.dirname(p_new) or ".", exist_ok=True)
+            if os.path.exists(p_new):
+                os.remove(p_new)
+            os.rename(p_old, p_new)
+            return True
+        except Exception:
+            return False
+
     def _set_action(self, idx, label):
         """改某件物品的动作（界面显示 -> 内部值 use/discard/shop_sell/stall_sell），写回并存盘。"""
         items = self.tc.get("items", []) or []

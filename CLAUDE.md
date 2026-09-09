@@ -126,12 +126,13 @@ mhxy/
     「当前副本是第几个」由刷副本页启动前写入 `tasks.dungeon.enter_target={cat,pos}`（`dungeon._write_enter_target`）。
     侠士副本在点完「进入」后多一段入本步骤：轮询所有选中窗口、用共用「确认」模板把各号确认点掉，
     **确认超时 → 返回队长窗口重新点「进入」**（enter+confirm 外套 `enter_retry_max` 次重试）。
-    **「拓印」临摹弹窗（user 2026-09-08 反馈）**：点「进入」后**队长窗口偶发**弹「拓印」临摹界面（队员不弹、
-    无放弃按钮），需按住鼠标沿随机图案描一遍再点「上传」。处理：识别 tuoying_title → `core/scribble.py`
-    拟人化区域填扫（图案随机但绘制区固定，只盖满不认轮廓）→ 点 tuoying_upload → 等界面消失；
+**「拓印」临摹弹窗（user 2026-09-08 反馈、2026-09-09 升级）**：点「进入」后**队长窗口偶发**弹「拓印」临摹界面（队员不弹、
+    无放弃按钮），需按住鼠标沿随机图案描一遍再点「上传」。处理：识别 `tuoying_title` → `core/scribble.py` **沿图案骨架描摹**
+    （先截绘制区画面、形态学分离前景线条→Zhang-Suen 细化取骨架→确定性贪心拆成尽量少的连续笔画→每笔按住沿骨架走+横向
+    锯齿加宽笔迹；只描图案本身，**不盖满整区**——拓印判「完成度>60%」，描到图案外会拉低完成度）→ 点 `tuoying_upload` → 等界面消失；
     **资产全可选、不标不拖累就绪度**（人不标=遇弹窗转手动，描完脚本自动续跑；3 种触发见
-    `tasks/dungeon_base.py` `_auto_trace`）。普通副本顺带补「已进本验证+重试」，防拓印掩盖的失败傻等。
-    若真机校验严到必须贴合图案轮廓，再升级轮廓描摹（cv2 提沿描）。
+    `tasks/dungeon_base.py` `_auto_trace`）。识别不出图案/截图失败 → 转手动兜底（等界面消失自动续跑），绝不盲目乱描。
+    `scribble.trace_pattern` 是通用能力：任何「沿图案描一遍」类校验都能复用。
     ⚠ **标定位置（user 拍板 2026-09-08）**：`tuoying_title`/`tuoying_upload`/`tuoying_area` 全在**「通用」页「标定（公共区域）」**里标，
     存 `tasks.shared`（模板键集 `TUOYING_TPL_KEYS`；绘制区键 `tuoying_area` 由
     `core/config.TASK_SHARED_REGIONS["dungeon"]` 声明），读取 = `_load_flags`/`task_config` 的 shared 叠加（任务命名空间旧值兜底）。

@@ -8,7 +8,7 @@ from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
 from ...tasks import get_task
-from ..common import Card, bind_wraplength, teaming_ns, teaming_ready, shared_region_hint
+from ..common import Card, bind_wraplength, teaming_ns, teaming_ready, calib_status, required_regions, required_templates, optional_templates
 
 
 class ZhuaguiPage(ctk.CTkFrame):
@@ -113,11 +113,13 @@ class ZhuaguiPage(ctk.CTkFrame):
         skip_team = team_tc.get("skip_team", False)
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
-        need_r = ["activity_list"]
-        need_t = ["gg_entry", "gg_join", "gg_claim", "gg_nav", "gg_next"]
-        rdone = sum(1 for k in need_r if regions.get(k))
-        tdone = sum(1 for k in need_t if templates.get(k))
-        self_ok = rdone == len(need_r) and tdone == len(need_t)
+        spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
+        need_r = required_regions(spec)   # 抓鬼自身无区域；公共区域（活动列表）在「通用」页统一标定
+        need_t = required_templates(spec)
+        opt_tpl = optional_templates(spec)
+        self_ok, calib_txt, _calib_color = calib_status(regions=regions, templates=templates,
+                                                        task_name=self.TASK_NAME, region_keys=need_r, tpl_keys=need_t,
+                                                        tpl_opt_keys=opt_tpl, label="抓鬼标定")
         if skip_team:
             ready = self_ok
             team_line = "已组队：本次跳过组队（无需组队标定）\n"
@@ -126,11 +128,8 @@ class ZhuaguiPage(ctk.CTkFrame):
             ready = self_ok and team_ok
             team_line = "组队标定：" + (
                 "齐全 ✓" if team_ok else "区域内/模板未标齐（去「通用」页标定组队）") + "\n"
-        self.lbl_calib.configure(
-            text=team_line
-                 + f"抓鬼标定：必要区域 {rdone}/{len(need_r)}，必要模板 {tdone}/{len(need_t)}"
-                 + ("　✓ 可运行" if ready else "　（还需标定）")
-                 + shared_region_hint(regions, self.TASK_NAME))
+        self.lbl_calib.configure(text=team_line + calib_txt,
+                                 text_color=T.SUCCESS if ready else T.WARN)
 
     # ---- 运行控制 ----
     def _toggle_run(self):

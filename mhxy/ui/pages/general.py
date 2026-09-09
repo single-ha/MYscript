@@ -39,6 +39,7 @@ class GeneralPage(ctk.CTkFrame):
         self.switch_auto_ob = None  # 「自动整理背包」开关（任何任务检测到背包满自动整理）
         self._win_count = 0         # 已选多开窗口数（resolve_targets），供状态行显示
         self.btn_team = None
+        self._enum_pending = None   # 窗口枚举结果暂存：worker 线程写，主线程 pump 取走渲染
         self.btn_disband = None     # 「一键解散」按钮（_refresh_body 每次重建）
         self.btn_leader = None      # 行内队长ID按钮（_refresh_body 每次重建）
         self._leader_thumbs = []    # 行内队长ID缩略图防 GC
@@ -337,31 +338,44 @@ class GeneralPage(ctk.CTkFrame):
         self._build_organize_card()
 
     def _kick_enum_windows(self, holder, base):
-        """后台枚举窗口，完成后回主线程把列表填进 holder。用 token 丢弃过期结果（连续切页/刷新时）。
-        每次重建卡片都会重设空结果重试计数。"""
+        """后台枚举窗口，完成后把结果暂存 _enum_pending，由主线程的 pump() 取出渲染。
+
+        为什么不用后台线程直接 app.after(0, ...)：从非主线程调 Tk 的 after 在启动早期
+        （主线程尚在 __init__、未进入 mainloop 的瞬间）会抛 RuntimeError 被吞掉、回调永久丢失，
+        导致窗口列表永远停在「正在检测窗口…」（用户首开必现、手点「刷新」又能出）。改为 worker
+        只写实例字段、主线程 pump 轮询，彻底绕开跨线程摸 Tk。"""
         cfg = self.cfg
         title = cfg.get("window_title", "梦幻西游")
         offset = cfg.get("window_offset", [0, 0])
         token = object()
         self._enum_token = token
+        self._enum_empty_retries = 0
 
         def work():
             try:
                 wins = win_mod.locate_all(title, offset)
-                data = [(w, w.rect()) for w in wins]   # rect() 趁后台一并取好
+                data = [(w, w.rect()) for w in wins]
             except Exception:
                 data = []
-            try:
-                self.app.after(0, lambda: self._fill_win_rows(holder, data, base, token))
-            except Exception:
-                pass
+            self._enum_pending = (holder, base, data, token)
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _drain_enum(self):
+        """主线程 pump() 每帧调用：把 worker 暂存的窗口枚举结果渲染出来。无结果则不动。"""
+        pend = getattr(self, "_enum_pending", None)
+        if pend is None:
+            return
+        self._enum_pending = None
+        holder, base, data, token = pend
+        try:
+            self._fill_win_rows(holder, data, base, token)
+        except Exception:
+            pass
+
     def _fill_win_rows(self, holder, data, base, token):
         """在主线程把枚举结果渲染进 holder。过期结果/控件已销毁则丢弃。
-        空结果（开局时与 _kick_locate 的 getAllWindows 并发会瞬时读到空）自动重试几次再放弃，
-        不必等用户手动点「刷新」。"""
+        空结果（开局时偶然的瞬时读空）自动重试几次再放弃，不必等用户手动点「刷新」。"""
         if token is not getattr(self, "_enum_token", None):
             return
         try:
@@ -370,7 +384,6 @@ class GeneralPage(ctk.CTkFrame):
         except Exception:
             return
         if not data:
-            # 空结果多半是并发 getAllWindows 的瞬时抖动：稍后再试（最多 _enum_empty_retries 上限）
             n = getattr(self, "_enum_empty_retries", 0)
             if n < 3:
                 self._enum_empty_retries = n + 1
@@ -604,6 +617,7 @@ class GeneralPage(ctk.CTkFrame):
 
     # ---- 由 App._tick 驱动 ----
     def pump(self):
+        self._drain_enum()   # 窗口列表枚举结果：worker 写字段、这里主线程取出渲染
         if self.runner:
             q = self.runner.log_queue
             while not q.empty():

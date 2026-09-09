@@ -8,15 +8,13 @@ from .. import theme as T
 from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
-from ..common import Card, bind_wraplength
+from ..common import Card, bind_wraplength, calib_status, required_templates, optional_templates
 
 
 class GuildCheckinPage(ctk.CTkFrame):
     TASK_NAME = "guild_checkin"
     LOG_SOURCE = "帮派签到"
     RUN_LABEL = "▶  一键签到"
-
-    _NEED_TPL = ["guild_welfare_tab", "guild_checkin_btn"]
 
     def __init__(self, master, app):
         super().__init__(master, fg_color="transparent")
@@ -99,11 +97,12 @@ class GuildCheckinPage(ctk.CTkFrame):
         self.app.cfg = cfg_mod.load_config()
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         templates = tc.get("templates", {})
-        tdone = sum(1 for k in self._NEED_TPL if templates.get(k))
-        total = len(self._NEED_TPL)
-        self.lbl_calib.configure(
-            text=f"标定：必要模板 {tdone}/{total}"
-                 + ("　✓ 可运行" if tdone == total else "　（还需标定：点右上「标定」框选两张图）"))
+        spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
+        need_t = required_templates(spec)
+        opt_tpl = optional_templates(spec)
+        _ready, txt, color = calib_status(regions=tc.get("regions", {}), templates=templates,
+                                          task_name=self.TASK_NAME, tpl_keys=need_t, tpl_opt_keys=opt_tpl)
+        self.lbl_calib.configure(text=txt, text_color=color)
 
     # ---- 运行控制 ----
     def _toggle_run(self):

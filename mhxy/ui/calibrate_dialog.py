@@ -295,10 +295,12 @@ class CalibrateDialog(ctk.CTkToplevel):
             ctk.CTkLabel(rcard, text="① 区域与按钮", font=self.fonts["h2"], text_color=T.TEXT).grid(
                 row=0, column=0, columnspan=3, sticky="w", padx=16, pady=(14, 6))
             has_shared = any(it[0] in SHARED_REGION_KEYS for it in regions)
+            has_tuoying_region = any(it[0] == "tuoying_area" for it in regions)
             rhint_text = "这些只是记录屏幕上一块位置（坐标），本身没有图片，标好显示「● 已框选」即可。"
             if has_shared:
                 rhint_text += "「活动列表区域 / 背包列表区域」是所有任务【共用】的区域：在这里标一次，宝图/运镖/秘境/奇缘/抓鬼/刷副本等各任务自动通用。"
-            rhint_text += "「拓印描摹绘制区（可选）」刷副本遇拓印临摹时自动描；不标=遇弹窗转手动。"
+            if has_tuoying_region:
+                rhint_text += "「拓印描摹绘制区（可选）」刷副本遇拓印临摹时自动描；不标=遇弹窗转手动。"
             rhint = ctk.CTkLabel(rcard, text=rhint_text,
                          font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
             rhint.grid(row=1, column=0, columnspan=3, sticky="ew", padx=16, pady=(0, 4))
@@ -531,7 +533,8 @@ class CalibrateDialog(ctk.CTkToplevel):
             self._thumb_card(self.template_grid, r, col, name=name,
                              thumb=thumb, has_path=bool(rel), rel=rel,
                              btn_text=("重新标定" if thumb is not None else "去标定"),
-                             btn_cmd=lambda k=key, n=name: self._calibrate_template(k, n))
+                             btn_cmd=lambda k=key, n=name: self._calibrate_template(k, n),
+                             optional=bool(len(_x) and _x[0]))
 
     # ---- 装备缩略图画廊（watchlist）----
     def _render_watchlist(self):
@@ -558,10 +561,18 @@ class CalibrateDialog(ctk.CTkToplevel):
 
     # ---- 单张缩略图卡片（模板/装备共用）：名字+状态徽标 / 缩略图(占位) / 操作按钮，三态等高 ----
     def _thumb_card(self, parent, r, col, name, thumb, has_path, rel,
-                    btn_text, btn_cmd, danger_btn=False):
+                    btn_text, btn_cmd, danger_btn=False, optional=False):
         ok = thumb is not None
+        # 可选模板未标不算未就绪：用中性边框 + 「（可选）」徽标弱化，与必选未标的红色提示区分
+        if optional and not ok:
+            card_color, badge_text, badge_color = T.BORDER, "（可选）", T.TEXT_DIM
+            btn_text = f"{btn_text}（可选）"
+        else:
+            card_color, badge_text, badge_color = (T.SUCCESS if ok else T.BORDER), \
+                                                  ("● 已裁图" if ok else "○ 未标定"), \
+                                                  (T.SUCCESS if ok else T.TEXT_DIM)
         card = ctk.CTkFrame(parent, fg_color=T.SURFACE_2, corner_radius=T.RADIUS_SM,
-                            border_width=2, border_color=(T.SUCCESS if ok else T.BORDER))
+                            border_width=2, border_color=card_color)
         card.grid(row=r, column=col, sticky="nsew", padx=6, pady=6)
         card.grid_columnconfigure(0, weight=1)
 
@@ -572,8 +583,8 @@ class CalibrateDialog(ctk.CTkToplevel):
                           justify="left", anchor="w")
         nm.grid(row=0, column=0, sticky="ew")
         T.bind_wraplength(nm)
-        ctk.CTkLabel(head, text=("● 已裁图" if ok else "○ 未标定"), font=self.fonts["small"],
-                     text_color=(T.SUCCESS if ok else T.TEXT_DIM)).grid(row=0, column=1, sticky="e", padx=(6, 0))
+        ctk.CTkLabel(head, text=badge_text, font=self.fonts["small"],
+                     text_color=badge_color).grid(row=0, column=1, sticky="e", padx=(6, 0))
 
         # 缩略图 / 占位框：固定高度让有图/无图卡片等高，网格不参差
         holder = ctk.CTkFrame(card, fg_color=T.SURFACE, corner_radius=T.RADIUS_SM,

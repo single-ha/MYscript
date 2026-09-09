@@ -469,11 +469,26 @@ class DungeonBaseTask(Task):
                     level="warn")
             ctx.log("想全自动就在「通用」页→标定（公共区域）里补标这两项。", level="warn")
             return self._wait_tuoying_gone(ctx, loop, regions, threshold)
-        ctx.log(f"自动临摹：绘制区区域填扫 {loop.get('tuoying_passes', 2)} 遍…", level="warn")
-        scribble.fill_region(ctx.mouse, rect,
-                             passes=loop.get("tuoying_passes", 2),
-                             spacing=loop.get("tuoying_stripe_spacing", 8.0),
-                             speed=1.7)
+        ctx.log(f"自动临摹：识别图案笔画并沿骨架描 {loop.get('tuoying_passes', 2)} 轮…", level="warn")
+        for _pass in range(max(1, int(loop.get("tuoying_passes", 2)))):
+            if ctx.should_stop():
+                return False
+            # 先截绘制区当前画面：识别图案笔画像素，只沿图案描（描到图案外会拉低完成度）
+            frame = win_mod.grab(rect) if rect else None
+            if frame is None:
+                ctx.log("⚠ 绘制区截图失败，无法自动临摹——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
+                        level="warn")
+                return self._wait_tuoying_gone(ctx, loop, regions, threshold)
+            ok = scribble.trace_pattern(ctx.mouse, rect, frame,
+                                    lateral=loop.get("tuoying_lateral", 3.0),
+                                    sample_step=loop.get("tuoying_sample_step", 5.0),
+                                    speed=1.0)
+            if not ok:
+                ctx.log("⚠ 没能从画面识别出图案笔画——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
+                        level="warn")
+                return self._wait_tuoying_gone(ctx, loop, regions, threshold)
+            if _pass == 0:
+                time.sleep(self._jitter(0.15, ctx))
         if ctx.should_stop():
             return False
         if not self._click_tuoying_upload(ctx, loop, regions, threshold):

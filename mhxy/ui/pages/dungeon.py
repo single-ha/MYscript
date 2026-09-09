@@ -22,7 +22,7 @@ from ...tasks import get_task
 from ...tasks.base import dungeon_tasks
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
-from ..common import Card, bind_wraplength, teaming_ns, teaming_ready
+from ..common import Card, bind_wraplength, teaming_ns, teaming_ready, required_regions, required_templates
 
 
 class DungeonPage(ctk.CTkFrame):
@@ -215,9 +215,9 @@ class DungeonPage(ctk.CTkFrame):
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         regions, templates = tc.get("regions", {}), tc.get("templates", {})
         # 副本的公共区域（活动列表）不在 spec 里，按 TASK_SHARED_REQ 补查（统一在「通用」页标定）
-        need_r = [t[0] for t in spec.get("regions", []) if not (len(t) >= 4 and t[3])]
+        need_r = required_regions(spec)
         need_r += [k for k in cfg_mod.TASK_SHARED_REQ.get(self.TASK_NAME, ()) if k not in need_r]
-        need_t = [t[0] for t in spec.get("templates", []) if not (len(t) >= 4 and t[3])]
+        need_t = required_templates(spec)
         rdone = sum(1 for k in need_r if regions.get(k))
         tdone = sum(1 for k in need_t if templates.get(k))
         ok = (rdone == len(need_r) and tdone == len(need_t))

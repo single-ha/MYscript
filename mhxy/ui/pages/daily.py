@@ -13,7 +13,7 @@ from ...tasks.base import dungeon_tasks
 from ...tasks.daily import CHAINABLE, GROUP_OF, GROUP_TITLES, MULTI_BARRIER
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
-from ..common import Card, bind_wraplength
+from ..common import (Card, bind_wraplength, required_regions, required_templates)
 
 # 分区集合（按 GROUP_OF 出现顺序）。以后加新分区：在 tasks/daily.py 里给 GROUP_OF 补映射即可，
 # 本页自动多出一区，无需改这里。
@@ -29,18 +29,8 @@ class DailyPage(ctk.CTkFrame):
     LOG_SOURCE = "一条龙"
     RUN_LABEL = "▶  开始一条龙"
 
-    # 各子任务「就绪」比对的【必需模板】键（必需区域从各自 CALIBRATION 里按「可选标记」自动取）。
-    _READY = {
-        "escort": ["escort_entry", "escort_join", "escort_silver", "escort_confirm", "escort_ongoing"],
-        "secret_realm": ["sr_entry", "sr_join", "sr_select",
-                         "sr_continue", "sr_challenge", "sr_enter_battle", "sr_leave"],
-        "treasure_map": ["flag_treasure_entry", "flag_join", "flag_tingting",
-                         "flag_next_map", "treasure_item"],
-        "sanjie": ["qq_entry", "qq_join"],
-        "guild_checkin": ["guild_welfare_tab", "guild_checkin_btn"],
-        "activity_reward": ["act_reward20", "act_reward40", "act_reward60", "act_reward80", "act_reward100"],
-        "zhuagui": ["gg_entry", "gg_join", "gg_claim", "gg_nav", "gg_next"],
-    }
+    # 各子任务「就绪」比对的必需键全部从各自 CALIBRATION spec 按「可选标记」自动取（见
+    # common.required_regions/required_templates），不再手写清单。
 
     _GROUP_DESC = {"single": "每号独立跑", "multi": "集体组队跑"}
     _GROUP_EMOJI = {"single": "👤", "multi": "👥"}
@@ -232,16 +222,11 @@ class DailyPage(ctk.CTkFrame):
         mode = "演练" if sub.get("dry_run", True) else "实战"
         return mode, self._calib_done(name, sub)
 
-    @staticmethod
-    def _required_regions(spec):
-        """从任务的 CALIBRATION spec 里取「非可选区域」键（第 4 个元素为 (len>=4 且真) = 可留空）。"""
-        return [t[0] for t in spec.get("regions", []) if not (len(t) >= 4 and t[3])]
-
     def _calib_done(self, name, sub):
         spec = getattr(get_task(name), "CALIBRATION", None) or {}
         # 每个任务自己的 spec 之外，还要查公共区域（tasks.shared）对该任务的必需项（如活动列表/背包列表）
-        need_r = self._required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get(name, ()))
-        need_t = self._READY.get(name, [])
+        need_r = required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get(name, ()))
+        need_t = required_templates(spec)
         regions, templates = sub.get("regions", {}), sub.get("templates", {})
         return all(regions.get(k) for k in need_r) and all(templates.get(k) for k in need_t)
 
@@ -265,8 +250,8 @@ class DailyPage(ctk.CTkFrame):
         sub = cfg_mod.task_config(self.app.cfg, "dungeon")
         mode = "演练" if sub.get("dry_run", True) else "实战"
         spec = DUNGEON_CALIBRATION
-        need_r = self._required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get("dungeon", ()))
-        need_t = [t[0] for t in spec.get("templates", []) if not (len(t) >= 4 and t[3])]
+        need_r = required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get("dungeon", ()))
+        need_t = required_templates(spec)
         regions, templates = sub.get("regions", {}), sub.get("templates", {})
         self_ok = all(regions.get(k) for k in need_r) and all(templates.get(k) for k in need_t)
         team = cfg_mod.task_config(self.app.cfg, "teaming")
