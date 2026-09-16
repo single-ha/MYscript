@@ -132,6 +132,9 @@ mhxy/
     锯齿加宽笔迹；只描图案本身，**不盖满整区**——拓印判「完成度>60%」，描到图案外会拉低完成度）→ 点 `tuoying_upload` → 等界面消失；
     **资产全可选、不标不拖累就绪度**（人不标=遇弹窗转手动，描完脚本自动续跑；3 种触发见
     `tasks/dungeon_base.py` `_auto_trace`）。识别不出图案/截图失败 → 转手动兜底（等界面消失自动续跑），绝不盲目乱描。
+    ⚠ **拓印要描两遍（user 2026-09-11 反馈）**：一次「上传」后**图案相同的界面会再次弹出**，须再描一遍+再传一次才算过——
+    `_auto_trace` 已做成「描→上传→**确认界面不再重现**（`tuoying_gone_confirm_sec` 窗口内持续观察）→ 还弹就再来一轮」，
+    轮数上限 `tuoying_max_rounds`（默认3）；确认窗口防「界面一闪即误判通过」。
     `scribble.trace_pattern` 是通用能力：任何「沿图案描一遍」类校验都能复用。
     ⚠ **标定位置（user 拍板 2026-09-08）**：`tuoying_title`/`tuoying_upload`/`tuoying_area` 全在**「通用」页「标定（公共区域）」**里标，
     存 `tasks.shared`（模板键集 `TUOYING_TPL_KEYS`；绘制区键 `tuoying_area` 由

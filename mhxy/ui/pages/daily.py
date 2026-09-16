@@ -4,6 +4,7 @@
 独立页面类，由 App 统一导入（App.PAGE_CLASSES）。"""
 
 import customtkinter as ctk
+from datetime import datetime, timedelta
 
 from .. import theme as T
 from ...core import config as cfg_mod
@@ -40,6 +41,7 @@ class DailyPage(ctk.CTkFrame):
         self.app = app
         self.fonts = app.fonts
         self.runner = None
+        self._wait_until = None      # 定时延迟执行：晚于该时刻才真正启动（None=不在等待）
         self._steps = []          # [{"task","enabled"}]，全局有序=执行顺序（按区顺序拼段）
         self._group_order = list(_GROUPS)
         self._rows = {g: [] for g in _GROUPS}   # 各区的行控件 [{"frame","name","badge","group","idx","step"}]
@@ -121,6 +123,25 @@ class DailyPage(ctk.CTkFrame):
         ctk.CTkLabel(shut, text="整条龙跑完后自动关机（先进入关机倒计时，期间按「停止」或急停热键即可取消）",
                      font=self.fonts["small"], text_color=T.TEXT_DIM).pack(side="left", padx=(8, 0))
 
+        # 定时延迟执行：点「开始一条龙」后先看有没有设置定时，有则等到该时刻才真正启动
+        sched = ctk.CTkFrame(opts, fg_color="transparent")
+        sched.pack(anchor="w", pady=(10, 0))
+        ctk.CTkLabel(sched, text="定时延后执行", font=self.fonts["body"], text_color=T.TEXT).pack(side="left")
+        self.var_schedule_on = ctk.BooleanVar(value=False)
+        ctk.CTkSwitch(sched, text="", variable=self.var_schedule_on, width=44,
+                      progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
+                      command=self._on_schedule_toggle).pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(sched, text="执行时间(时:分)", font=self.fonts["body"], text_color=T.TEXT_DIM).pack(side="left")
+        self.var_schedule_time = ctk.StringVar(value="10:00")
+        time_ent = ctk.CTkEntry(sched, textvariable=self.var_schedule_time, width=64,
+                                font=self.fonts["body"], fg_color=T.SURFACE_2, border_color=T.BORDER)
+        time_ent.pack(side="left", padx=(6, 0))
+        sched_hint = ctk.CTkLabel(opts, text="开启后，点「开始一条龙」不会立即执行，而是等到设定时刻才真正开始；"
+                                              "若设定时刻已过（如定时 10:00、下午点开始）则立即执行。等待中再点一次按钮可取消。",
+                                  font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
+        sched_hint.pack(fill="x", pady=(4, 0))
+        bind_wraplength(sched_hint)
+
     # ---- 主体：分区任务清单（日志已移到全局右栏）----
     def _build_body(self):
         body = ctk.CTkFrame(self, fg_color="transparent")
@@ -160,6 +181,10 @@ class DailyPage(ctk.CTkFrame):
         self._steps = self._normalize(tc.get("steps", []), go)
         self.var_limit.set(str(tc.get("loop", {}).get("time_limit_min", 0)))
         self.var_shutdown.set(bool(tc.get("loop", {}).get("shutdown_after", False)))
+        sched = tc.get("loop", {}).get("schedule", "") or ""
+        self.var_schedule_on.set(bool(sched))
+        if sched and ":" in sched:
+            self.var_schedule_time.set(sched)
         self._render_steps()
 
     @staticmethod
@@ -507,6 +532,16 @@ class DailyPage(ctk.CTkFrame):
         except (TypeError, ValueError):
             pass
         loopc["shutdown_after"] = bool(self.var_shutdown.get())
+        sched = ""
+        if self.var_schedule_on.get():
+            raw = self.var_schedule_time.get().strip().replace("：", ":")
+            try:
+                hh, mm = raw.split(":")
+                hh, mm = max(0, min(23, int(hh))), max(0, min(59, int(mm)))
+                sched = f"{hh:02d}:{mm:02d}"
+            except (ValueError, TypeError):
+                sched = ""
+        loopc["schedule"] = sched
         cfg_mod.set_task_config(cfg, self.TASK_NAME, tc)
         cfg_mod.save_config(cfg)
         self.app.cfg = cfg
@@ -519,6 +554,37 @@ class DailyPage(ctk.CTkFrame):
         else:
             self._log_line("已取消「跑完关机」。", "info")
 
+    def _on_schedule_toggle(self):
+        self._save()
+        if self.var_schedule_on.get():
+            self._log_line(f"已开启定时延后执行：点「开始一条龙」会等到 {self.var_schedule_time.get()} 才真正执行（若该时刻已过则立即执行）。",
+                           "warn")
+        else:
+            self._log_line("已关闭定时延后执行：点「开始一条龙」立即执行。", "info")
+
+    # ------------------------------------------------------------------
+    # 定时延迟执行：点「开始」时若设了时刻则先生成等待截止点；到点/已过再真启动
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _sched_wait_target(sched, now):
+        """把定时串 "HH:MM" 换算成「今天的该时刻 datetime」。非法/空=不等待(None)。
+        由调用方判断已过与否（已过 → 立即执行）。"""
+        if not sched or ":" not in sched:
+            return None
+        try:
+            hh, mm = sched.split(":")
+            hh, mm = int(hh), int(mm)
+        except (ValueError, TypeError):
+            return None
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            return None
+        return now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+    @staticmethod
+    def _schedule_target_passed(target, now):
+        """定时目标时刻是否已过（含恰好到点→视为已过=立即执行）。"""
+        return target is not None and target <= now
+
     # ------------------------------------------------------------------
     # 运行控制
     # ------------------------------------------------------------------
@@ -528,8 +594,32 @@ class DailyPage(ctk.CTkFrame):
             self._log_line("正在停止…", "warn")
             self.btn_run.configure(text="停止中…", state="disabled")
             return
+        if self._wait_until is not None:
+            # 正在等待定时 → 再点一次=取消
+            self._wait_until = None
+            self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
+                                   hover_color=T.ACCENT_HOVER, state="normal")
+            self._log_line("已取消定时等待，本次不执行。", "warn")
+            return
+        # 正常启动路径：先看有没有设置定时延迟执行
         self._save()
         self.app.cfg = cfg_mod.load_config()
+        tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
+        sched = (tc.get("loop", {}) or {}).get("schedule", "") or ""
+        target = self._sched_wait_target(sched, datetime.now())
+        if target is not None and not self._schedule_target_passed(target, datetime.now()):
+            # 设了定时且还没到 → 进入等待
+            self._wait_until = target
+            self.btn_run.configure(text=f"等待到 {target:%H:%M}…（再点取消）",
+                                   fg_color=T.WARN, hover_color=T.WARN_HOVER, state="normal")
+            self._log_line(f"已设定时延迟执行：将等到 {target:%H:%M} 才开始（再点一次按钮可取消）。", "warn")
+            return
+        if target is not None:
+            self._log_line(f"定时时刻 {target:%H:%M} 已过，立即开始执行。", "warn")
+        self._start_runner()
+
+    def _start_runner(self):
+        """真正启动一条龙 runner（供：立即执行 / 定时到点执行）。"""
         task_cls = get_task(self.TASK_NAME)
         self.runner = TaskRunner(task_cls(), self.app.cfg)
         ok, problems = self.runner.start()
@@ -537,12 +627,22 @@ class DailyPage(ctk.CTkFrame):
             for p in problems:
                 self._log_line("无法启动：" + p, "error")
             self.runner = None
+            self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
+                                   hover_color=T.ACCENT_HOVER, state="normal")
             return
         self.btn_run.configure(text="■  停止", fg_color=T.DANGER, hover_color=T.DANGER_HOVER, state="normal")
 
     def _on_runner_finished(self):
+        self.runner = None
         self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
                                hover_color=T.ACCENT_HOVER, state="normal")
+
+    def stop_pending(self):
+        """急停/全局停止钩子：取消正在进行的定时等待（尚未启动的任务也要能停）。"""
+        if self._wait_until is not None:
+            self._wait_until = None
+            self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
+                                   hover_color=T.ACCENT_HOVER, state="normal")
 
     # ---- 日志（由 App._tick 驱动）----
     def pump(self):
@@ -553,6 +653,12 @@ class DailyPage(ctk.CTkFrame):
                 self._log_line(msg, level)
             if not self.runner.is_running() and self.btn_run.cget("text") != self.RUN_LABEL:
                 self._on_runner_finished()
+        elif self._wait_until is not None:
+            # 定时等待中：到点才启动
+            if datetime.now() >= self._wait_until:
+                self._wait_until = None
+                self._log_line("⏰ 定时时刻到，开始一条龙…", "warn")
+                self._start_runner()
 
     def _log_line(self, msg, level="info"):
         # 日志统一汇到 App 右侧全局面板，按本页 LOG_SOURCE 打来源标签。

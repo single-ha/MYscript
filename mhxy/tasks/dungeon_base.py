@@ -459,7 +459,7 @@ class DungeonBaseTask(Task):
             self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
         return False
 
-    # ---- 自动临摹：绘制区区域填扫 + 点上传 + 等界面关闭；缺资产/没过 → 转手动兜底 ----
+    # ---- 自动临摹：沿图案描 + 点上传 + 等界面消失；一次上传后可能再弹（要拓印两遍）→ 循环到不再重现 ----
     def _auto_trace(self, ctx, loop, regions, threshold):
         area = regions.get("tuoying_area")
         up_key = self.flags.get("tuoying_upload")
@@ -469,38 +469,70 @@ class DungeonBaseTask(Task):
                     level="warn")
             ctx.log("想全自动就在「通用」页→标定（公共区域）里补标这两项。", level="warn")
             return self._wait_tuoying_gone(ctx, loop, regions, threshold)
-        ctx.log(f"自动临摹：识别图案笔画并沿骨架描 {loop.get('tuoying_passes', 2)} 轮…", level="warn")
-        for _pass in range(max(1, int(loop.get("tuoying_passes", 2)))):
+        max_rounds = max(1, int(loop.get("tuoying_max_rounds", 3)))
+        confirm_sec = loop.get("tuoying_gone_confirm_sec", 1.2)
+        for rnd in range(1, max_rounds + 1):
             if ctx.should_stop():
                 return False
-            # 先截绘制区当前画面：识别图案笔画像素，只沿图案描（描到图案外会拉低完成度）
-            frame = win_mod.grab(rect) if rect else None
-            if frame is None:
-                ctx.log("⚠ 绘制区截图失败，无法自动临摹——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
-                        level="warn")
+            ctx.log(f"自动临摹（第 {rnd}/{max_rounds} 遍）：识别图案笔画并沿骨架描 {loop.get('tuoying_passes', 2)} 轮…",
+                    level="warn")
+            for _pass in range(max(1, int(loop.get("tuoying_passes", 2)))):
+                if ctx.should_stop():
+                    return False
+                # 先截绘制区当前画面：识别图案笔画像素，只沿图案描（描到图案外会拉低完成度）
+                frame = win_mod.grab(rect) if rect else None
+                if frame is None:
+                    ctx.log("⚠ 绘制区截图失败，无法自动临摹——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
+                            level="warn")
+                    return self._wait_tuoying_gone(ctx, loop, regions, threshold)
+                ok = scribble.trace_pattern(ctx.mouse, rect, frame,
+                                        lateral=loop.get("tuoying_lateral", 3.0),
+                                        sample_step=loop.get("tuoying_sample_step", 5.0),
+                                        speed=1.0)
+                if not ok:
+                    ctx.log("⚠ 没能从画面识别出图案笔画——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
+                            level="warn")
+                    return self._wait_tuoying_gone(ctx, loop, regions, threshold)
+                if _pass == 0:
+                    time.sleep(self._jitter(0.15, ctx))
+            if ctx.should_stop():
+                return False
+            if not self._click_tuoying_upload(ctx, loop, regions, threshold):
+                ctx.log("⚠ 描完没点到「上传」，请手动临摹并点「上传」；脚本会等界面消失后自动继续。", level="warn")
                 return self._wait_tuoying_gone(ctx, loop, regions, threshold)
-            ok = scribble.trace_pattern(ctx.mouse, rect, frame,
-                                    lateral=loop.get("tuoying_lateral", 3.0),
-                                    sample_step=loop.get("tuoying_sample_step", 5.0),
-                                    speed=1.0)
-            if not ok:
-                ctx.log("⚠ 没能从画面识别出图案笔画——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
-                        level="warn")
-                return self._wait_tuoying_gone(ctx, loop, regions, threshold)
-            if _pass == 0:
-                time.sleep(self._jitter(0.15, ctx))
-        if ctx.should_stop():
-            return False
-        if not self._click_tuoying_upload(ctx, loop, regions, threshold):
-            ctx.log("⚠ 描完没点到「上传」，请手动临摹并点「上传」；脚本会等界面消失后自动继续。", level="warn")
-            return self._wait_tuoying_gone(ctx, loop, regions, threshold)
-        if self._wait_tuoying_gone(ctx, loop, regions, threshold,
-                                   timeout=loop.get("tuoying_upload_sec", 6.0)):
-            ctx.log("拓印临摹通过，界面已关闭。", level="hit")
-            return True
-        ctx.log("⚠ 自动描完后拓印界面仍未关闭（校验可能没通过）——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
+            # 上传后：等界面消失，并在确认窗口内盯住「不再重现」才算真过。
+            # 拓印实际要描两遍：上传一次后图案相同的临摹界面会再次弹出，须再来一轮。
+            if self._tuoying_confirmed_gone(ctx, loop, regions, threshold,
+                                            confirm_sec=confirm_sec,
+                                            upload_timeout=loop.get("tuoying_upload_sec", 6.0)):
+                ctx.log("拓印临摹通过，界面已关闭。", level="hit")
+                return True
+            ctx.log(f"拓印界面在上传后再次出现（可能需要拓印多遍），进入第 {rnd + 1} 遍…", level="warn")
+        ctx.log("⚠ 自动描完多遍后拓印界面仍会重现（校验可能没通过）——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
                 level="warn")
         return self._wait_tuoying_gone(ctx, loop, regions, threshold)
+
+    def _tuoying_confirmed_gone(self, ctx, loop, regions, threshold, confirm_sec, upload_timeout):
+        """上传后判定拓印界面「真消失」：先等界面不再出现（upload_timeout 内），
+        再持续观察 confirm_sec 内仍不重现才算真过；任何一步在超时内又回到界面都返回 False。"""
+        last_seen = time.time()
+        no_gone_since = None
+        deadline = time.time() + upload_timeout + confirm_sec
+        scene_rect = self._scene_rect(ctx, regions)
+        while not ctx.should_stop():
+            if time.time() > deadline:
+                return False
+            cur = win_mod.grab(scene_rect) if scene_rect else None
+            seen = self._match_scene(cur, scene_rect, "tuoying_title", threshold) is not None
+            if not seen:
+                if no_gone_since is None:
+                    no_gone_since = time.time()
+                elif time.time() - no_gone_since >= confirm_sec:
+                    return True          # 消失且确认窗口内不再出现
+            else:
+                no_gone_since = None
+                last_seen = time.time()  # 又开始出现：重置确认窗
+            self._interruptible_sleep(ctx, self._jitter(0.25, ctx))
 
     def _click_tuoying_upload(self, ctx, loop, regions, threshold, timeout=None):
         tpl = self.flags.get("tuoying_upload")

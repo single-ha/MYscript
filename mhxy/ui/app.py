@@ -549,9 +549,14 @@ class App(ctk.CTk):
 
     def stop_all_tasks(self):
         """停掉所有页面上任意正在运行的 TaskRunner（runner / runner_ob 等都覆盖到；含分类页内嵌子页）。
-        返回停了几个。"""
+        返回停了几个。顺带取消各页「未启动的待办」（如日常一条龙的定时等待——急停也要让它停得住）。"""
         n = 0
         for page in self._iter_pages():
+            if hasattr(page, "stop_pending") and callable(page.stop_pending):
+                try:
+                    page.stop_pending()
+                except Exception:
+                    pass
             for v in list(vars(page).values()):
                 if isinstance(v, TaskRunner) and v.is_running():
                     try:
