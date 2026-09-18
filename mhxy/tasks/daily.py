@@ -422,14 +422,21 @@ class DailyTask(Task):
         return sel, (get_task(sel) if sel else None)
 
     def _enabled_steps(self, ctx):
-        """返回【按存储顺序】、已勾选且可串联的任务名列表。"""
+        """返回【按存储顺序】、已勾选且可串联的任务名列表。
+        组级开关（tasks.daily.group_enabled，{single: bool, multi: bool}，缺省 True）也参与过滤：
+        整个组被关掉时，该组全部任务不进一条龙（组内行级 enabled 独立保留，重开整组即恢复）。"""
         tc = ctx.task_cfg(self.name)
+        ge = tc.get("group_enabled") or {}
+        def group_on(name):
+            g = GROUP_OF.get(name)
+            return ge.get(g, True) if g else True
         out = []
         for step in tc.get("steps", []):
             if not isinstance(step, dict):
                 continue
             name = step.get("task")
-            if step.get("enabled") and name in CHAINABLE and name not in out:
+            if (step.get("enabled") and group_on(name)
+                    and name in CHAINABLE and name not in out):
                 out.append(name)
         return out
 

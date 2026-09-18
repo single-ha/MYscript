@@ -21,6 +21,7 @@ from . import dt_70_common   # noqa: F401,E402
 from . import dt_60_common1  # noqa: F401,E402
 from . import dt_60_common2  # noqa: F401,E402
 from . import organize_bag   # noqa: F401,E402
+from . import tuoying        # noqa: F401,E402
 from . import zhuagui        # noqa: F401,E402
 from . import guild_checkin  # noqa: F401,E402
 from . import activity_reward  # noqa: F401,E402

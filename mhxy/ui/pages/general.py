@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""通用页：跨任务功能（公共区域标定〔含活动/背包列表 + 拓印临摹模板〕、组队标定+一键组队/一键解散、整理背包、窗口尺寸归一化）。
+"""通用页：跨任务功能（公共区域标定〔活动/背包列表 + 商城/活动图标〕、组队标定+一键组队/一键解散、窗口尺寸归一化）。
+整理背包已迁到「工具」分类页（OrganizeBagPage，见 organize_bag.py）；拓印标定也迁到「工具」页「拓印」（TuoyingPage）。
 独立页面类，由 App 统一导入（App.PAGE_CLASSES）。"""
 
 import threading
@@ -12,17 +13,16 @@ from ...core import window as win_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
-from ...core.inventory import _ALL_BTN_KEYS
-from ...core.config import SHARED_REGION_KEYS, TASK_SHARED_REGIONS, TUOYING_TPL_KEYS
+from ...core.config import SHARED_REGION_KEYS, MAIN_ICON_TPL_KEYS
 from ..common import Card, load_thumb, bind_wraplength
 
 
 class GeneralPage(ctk.CTkFrame):
     """通用页：集中放与具体任务无关的功能。
-    目前：公共区域标定（活动/背包列表，全任务共用）；组队标定 + 一键组队（选队长→把所选多开窗口组成一队）；
-    窗口尺寸归一化。"""
+    目前：窗口尺寸归一化；公共区域标定（活动/背包列表，全任务共用）；组队标定 + 一键组队（选队长→把所选多开窗口组成一队）。
+    整理背包入口已移到「工具」页（OrganizeBagPage）。"""
 
-    LOG_SOURCE = "通用"   # 组队/整理背包日志在 pump 里各自覆盖来源标签
+    LOG_SOURCE = "通用"   # 组队日志在 pump 里各自覆盖来源标签
 
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
@@ -31,15 +31,11 @@ class GeneralPage(ctk.CTkFrame):
         self.cfg = app.cfg
         self.runner = None          # 一键组队跑的后台任务（DungeonTask）
         self.runner_db = None       # 一键解散跑的后台任务（DisbandTask），与组队互斥（同用鼠标/队伍面板）
-        self.runner_ob = None       # 一键整理跑的后台任务（OrganizeBagTask），与组队并存互不干扰
         self._team_cal_dialog = None    # 「标定（组队）」去重槽（队长ID 走无弹窗直接标定，无需去重槽）
         self._shared_cal_dialog = None  # 「标定（公共区域）」去重槽
-        self._ob_cal_dialog = None      # 「标定（整理背包）」去重槽
-        self.btn_ob = None          # 「一键整理」按钮（_refresh_body 每次重建）
-        self.switch_auto_ob = None  # 「自动整理背包」开关（任何任务检测到背包满自动整理）
-        self._win_count = 0         # 已选多开窗口数（resolve_targets），供状态行显示
         self.btn_team = None
         self._enum_pending = None   # 窗口枚举结果暂存：worker 线程写，主线程 pump 取走渲染
+        self._win_count = 0         # 已选多开窗口数（resolve_targets），供状态行显示
         self.btn_disband = None     # 「一键解散」按钮（_refresh_body 每次重建）
         self.btn_leader = None      # 行内队长ID按钮（_refresh_body 每次重建）
         self._leader_thumbs = []    # 行内队长ID缩略图防 GC
@@ -227,7 +223,7 @@ class GeneralPage(ctk.CTkFrame):
         # ── 窗口尺寸归一化（排最上：先统一各号尺寸/基准，其它功能都建立在它之上）──
         self._build_window_card(base)
 
-        # ── 公共区域（全局共享：活动列表/背包列表，任意任务标一次全任务通用）──
+        # ── 公共区域（全局共享：活动列表/背包列表 + 商城/活动图标，任意任务标一次全任务通用）──
         c_shared = self._card()
         head_s = ctk.CTkFrame(c_shared, fg_color="transparent")
         head_s.pack(fill="x", padx=16, pady=(14, 4))
@@ -235,23 +231,27 @@ class GeneralPage(ctk.CTkFrame):
         txt_s = ctk.CTkFrame(head_s, fg_color="transparent")
         txt_s.grid(row=0, column=0, sticky="ew")
         ctk.CTkLabel(txt_s, text="公共区域（全局共享）", font=self.fonts["h2"], text_color=T.TEXT).pack(anchor="w")
-        # 区域：活动列表 / 背包列表 / 拓印绘制区（可选）。可选键计入总数，但全标齐才算区域就绪。
+        # 区域：活动列表 / 背包列表（必标）。商城/活动图标（可选）只计数展示、不拖累「已就绪」。
+        # 拓印临摹资产已迁到「工具」页「拓印」（tasks.tuoying），不在这里标。
         shared_tc = cfg_mod.task_config(cfg, "shared")
         sreg = shared_tc.get("regions", {})
-        shared_region_keys = SHARED_REGION_KEYS + TASK_SHARED_REGIONS.get("dungeon", ())
+        shared_region_keys = SHARED_REGION_KEYS
         sdone = sum(1 for k in shared_region_keys if sreg.get(k))
         sready = sdone == len(shared_region_keys)
         stpl = shared_tc.get("templates", {})
-        tdone = sum(1 for k in TUOYING_TPL_KEYS if stpl.get(k))
-        already = sready and tdone == len(TUOYING_TPL_KEYS)
-        ctk.CTkLabel(txt_s, text=f"区域：{sdone}/{len(shared_region_keys)}　标志模板：{tdone}/{len(TUOYING_TPL_KEYS)}"
+        shared_tpl_keys = MAIN_ICON_TPL_KEYS
+        tdone = sum(1 for k in shared_tpl_keys if stpl.get(k))
+        # 商城/活动图标（主界面判定用）是可选项：只计数展示，不拖累「已就绪」（不标=无法做主界面判定，任务照常跑）。
+        already = sready
+        ctk.CTkLabel(txt_s, text=f"区域：{sdone}/{len(shared_region_keys)}　标志模板：{tdone}/{len(shared_tpl_keys)}（可选）"
                                  + ("　✓ 已就绪" if already else "　（还需标定）"),
                      font=self.fonts["body"],
                      text_color=T.SUCCESS if already else T.WARN).pack(anchor="w", pady=(4, 0))
         sub_s = ctk.CTkLabel(txt_s, text="「活动」界面那一片卡片列表、打开背包后那一片物品列表，几乎所有任务的画面都一样——"
                                         "在这里框一次，宝图 / 运镖 / 秘境降妖 / 三界奇缘 / 抓鬼 / 刷副本 / 整理背包自动通用，"
                                         "不用每个任务各标一遍。各任务页里的同名两项也会自动显示共用。"
-                                        "「拓印」临摹的标题/上传按钮也在这里标：刷副本点「进入」偶发的临摹弹窗，所有副本共用一份。",
+                                        "「商城/活动图标」用来判断是否回到主界面：把主界面顶部的商城、活动按钮各框一次即可。"
+                                        "「拓印」临摹（刷副本偶发的描图案校验）的标题/上传/绘制区已移到「工具」页「拓印」里标。",
                              font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub_s.pack(fill="x", pady=(2, 0))
         bind_wraplength(sub_s)
@@ -325,7 +325,7 @@ class GeneralPage(ctk.CTkFrame):
         self.lbl_team_status.pack(fill="x", padx=16, pady=(6, 0))
         bind_wraplength(self.lbl_team_status)
 
-        # 日志已统一到 App 右侧的全局日志面板（组队打「组队」标签、整理背包打「整理背包」标签），本页不再单独建日志框。
+        # 日志已统一到 App 右侧的全局日志面板（组队打「组队」标签），本页不再单独建日志框。
         # 重建后：按窗口数即时渲染队长下拉/状态 + 据 runner 复位按钮，再后台刷新窗口数
         self._render_team_action()
         if self.runner and self.runner.is_running():
@@ -333,9 +333,6 @@ class GeneralPage(ctk.CTkFrame):
         if self.runner_db and self.runner_db.is_running():
             self.btn_disband.configure(text="■  停止解散", fg_color=T.DANGER, hover_color=T.DANGER_HOVER)
         self._kick_count_windows()
-
-        # ── 整理背包（跨任务共享：任何任务流程都可穿插调用，这里可单独一键运行）──
-        self._build_organize_card()
 
     def _kick_enum_windows(self, holder, base):
         """后台枚举窗口，完成后把结果暂存 _enum_pending，由主线程的 pump() 取出渲染。
@@ -456,7 +453,8 @@ class GeneralPage(ctk.CTkFrame):
             self.app.toast(f"{fail_msg}：{e}")
 
     def _open_shared_calibrate(self):
-        """打开公共区域标定（共享命名空间 shared：活动/背包列表区域 + 拓印临摹模板，全局共用），按 _shared_cal_dialog 去重。"""
+        """打开公共区域标定（共享命名空间 shared：活动/背包列表区域 + 商城/活动图标，全局共用），按 _shared_cal_dialog 去重。
+        拓印临摹资产在「工具」页「拓印」里标（tasks.tuoying），不在这里。"""
         existing = self._shared_cal_dialog
         if existing is not None:
             try:
@@ -634,189 +632,8 @@ class GeneralPage(ctk.CTkFrame):
             if not self.runner_db.is_running() and self.btn_disband is not None \
                     and self.btn_disband.cget("text") != "⏏  一键解散":
                 self._on_disband_finished()
-        if self.runner_ob:
-            q = self.runner_ob.log_queue
-            while not q.empty():
-                level, msg = q.get()
-                self._log_line(msg, level, "整理背包")
-            if not self.runner_ob.is_running() and self.btn_ob is not None \
-                    and self.btn_ob.cget("text") != "▶  一键整理":
-                self._on_ob_finished()
-
-    @staticmethod
-    def _targets_summary(cfg):
-        """只读 cfg.targets 拼一句「将操作哪些号」的说明，不去枚举/定位窗口（够快、给卡片当提示用）。
-        多开未指定 multi_indices = 全体号；指定了就报个数；单开报号几。"""
-        targets = (cfg or {}).get("targets", {}) or {}
-        if targets.get("multi"):
-            idxs = targets.get("multi_indices") or []
-            return f"多开 · 已选 {len(idxs)} 个号" if idxs else "多开 · 全体号"
-        i = targets.get("single_index", 0)
-        i = i if isinstance(i, int) and i >= 0 else 0
-        return f"单开 · 号{i + 1}"
-
-    # ------------------------------------------------------------------
-    # 整理背包（跨任务共享：core.InventoryOrganizer + tasks.OrganizeBagTask；
-    # 标定/物品/参数存共享命名空间 tasks.organize_bag；这里可单独一键运行）
-    # ------------------------------------------------------------------
-    def _build_organize_card(self):
-        """在组队卡之后渲染「整理背包（共享）」卡片：完成度行 + 说明 + 按钮行。
-        日志统一写到 App 右侧的全局日志面板（来源标签「整理背包」）。"""
-        cfg = self.cfg
-        ob_tc = cfg_mod.task_config(cfg, "organize_bag")
-        items = ob_tc.get("items", []) or []
-        tpl = ob_tc.get("templates", {}) or {}
-
-        # 完成度 = 所有动作会用到的按钮模板（含可选「更多」与收尾的「整理」按钮）里已标定的数，
-        # 与物品清单无关——避免「还没加物品时显示 0/0 还提示需标定」的误导。
-        all_btn = set(_ALL_BTN_KEYS)
-        done = sum(1 for k in all_btn if tpl.get(k))
-        total = len(all_btn)
-        ready = (done == total)
-
-        c = self._card()
-        head = ctk.CTkFrame(c, fg_color="transparent")
-        head.pack(fill="x", padx=16, pady=(14, 4))
-        head.grid_columnconfigure(0, weight=1)
-        txt = ctk.CTkFrame(head, fg_color="transparent")
-        txt.grid(row=0, column=0, sticky="ew")
-        ctk.CTkLabel(txt, text="整理背包（共享）", font=self.fonts["h2"], text_color=T.TEXT).pack(anchor="w")
-        ctk.CTkLabel(txt, text=f"物品 {len(items)} 件；动作按钮 {done}/{total} 已标定"
-                              + ("　✓ 已就绪" if ready else "　（还需标定）"),
-                     font=self.fonts["body"],
-                     text_color=T.SUCCESS if ready else T.WARN).pack(anchor="w", pady=(4, 0))
-        sub = ctk.CTkLabel(txt, text="翻包裹找到标定的物品，逐个使用/丢弃/出售。是跨任务共享能力，"
-                                     "任何任务流程都可穿插调用；这里可单独一键运行。",
-                           font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
-        sub.pack(fill="x", pady=(2, 0))
-        bind_wraplength(sub)
-        ctk.CTkLabel(txt, text="将整理：" + self._targets_summary(cfg),
-                     font=self.fonts["small"], text_color=T.TEXT_DIM).pack(anchor="w", pady=(4, 0))
-        btns = ctk.CTkFrame(head, fg_color="transparent")
-        btns.grid(row=0, column=1, padx=(12, 0))
-        ctk.CTkButton(btns, text="标定（整理背包）", font=self.fonts["body"], height=36, width=130,
-                      corner_radius=T.RADIUS_SM, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
-                      text_color=T.ON_ACCENT, command=self._open_organize_calibrate).pack()
-        ctk.CTkButton(btns, text="管理物品", font=self.fonts["body"], height=32, width=130,
-                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
-                      border_width=1, border_color=T.BORDER,
-                      command=self._open_organize_items).pack(pady=(6, 0))
-
-        ctk.CTkFrame(c, fg_color=T.BORDER, height=1).pack(fill="x", padx=16, pady=(10, 0))
-        act = ctk.CTkFrame(c, fg_color="transparent")
-        act.pack(fill="x", padx=16, pady=(10, 14))
-        self.btn_ob = ctk.CTkButton(act, text="▶  一键整理", font=self.fonts["btn"], height=40, width=150,
-                                    corner_radius=T.RADIUS_SM, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
-                                    text_color=T.ON_ACCENT, command=self._start_organize)
-        self.btn_ob.pack(side="left")
-
-        # 物品清单为空时单独提示（按钮标完 ≠ 能整理：一键整理的目标在「管理物品」里）
-        if not items:
-            warn_row = ctk.CTkFrame(c, fg_color="transparent")
-            warn_row.pack(fill="x", padx=16, pady=(0, 8))
-            ctk.CTkLabel(warn_row, text="⚠ 物品清单还是空的 —— 请点「管理物品」框选要整理的道具并设动作（如丢弃/商会出售），"
-                                        "否则一键整理没有目标。",
-                         font=self.fonts["small"], text_color=T.WARN, justify="left").pack(anchor="w")
-
-        # 「自动整理背包」：跨任务全局开关。开了后，任何走多开轮转的任务（运镖/宝图/秘境/副本）
-        # 运行中每隔一会儿检测一次背包「满」图标，满了就自动整理一遍（真整理/只识别跟随上面的实战开关）。
-        auto_row = ctk.CTkFrame(c, fg_color="transparent")
-        auto_row.pack(fill="x", padx=16, pady=(0, 12))
-        self.switch_auto_ob = ctk.CTkSwitch(auto_row, text="自动整理背包（任何任务检测到背包满就自动清）",
-                                            font=self.fonts["body"], command=self._toggle_auto_organize)
-        self.switch_auto_ob.pack(anchor="w")
-        if ob_tc.get("auto_organize"):
-            self.switch_auto_ob.select()
-        else:
-            self.switch_auto_ob.deselect()
-        auto_hint = ctk.CTkLabel(auto_row, text="开启后，运镖 / 宝图 / 秘境 / 副本等任务运行中会每隔一会儿检测一次背包"
-                                                "「满」图标，满了就自动整理一遍 —— 需先在「标定（整理背包）」里框选"
-                                                "『背包满图标』，否则无从判断、不会触发。",
-                                 font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
-        auto_hint.pack(fill="x", anchor="w", pady=(2, 0))
-        bind_wraplength(auto_hint)
-
-        # 重建后：若整理在跑，恢复「停止整理」文案/颜色（照 btn_team 的恢复写法）
-        if self.runner_ob and self.runner_ob.is_running():
-            self.btn_ob.configure(text="■  停止整理", fg_color=T.DANGER, hover_color=T.DANGER_HOVER)
-
-    def _open_organize_calibrate(self):
-        """打开整理背包标定（共享命名空间 organize_bag），按 _ob_cal_dialog 去重。"""
-        existing = self._ob_cal_dialog
-        if existing is not None:
-            try:
-                if existing.winfo_exists():
-                    existing.lift()
-                    existing.focus_force()
-                    return
-            except Exception:
-                pass
-        from ..calibrate_dialog import CalibrateDialog
-
-        def _after():
-            self._ob_cal_dialog = None
-            self.refresh()
-
-        try:
-            self._ob_cal_dialog = CalibrateDialog(self.app, task_name="organize_bag", on_done=_after)
-        except Exception as e:
-            self._ob_cal_dialog = None
-            self.app.toast(f"打开整理背包标定失败：{e}")
-
-    def _open_organize_items(self):
-        """打开「管理物品」弹窗：增删物品、改每件的动作（使用/丢弃/出售）。关闭后刷新完成度。"""
-        from ..inventory_items_dialog import InventoryItemsDialog
-        try:
-            InventoryItemsDialog(self.app, on_done=self.refresh)
-        except Exception as e:
-            self.app.toast(f"打开物品管理失败：{e}")
-
-    def _toggle_auto_organize(self):
-        """「自动整理背包」开关：存 tasks.organize_bag.auto_organize（任何任务流程检测到背包满自动整理）。"""
-        on = bool(self.switch_auto_ob.get())
-        cfg = cfg_mod.load_config()
-        tc = cfg_mod.task_config(cfg, "organize_bag")
-        tc["auto_organize"] = on
-        cfg_mod.set_task_config(cfg, "organize_bag", tc)
-        cfg_mod.save_config(cfg)
-        self.app.cfg = self.cfg = cfg
-        if on:
-            tpl_ok = bool((tc.get("templates", {}) or {}).get("bag_full_icon"))
-            self._log_line("已开启「自动整理背包」：任务流程中检测到背包满会自动整理。"
-                           + ("" if tpl_ok else " ⚠ 但还没标定『背包满图标』，请先去「标定（整理背包）」框选，否则不会触发。"),
-                           "warn" if not tpl_ok else "info", "整理背包")
-        else:
-            self._log_line("已关闭「自动整理背包」。", "info", "整理背包")
-
-    def _start_organize(self):
-        if self.runner_ob and self.runner_ob.is_running():
-            self.runner_ob.stop()
-            self._log_line("正在停止整理…", "warn", "整理背包")
-            self.btn_ob.configure(text="停止中…", state="disabled")
-            return
-        # dry_run 由开关控制，这里不强改；只读最新配置开跑。
-        cfg = cfg_mod.load_config()
-        self.app.cfg = self.cfg = cfg
-        task_cls = get_task("organize_bag")
-        if task_cls is None:
-            self._log_line("找不到整理背包任务。", "error", "整理背包")
-            return
-        self.runner_ob = TaskRunner(task_cls(), self.app.cfg)
-        ok, problems = self.runner_ob.start()
-        if not ok:
-            for p in problems:
-                self._log_line("无法开始整理：" + p, "error", "整理背包")
-            self.runner_ob = None
-            return
-        self._log_line("开始一键整理背包…", "hit", "整理背包")
-        self.btn_ob.configure(text="■  停止整理", fg_color=T.DANGER, hover_color=T.DANGER_HOVER, state="normal")
-
-    def _on_ob_finished(self):
-        if self.btn_ob is not None:
-            self.btn_ob.configure(text="▶  一键整理", fg_color=T.ACCENT,
-                                  hover_color=T.ACCENT_HOVER, state="normal")
 
     def _log_line(self, msg, level="info", source=None):
         # 日志统一汇到 App 右侧全局面板；source 缺省用本页 LOG_SOURCE（「通用」），
-        # 组队/整理背包在 pump 与各自的开始/停止消息里显式传「组队」「整理背包」。
+        # 组队/解散在 pump 与各自的开始/停止消息里显式传「组队」「解散」。
         self.app.log_line(msg, level, source or self.LOG_SOURCE)

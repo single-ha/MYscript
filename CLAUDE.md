@@ -77,16 +77,25 @@ mhxy/
                      副本内每轮=点跳过剧情→点小闹钟寻路→点进入战斗→等战斗，循环到副本结束
     dt_70_xiashi.py / dt_60_xiashi.py / dt_70_common.py / dt_60_common1.py / dt_60_common2.py
                       五副本薄子类（侠士×2 / 普通×3，is_dungeon=True）；已删 taohaiqu.py（蹈海去被这 5 个取代）
-    organize_bag.py  OrganizeBagTask（整理背包）：通用页可单独跑的共享能力封装，逐号 activate→core/inventory 整理；详见 memory organize-bag-task
+    organize_bag.py     OrganizeBagTask（整理背包）：工具页(OrganizeBagPage)可单独跑的共享能力封装，逐号 activate→core/inventory 整理；详见 memory organize-bag-task
+    tuoying.py          TuoyingTask（拓印）：刷副本偶发「拓印」临摹弹窗的自动描摹能力封装，工具页「拓印」可单独「演练」描一遍
+                        （标定存 tasks.tuoying；演练/实战共用手感）；完整自动流程（描→上传→确认不再重现）仍在 dungeon_base
   tools/
     calibrate.py 旧的命令行标定（已不被 GUI 调用，仅留作 CLI 备用）
-  gui/
+  ui/
     theme.py            配色/字体/圆角令牌（改这里整体换肤）+ bind_wraplength 换行助手（见约束 8）
-    app.py              主窗口：侧边导航 + 通用页(置顶,默认)/各任务Page/SettingsPage/AboutPage
+    app.py              主窗口：侧边导航（日常一条龙置顶/默认）+ 通用页/各任务Page/SettingsPage/AboutPage
     roi_overlay.py      全屏框选组件（纯 tk，冻结截图上拖框，返回屏幕绝对 ROI）
     calibrate_dialog.py GUI 内标定对话框（区域 + 模板缩略图画廊 + 加装备），按任务 CALIBRATION spec 驱动
     leader_gallery.py   队长ID 库画廊（见下「队长ID 库」约束）
     inventory_items_dialog.py 整理背包「物品清单」管理弹窗（缩略图+名字+动作下拉+框选添加，写 tasks.organize_bag.items）
+    pages/organize_bag.py  OrganizeBagPage：整理背包独立页（工具分类页「整理背包」tab）——一键整理/标定/管理物品；
+                          原在通用页卡片，迁到工具页；共享命名空间 tasks.organize_bag。「自动整理背包」开关
+                          已迁到「日常一条龙」页控制区（影响一条龙运行中自动清背包）
+    pages/tuoying.py       TuoyingPage：拓印独立页（工具分类页「拓印」tab）——标定/就绪状态/一键拓印演练；
+                          共享命名空间 tasks.tuoying（原在通用页公共标定，迁到这里）
+    pages/tools.py      工具分类页（Tab: 秒装备 / 整理背包 / 拓印）
+  gui/ 旧版 UI 备份（未用，勿动）
 ```
 
 ### 任务模块约定（加新功能照此做）
@@ -102,7 +111,7 @@ mhxy/
 - **日志统一到「全局日志面板」（约束，别再各页造日志框）**：日志框只此一处——常驻主窗口右侧（`App._build_log_panel`），
   统一出口 `App.log_line(msg, level, source)`。新页面**不要**自建日志框：设个类属性 `LOG_SOURCE = "短名"`，
   页内 `_log_line` 照范式写成一行转发 `self.app.log_line(msg, level, getattr(self,"LOG_SOURCE",None))`，
-  全局面板会按 source 打来源标签（如「秒装备 ›」）。一页里有多种来源（如通用页的组队/整理背包）就在
+  全局面板会按 source 打来源标签（如「秒装备 ›」）。一页里有多种来源（如通用页的组队/解散）就在
   `pump`/各消息处显式把第三个参 source 传成对应短名覆盖。
 - **副本中枢（「刷副本」页 = DungeonPage）**：副本统一收进该页用**勾选框多选**、点「开始」按勾选顺序**一个个顺序刷**
   （一个跑完自动接下一个；某副本 preflight/异常失败**跳过继续下一个**，最后汇总；「停止」即停整个队列）。
@@ -136,15 +145,19 @@ mhxy/
     `_auto_trace` 已做成「描→上传→**确认界面不再重现**（`tuoying_gone_confirm_sec` 窗口内持续观察）→ 还弹就再来一轮」，
     轮数上限 `tuoying_max_rounds`（默认3）；确认窗口防「界面一闪即误判通过」。
     `scribble.trace_pattern` 是通用能力：任何「沿图案描一遍」类校验都能复用。
-    ⚠ **标定位置（user 拍板 2026-09-08）**：`tuoying_title`/`tuoying_upload`/`tuoying_area` 全在**「通用」页「标定（公共区域）」**里标，
-    存 `tasks.shared`（模板键集 `TUOYING_TPL_KEYS`；绘制区键 `tuoying_area` 由
-    `core/config.TASK_SHARED_REGIONS["dungeon"]` 声明），读取 = `_load_flags`/`task_config` 的 shared 叠加（任务命名空间旧值兜底）。
-    标定对话框写共享键路由走 `core/config.EXCLUSIVE_SHARED_REGIONS`（=`SHARED_REGION_KEYS ∪ TASK_SHARED_REGIONS` 值）。
+    ⚠ **标定位置（user 2026-09-08 拍板、2026-09-18 迁工具页、同日拍板只读新值）**：`tuoying_title`/`tuoying_upload`/`tuoying_area` 在**「工具」页「拓印」**里标，
+    存 `tasks.tuoying`（模板键集 `TUOYING_TPL_KEYS`），一次标定覆盖全部副本；读取 = `dungeon_base._load_flags` +
+    `_tuoying_area()`（绘制区单独并入 regions），**只读这份新值——旧 `tasks.shared` / `tasks.dungeon` 残留一律不沿用**。
+    已从「通用」页公共标定移除、`TASK_SHARED_REGIONS` 已删（`EXCLUSIVE_SHARED_REGIONS` 现只含活动/背包两键）。
+  - **主界面判断（core/ui_state.py）**：`is_main_screen(cfg, window)` 在窗口画面里找**商城图标**（`tasks.shared.templates.shop_icon`，
+    同「标定（公共区域）」里与活动图标 `activity_icon` 一起标，键集 `MAIN_ICON_TPL_KEYS`）→ True/False；未标/无窗口/抓图失败返回
+    **None（调用方自行兜底，别当非主界面）**。任何任务要判断「是否已回到主界面」都用它。
 - **日常一条龙分「个人/多人」两区（user 拍板，2026-09-07）**：`tasks/daily.py` 里
   `CHAINABLE_SINGLE`=个人组（宝图/运镖/秘境/三界奇缘/帮派签到/活跃度奖励，每窗口独立链）、
   `MULTI_BARRIER`=多人组（刷副本/抓鬼，集体屏障：所有活跃号停靠同一步等齐→组队→队长跑→放行）。
   `group_of(name)` 由任务名判定分组；**steps 全局有序=执行顺序**（按 `tasks.daily.group_order` 两段拼接，
-  界面「⇅ 两区互换」整段对调、组内保留）。**进个人组的前提**是任务有 `CHAINS_PER_WINDOW=True` +
+  界面「⇅ 两区互换」整段对调、组内保留）。**整组开关 `tasks.daily.group_enabled`**（{single,multi}→bool，缺省
+  全开）：区头开关整组停用/启用，引擎 `_enabled_steps` 过滤时跳过整组（行级 enabled 独立保留，重开整组即恢复）。**进个人组的前提**是任务有 `CHAINS_PER_WINDOW=True` +
   `make_chain_driver(wctx)`（每窗口 record + 单步推进，非阻塞；帮派签到/活跃度已是轮转状态机）。
   多人步只走集体 `_run_collective`，不建独立链。
 - **组队是共享能力、单独可一键触发**：握手在 `core/teaming.TeamFormation`；通用页有「选队长 + 一键组队」
@@ -153,7 +166,7 @@ mhxy/
   统一存共享命名空间 `tasks.shared.regions`，**只在「通用」页「标定（公共区域）」标定一次**（各任务 CALIBRATION 不再列出这两项）；
   `core/config.py task_config()` 读取时自动叠加进各任务 regions（运行时与就绪判定都吃到；新任务直接用 `tc["regions"]` 读即可，
   别各标一份）。共享键集合在 `core/config.SHARED_REGION_KEYS`；各任务「就绪判定」还要查的共享键在 `core/config.TASK_SHARED_REQ`。
-  同一对话框同时标**拓印临摹资产**（`TUOYING_TPL_KEYS` 模板 + `TASK_SHARED_REGIONS` 绘制区，存 `tasks.shared`，各任务不重复列出、不参与就绪）。
+  **拓印临摹资产已不在共享里**：标定迁到「工具」页「拓印」（存 `tasks.tuoying`，见上「拓印」条），各任务不重复列出、不参与就绪。
   ⚠ 标定对话框写共享键走 `tasks.shared`、绝不回写任务自身命名空间（`ui/calibrate_dialog.py` 的 `_target_regions`/`_save` 只看 `EXCLUSIVE_SHARED_REGIONS`）；先补共享标定时让旧任务自带值兜底。
 - **「队长ID 库」（`gui/leader_gallery.py` + 纯函数 `core/leader_history.py`）非显而易见的约束**：
   **激活图路径永远是 `templates/tm_leader_id.png`**（teaming 与 calibrate 都写死读它），切换当前队长 = 把选中历史图

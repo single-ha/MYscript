@@ -58,6 +58,13 @@ def trace_pattern(mouse, rect, frame_bgr, speed=1.0, lateral=3, sample_step=5,
     return True
 
 
+def has_pattern(frame_bgr, min_area_ratio=0.005, label="绘制区"):
+    """只判断画面里能否认出图案笔画（不描）。供「演练·只识别」/预检复用。"""
+    if frame_bgr is None or frame_bgr.size == 0:
+        return False
+    return bool(_extract_strokes(frame_bgr, min_area_ratio=min_area_ratio, label=label))
+
+
 # ----------------------------------------------------------------------
 # 骨架提取：灰度 → 形态学开闭(去网格噪点/接断笔) → 阈值分离前景 → Zhang-Suen 细化
 # ----------------------------------------------------------------------

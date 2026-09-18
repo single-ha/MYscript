@@ -24,9 +24,10 @@
      处理：识别「拓印」标题 → 在标定的绘制区做拟人化区域填扫（core/scribble，图案随机但位置固定）→ 点上传；
      描完后轮询界面关闭；未标定或描完没被认可 → 日志提示手动临摹，轮询到界面消失自动继续。
      普通副本路径顺带补「已进本验证（settlement/跳过/小闹钟任一出现）+ 超时重试」，拓印掩盖的失败不再傻等。
-     标定位置（全部在「通用」页「标定（公共区域）」里标，存 tasks.shared，所有副本共用，见 _load_flags 的 shared 叠加）：
-     tuoying_title / tuoying_upload 模板存 tasks.shared.templates；tuoying_area 绘制区存 tasks.shared.regions
-     （task_config() 自动叠加进本任务 regions）。
+     标定位置（全部在「工具」页「拓印」里标，存 tasks.tuoying，所有副本共用；只读这份新值，
+     旧 tasks.shared / tasks.dungeon 里残留的旧值一律不沿用）：
+     tuoying_title / tuoying_upload 模板存 tasks.tuoying.templates；tuoying_area 绘制区存 tasks.tuoying.regions
+     （run() 里单独并入本任务 regions）。
 
 子类只写：name / title / cat。其余完全通用。
 
@@ -50,8 +51,8 @@ from .base import Task, register
 
 DUNGEON_NS = "dungeon"                       # 共享配置命名空间（tasks.dungeon）
 
-# 共享模板键（绝大部分存 tasks.dungeon.templates；tuoying_title/upload 存 tasks.shared.templates，
-# 在「通用」页「标定（公共区域）」里标定，见 TUOYING_TPL_KEYS，读法见 _load_flags 的 shared 叠加）。
+# 共享模板键（绝大部分存 tasks.dungeon.templates；tuoying_title/upload 存 tasks.tuoying.templates，
+# 在「工具」页「拓印」里标定，见 TUOYING_TPL_KEYS；由 _load_flags 单独读入，只读 tasks.tuoying）。
 # 顺序按操作流程走，并作为标定向导里模板画廊的展示顺序：
 #   卡片(普通/侠士) → 参加 → 选择副本 → 侠士区标签页(侠士进副本前) → 进入 → 侠士确认(侠士) → 跳过/闹钟/进入战斗 → 结算界面。
 SHARED_TPL_KEYS = ["entry_common", "entry_xiashi", "join", "select",
@@ -62,8 +63,9 @@ SHARED_TPL_KEYS = ["entry_common", "entry_xiashi", "join", "select",
 DUNGEON_CALIBRATION = {
     "regions": [
         ("scene", "主识别区", "留空=整个窗口当识别区(推荐)；对话框/各按钮都在这里找", True),
-        # activity_list / tuoying_area 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared，
+        # activity_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared，
         # task_config() 已把 shared 叠加进本任务 regions，运行时直接 regions.get 即可。
+        # 拓印绘制区 tuoying_area 在「工具」页「拓印」标定（存 tasks.tuoying，run() 单独并入）。
     ],
     "templates": [
         ("entry_common", "普通副本卡片", "活动列表里普通副本的那张卡片——普通副本共用"),
@@ -194,6 +196,10 @@ class DungeonBaseTask(Task):
         skip_team = team_tc.get("skip_team", False)
         cap = team_tc.get("captain_index", 0)
         self.flags = self._load_flags(tc, ctx)
+
+        # 拓印绘制区在「工具」页「拓印」标定（存 tasks.tuoying），单独并入本任务 regions；
+        # 只读这份新值（None=未标→遇拓印转手动），其它命名空间残留旧值一律不用。
+        regions["tuoying_area"] = self._tuoying_area(ctx)
 
         wins = ctx.select_windows()
         if not wins:
@@ -400,6 +406,13 @@ class DungeonBaseTask(Task):
             if remaining:
                 self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
         return not remaining
+
+    def _tuoying_area(self, ctx):
+        """有效拓印绘制区：读 tasks.tuoying（「工具」页「拓印」标定）；读不到返回 None。
+        直接读原始 cfg 这份新值（不用 ctx.task_cfg("tuoying")，避免历史 shared 叠加串扰）。"""
+        tasks = (ctx.cfg or {}).get("tasks", {}) or {}
+        tuo = (tasks.get("tuoying", {}) or {}).get("regions", {}) or {}
+        return tuo.get("tuoying_area") or None
 
     # ---- 进副本主入口：点「进入」 + 偶发「拓印」临摹弹窗处理 + 侠士确认/普通验证进本（外套重试）----
     def _enter_with_tuoying(self, ctx, assignments, loop, regions, threshold, step_to):
@@ -817,13 +830,15 @@ class DungeonBaseTask(Task):
             pass
 
     def _load_flags(self, tc, ctx):
-        """读全部共享模板。tuoying_title/upload 存在 tasks.shared.templates（「通用」页「标定（公共区域）」
-        里标定、所有副本共用），叠加进来自动读取；任务命名空间还残留的旧值兜底（已标定过的配置不重标）。
-        其余模板仍读 tasks.dungeon.templates（每副本共用的标定向导）。"""
+        """读全部共享模板。绝大部分读 tasks.dungeon.templates；tuoying_title/upload 只读
+        tasks.tuoying.templates（「工具」页「拓印」里标定，所有副本共用）——旧 tasks.shared / tasks.dungeon
+        里残留的 tuoying 值一律不沿用，先从合并模板里摘干净再只填入新值。"""
         templates = dict(tc.get("templates", {}) or {})
-        shared = ((ctx.cfg or {}).get("tasks", {}) or {}).get("shared", {}) or {}
-        shared_t = shared.get("templates") or {}
-        for k, v in shared_t.items():
+        for k in ("tuoying_title", "tuoying_upload"):
+            templates.pop(k, None)
+        tasks = (ctx.cfg or {}).get("tasks", {}) or {}
+        tuo_t = ((tasks.get("tuoying", {}) or {}).get("templates") or {})
+        for k, v in tuo_t.items():
             if v:
                 templates[k] = v
         return {k: vision.load_template(templates.get(k)) if templates.get(k) else None for k in SHARED_TPL_KEYS}

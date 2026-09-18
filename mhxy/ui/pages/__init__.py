@@ -13,9 +13,12 @@ from .settings import SettingsPage
 from .about import AboutPage
 from .general import GeneralPage
 from .daily import DailyPage
+from .organize_bag import OrganizeBagPage
+from .tuoying import TuoyingPage
 
 __all__ = [
     "CategoryPage", "SinglePage", "MultiPage", "ToolsPage",
     "TreasureMapPage", "EscortPage", "DungeonPage", "SecretRealmPage",
-    "SettingsPage", "AboutPage", "GeneralPage", "DailyPage",
+    "SettingsPage", "AboutPage", "GeneralPage", "DailyPage", "OrganizeBagPage",
+    "TuoyingPage",
 ]

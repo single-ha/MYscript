@@ -25,8 +25,8 @@ from .pages import (DailyPage, SinglePage, MultiPage, ToolsPage,
 # 主窗口
 # ----------------------------------------------------------------------
 class App(ctk.CTk):
-    NAV = [("general", "🧰  通用"),
-           ("daily", "🐉  日常一条龙"),
+    NAV = [("daily", "🐉  日常一条龙"),
+           ("general", "🧰  通用"),
            ("single", "👤  单人任务"),   # 内嵌 宝图/运镖/秘境降妖
            ("multi", "👥  多人任务"),    # 内嵌 刷副本枢纽
            ("tools", "🧰  工具"),        # 内嵌 秒装备（后续工具汇总于此）
@@ -69,7 +69,7 @@ class App(ctk.CTk):
         self._build_sidebar()
         self._build_log_panel()   # 先建日志面板：各页 _log_line 都往这写，必须先于建页
         self._build_pages()
-        self._show("general")
+        self._show("daily")
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(150, self._tick)
@@ -120,13 +120,14 @@ class App(ctk.CTk):
         self.btn_appearance.grid(row=100, column=0, sticky="ew", padx=12, pady=(8, 4))
         self._render_appearance_btn()
 
-        # 连接状态（原各任务页 header 药丸，现统一收敛到这里）：未检测到窗口=中性，已连接=绿。
+        # 连接状态（原各任务页 header 药丸，现统一收敛到这里）：浅底 + 彩字。
+        # 未检测到=白/深灰底(SURFACE)+黄字(WARN)，已连接=绿底(PILL_OK_BG)+绿字(SUCCESS)；描边同字色。
         # 做成带描边的按钮样式：点在连接状态上即打开「选择窗口」对话框（换号/选窗口一步到位）。
         self.btn_game_status = ctk.CTkButton(
             bar, text="○ 未检测到目标窗口", font=self.fonts["small"], height=34,
-            corner_radius=T.RADIUS_SM, fg_color=T.SURFACE_2, hover_color=T.BORDER,
-            border_width=1, border_color=T.BORDER,
-            text_color=T.TEXT_DIM, command=self.open_window_picker)
+            corner_radius=T.RADIUS_SM, fg_color=T.SURFACE, hover_color=T.BORDER,
+            border_width=1, border_color=T.WARN,
+            text_color=T.WARN, command=self.open_window_picker)
         self.btn_game_status.grid(row=101, column=0, sticky="ew", padx=12, pady=(4, 2))
 
         ctk.CTkLabel(bar, text="⚠ 脚本有封号风险\n请用小号测试", font=self.fonts["small"],
@@ -453,13 +454,16 @@ class App(ctk.CTk):
         self._render_game_status(found, summary)
 
     def _render_game_status(self, found, summary=""):
-        """刷新侧边栏底部的连接状态按钮：未检测到=中性，已连接=绿。点它会打开「选择窗口」对话框。"""
+        """刷新侧边栏底部的连接状态按钮：浅底 + 彩字，描边同字色。
+        未检测到=底 SURFACE + 黄字 WARN；已连接=底 PILL_OK_BG + 绿字 SUCCESS。点它会打开「选择窗口」对话框。"""
         if found:
             self.btn_game_status.configure(text="● " + (summary or "目标窗口已连接"),
-                                           text_color=T.SUCCESS, fg_color=T.SURFACE_2)
+                                           text_color=T.SUCCESS, fg_color=T.PILL_OK_BG,
+                                           hover_color=T.BORDER, border_color=T.SUCCESS)
         else:
             self.btn_game_status.configure(text="○ 未检测到目标窗口",
-                                           text_color=T.TEXT_DIM, fg_color=T.SURFACE_2)
+                                           text_color=T.WARN, fg_color=T.SURFACE,
+                                           hover_color=T.BORDER, border_color=T.WARN)
 
     def open_window_picker(self, after=None, captain_ns=None):
         """打开「选择窗口」对话框（各任务页共用）。关闭后刷新配置并强制刷新药丸。

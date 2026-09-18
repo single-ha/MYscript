@@ -474,6 +474,16 @@
             },
             "items": []
         },
+        "tuoying": {
+            "dry_run": true,
+            "regions": {
+                "tuoying_area": null
+            },
+            "templates": {
+                "tuoying_title": null,
+                "tuoying_upload": null
+            }
+        },
         "guild_checkin": {
             "dry_run": true,
             "loop": {

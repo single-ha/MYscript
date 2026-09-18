@@ -50,6 +50,9 @@ class DailyPage(ctk.CTkFrame):
         self._lbl_count = {}      # group -> 计数标签
         self._lbl_chevron = {}    # group -> 折叠箭头标签
         self._drag = None         # 拖动中的状态 {"group": 区, "idx": 区内下标}
+        self._group_vars = {}     # group -> 整组启用开关 BooleanVar
+        self._group_on = {g: True for g in _GROUPS}   # group -> 整组启用（未存配置默认全开）
+        self.switch_auto_organize = None      # 「自动整理背包」开关（任何任务检测到背包满自动整理）
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
@@ -142,6 +145,21 @@ class DailyPage(ctk.CTkFrame):
         sched_hint.pack(fill="x", pady=(4, 0))
         bind_wraplength(sched_hint)
 
+        # «自动整理背包»（从「工具 › 整理背包」页移到这里的控制区，因为它影响运镖/宝图/秘境/副本
+        # 等一条龙任务运行中的行为；配置仍存共享 tasks.organize_bag.auto_organize）。
+        auto = ctk.CTkFrame(opts, fg_color="transparent")
+        auto.pack(anchor="w", pady=(10, 0))
+        self.switch_auto_organize = ctk.CTkSwitch(
+            auto, text="自动整理背包（任何任务检测到背包满就自动清）", font=self.fonts["body"],
+            command=self._toggle_auto_organize)
+        self.switch_auto_organize.pack(anchor="w")
+        auto_hint = ctk.CTkLabel(opts, text="开启后，运镖 / 宝图 / 秘境 / 副本等任务运行中会每隔一会儿检测一次背包"
+                                            "「满」图标，满了就自动整理一遍 —— 需先在「工具 › 整理背包」页「标定」里"
+                                            "框选『背包满图标』，否则无从判断、不会触发。",
+                                 font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
+        auto_hint.pack(fill="x", pady=(4, 0))
+        bind_wraplength(auto_hint)
+
     # ---- 主体：分区任务清单（日志已移到全局右栏）----
     def _build_body(self):
         body = ctk.CTkFrame(self, fg_color="transparent")
@@ -178,6 +196,7 @@ class DailyPage(ctk.CTkFrame):
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         go = self._sanitize_group_order(tc.get("group_order"))
         self._group_order = go
+        self._group_on = {g: bool((tc.get("group_enabled") or {}).get(g, True)) for g in _GROUPS}
         self._steps = self._normalize(tc.get("steps", []), go)
         self.var_limit.set(str(tc.get("loop", {}).get("time_limit_min", 0)))
         self.var_shutdown.set(bool(tc.get("loop", {}).get("shutdown_after", False)))
@@ -185,6 +204,12 @@ class DailyPage(ctk.CTkFrame):
         self.var_schedule_on.set(bool(sched))
         if sched and ":" in sched:
             self.var_schedule_time.set(sched)
+        ob = cfg_mod.task_config(self.app.cfg, "organize_bag")
+        if self.switch_auto_organize is not None:
+            if ob.get("auto_organize"):
+                self.switch_auto_organize.select()
+            else:
+                self.switch_auto_organize.deselect()
         self._render_steps()
 
     @staticmethod
@@ -292,8 +317,9 @@ class DailyPage(ctk.CTkFrame):
 
     def _render_steps(self):
         # 内容/各任务就绪状态没变就别重建：切页时 refresh 反复调到这里，整段重画是「切页卡顿」来源之一。
-        # 区顺序变化也纳入签名。
+        # 区顺序变化、整组启用开关变化也纳入签名。
         sig = (tuple(self._group_order),
+               tuple((g, self._group_on.get(g, True)) for g in _GROUPS),
                [(s["task"], s["enabled"], self._task_status(s["task"])) for s in self._steps])
         if sig == getattr(self, "_steps_sig", None):
             return
@@ -312,10 +338,12 @@ class DailyPage(ctk.CTkFrame):
         self._grid_all()
 
     def _build_section_header(self, g):
-        """区头：标题（点它折叠/展开）+ 计数 + ▲▼ 移动整区顺序。折叠是按 group 记状态、仅隐藏该区行。"""
+        """区头：标题（点它折叠/展开）+ 整组启用开关 + 计数 + ▲▼ 移动整区顺序。折叠是按 group 记状态、
+        仅隐藏该区行；整组开关=整区停用/启用（行级开关独立保留，组关了再开回来行勾选仍在）。"""
         bar = ctk.CTkFrame(self.list_frame, fg_color="transparent")
         bar.grid_columnconfigure(2, weight=1)
         collapsed = self._collapsed.get(g, False)
+        group_on = self._group_on.get(g, True)
         chev = ctk.CTkLabel(bar, text="▸" if collapsed else "▾", font=self.fonts["body_b"],
                             text_color=T.TEXT_DIM, width=22, anchor="w")
         chev.grid(row=0, column=0, sticky="w")
@@ -324,7 +352,7 @@ class DailyPage(ctk.CTkFrame):
             bar,
             text=f"{self._GROUP_EMOJI.get(g, '▪')} {GROUP_TITLES.get(g, g)}"
                  + (f" · {self._GROUP_DESC[g]}" if g in self._GROUP_DESC else ""),
-            font=self.fonts["h2"], text_color=T.TEXT, anchor="w")
+            font=self.fonts["h2"], text_color=(T.TEXT if group_on else T.TEXT_DIM), anchor="w")
         title.grid(row=0, column=1, sticky="w", padx=(2, 0))
         for w in (chev, title):
             try:
@@ -332,6 +360,13 @@ class DailyPage(ctk.CTkFrame):
             except Exception:
                 pass
             w.bind("<Button-1>", lambda e, gg=g: self._toggle_collapse(gg))
+        # 整组启用开关（标题右侧常驻，折叠时也能切）
+        var = ctk.BooleanVar(value=group_on)
+        self._group_vars[g] = var
+        sw = ctk.CTkSwitch(bar, text="", variable=var, width=44,
+                           progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
+                           command=lambda gg=g, v=var: self._toggle_group(gg, v))
+        sw.grid(row=0, column=2, padx=(8, 0))
         lbl = ctk.CTkLabel(bar, text="", font=self.fonts["small"], text_color=T.TEXT_DIM)
         lbl.grid(row=0, column=3, sticky="e", padx=(8, 0))
         self._lbl_count[g] = lbl
@@ -382,12 +417,19 @@ class DailyPage(ctk.CTkFrame):
                      text_color=(T.SUCCESS if ready else T.WARN)).grid(
             row=1, column=0, sticky="w", pady=(5, 0))
 
-        # 右：启用 / 停用开关（按任务名定位，拖动后下标会变，故 _toggle_step 用 name 不用 idx）
+        # 右：启用 / 停用开关（按任务名定位，拖动后下标会变，故 _toggle_step 用 name 不用 idx）。
+        # 整组停用时行级开关仍保留（组重开后行勾选恢复），仅视觉置灰。
         var = ctk.BooleanVar(value=step["enabled"])
         sw = ctk.CTkSwitch(row, text="", variable=var, width=44,
                            progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
                            command=lambda nm=name, v=var: self._toggle_step(nm, v))
         sw.grid(row=0, column=3, rowspan=2, padx=(8, 14), pady=8)
+        if not self._group_on.get(g, True):
+            sw.configure(state="disabled")
+            title.configure(text_color=T.TEXT_DIM)
+            for lbl in mid.winfo_children():
+                if isinstance(lbl, ctk.CTkLabel):
+                    lbl.configure(text_color=T.TEXT_DIM)
 
         return {"frame": row, "name": name, "badge": badge, "group": g, "idx": len(self._rows[g]), "step": step}
 
@@ -414,7 +456,9 @@ class DailyPage(ctk.CTkFrame):
                 continue
             g, idx = entry[1], entry[2]
             r = self._rows[g][idx]
-            if r["step"]["enabled"]:
+            if not self._group_on.get(g, True):
+                r["badge"].configure(text="·", fg_color=T.SURFACE, text_color=T.TEXT_DIM)
+            elif r["step"]["enabled"]:
                 order += 1
                 r["badge"].configure(text=str(order), fg_color=T.ACCENT, text_color=T.ON_ACCENT)
             else:
@@ -423,7 +467,12 @@ class DailyPage(ctk.CTkFrame):
             gsteps = self._steps_by_group(g)
             n_on = sum(1 for s in gsteps if s["enabled"])
             if g in self._lbl_count:
-                self._lbl_count[g].configure(text=f"已勾选 {n_on}/{len(gsteps)}")
+                if not self._group_on.get(g, True):
+                    self._lbl_count[g].configure(text="整组停用 · 已勾选 %d/%d" % (n_on, len(gsteps)),
+                                                 text_color=T.WARN)
+                else:
+                    self._lbl_count[g].configure(text="已勾选 %d/%d" % (n_on, len(gsteps)),
+                                                 text_color=T.TEXT_DIM)
 
     # ------------------------------------------------------------------
     # 启用切换 / 左键拖动排序（区内）/ 两区互换 / 保存
@@ -435,6 +484,20 @@ class DailyPage(ctk.CTkFrame):
                 break
         self._save()
         self._render_steps()
+
+    def _toggle_group(self, g, var):
+        """整组启用开关：只改组级开关并重画（行级 enabled 独立保留，组关了再开回来行勾选仍在）。"""
+        on = bool(var.get())
+        self._group_on[g] = on
+        self._group_vars[g] = var
+        self._save()
+        self._render_steps()
+        n = len(self._steps_by_group(g))
+        if on:
+            self._log_line(f"已启用「{GROUP_TITLES.get(g, g)}」整组（{n} 个任务回归一条龙流程）。", "info")
+        else:
+            self._log_line(f"已停用「{GROUP_TITLES.get(g, g)}」整组：一条龙跳过这 {n} 个任务"
+                           "（行级勾选保留，重新启用整组即恢复）。", "warn")
 
     def _drag_start(self, event, frame):
         """按按住的手柄定位其所在区与该区下标，进入拖动。"""
@@ -526,6 +589,7 @@ class DailyPage(ctk.CTkFrame):
         tc = cfg_mod.task_config(cfg, self.TASK_NAME)
         tc["steps"] = [{"task": s["task"], "enabled": bool(s["enabled"])} for s in self._steps]
         tc["group_order"] = list(self._group_order)
+        tc["group_enabled"] = {g: bool(self._group_on.get(g, True)) for g in _GROUPS}
         loopc = tc.setdefault("loop", {})
         try:
             loopc["time_limit_min"] = max(0.0, round(float(self.var_limit.get()), 1))
@@ -561,6 +625,23 @@ class DailyPage(ctk.CTkFrame):
                            "warn")
         else:
             self._log_line("已关闭定时延后执行：点「开始一条龙」立即执行。", "info")
+
+    def _toggle_auto_organize(self):
+        """「自动整理背包」开关：存共享 tasks.organize_bag.auto_organize（任何一条龙任务检测到背包满自动整理）。"""
+        on = bool(self.switch_auto_organize.get())
+        cfg = cfg_mod.load_config()
+        ob_tc = cfg_mod.task_config(cfg, "organize_bag")
+        ob_tc["auto_organize"] = on
+        cfg_mod.set_task_config(cfg, "organize_bag", ob_tc)
+        cfg_mod.save_config(cfg)
+        self.app.cfg = cfg
+        if on:
+            tpl_ok = bool((ob_tc.get("templates", {}) or {}).get("bag_full_icon"))
+            self._log_line("已开启「自动整理背包」：一条龙任务运行中检测到背包满会自动整理。"
+                           + ("" if tpl_ok else " ⚠ 但还没标定『背包满图标』，请先去「工具 › 整理背包」页「标定」框选，否则不会触发。"),
+                           "warn" if not tpl_ok else "info")
+        else:
+            self._log_line("已关闭「自动整理背包」。", "info")
 
     # ------------------------------------------------------------------
     # 定时延迟执行：点「开始」时若设了时刻则先生成等待截止点；到点/已过再真启动

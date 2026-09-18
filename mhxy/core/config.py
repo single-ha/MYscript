@@ -30,10 +30,15 @@ CAPTURES_DIR = DATA_ROOT / "captures"
 SHARED_REGION_KEYS = ("activity_list", "bag_list")
 SHARED_REGION_LABELS = {"activity_list": "活动列表区域", "bag_list": "背包列表区域"}
 
-# 拓印临摹资产（见 tasks.shared.templates，在「通用」页「标定（公共区域）」里标定，所有副本共用）：
+# 拓印临摹资产（存 tasks.tuoying，在「工具」页「拓印」里标定，所有副本共用）：
 # 点「进入」偶发的「拓印」临摹弹窗（队长窗）的标题/上传按钮模板。可选：标了刷副本遇弹窗自动描摹，
-# 不标遇弹窗转手动。读方 = dungeon_base._load_flags（tasks.shared 优先，任务命名空间旧值兜底）。
+# 不标遇弹窗转手动。读方 = dungeon_base._load_flags / 拓印页，只读 tasks.tuoying。
 TUOYING_TPL_KEYS = ("tuoying_title", "tuoying_upload")
+
+# 主界面判断资产（tasks.shared.templates，在「通用」页「标定（公共区域）」里标定）：商城图标 / 活动图标。
+# 判断「当前界面是否是主界面」= 在窗口画面里能否找到商城图标（core/ui_state.is_main_screen）。可选：不标则
+# 无法做主界面判定（调用方自行兜底）。活动图标供后续界面判定复用，同处标定。
+MAIN_ICON_TPL_KEYS = ("shop_icon", "activity_icon")
 
 # 各任务「就绪判定」还要查的共享区域键（这些键已从任务自身 CALIBRATION 移走、只在
 # 通用页「标定（公共区域）」里标定一次）。key 与任务名一致；dungeon 指共享 tasks.dungeon。
@@ -46,16 +51,10 @@ TASK_SHARED_REQ = {
     "dungeon": ("activity_list",),
 }
 
-# 各任务专属的**共享区域**键（从任务自身 CALIBRATION 移走、存 tasks.shared.regions，
-# 在「通用」页「标定（公共区域）」里标定一次；运行时由 task_config() 自动叠加进本任务 regions）。
-TASK_SHARED_REGIONS = {
-    "dungeon": ("tuoying_area",),  # 拓印临摹绘制区——所有副本共用一个画面位置
-}
-
 # 所有只存 tasks.shared.regions 的区域键（calibrate_dialog 写入路由 / _save 剥离用）：
-EXCLUSIVE_SHARED_REGIONS = frozenset(SHARED_REGION_KEYS) | frozenset(
-    k for ks in TASK_SHARED_REGIONS.values() for k in ks
-)
+# 只有「活动列表区/背包列表区」这俩全任务共用；拓印绘制区已迁到 tasks.tuoying（「工具」页「拓印」），
+# 不再经 shared 叠加进任务 regions——dungeon_base.run 单独读它并入 regions。
+EXCLUSIVE_SHARED_REGIONS = frozenset(SHARED_REGION_KEYS)
 
 
 def _mk_dungeon_shared():
@@ -69,7 +68,6 @@ def _mk_dungeon_shared():
       xiashi_tab                   侠士进副本前先点的「侠士区」标签页
       confirm                      侠士进副本后各号弹的「确认」按钮
       settlement                   结算界面（副本结束信号，识别到即收尾）
-      tuoying_title / tuoying_upload   点「进入」偶发的「拓印」临摹弹窗（队长单窗弹）：识别标题/上传按钮
     loop 各键同旧 _mk_dungeon；extra：enter_retry_*/confirm_sec 为侠士「进入+确认」重试参数、
     tuoying_* / enter_check_sec 为拓印临摹处理参数。"""
     return {
@@ -111,7 +109,6 @@ def _mk_dungeon_shared():
         "regions": {
             "scene": None,           # 主识别区(整窗或大半屏)
             "activity_list": None,   # 活动列表区域(滚轮在此找本副本卡片)
-            "tuoying_area": None,    # 「拓印」临摹界面的图案绘制区（留空=未标定时检测到拓印转手动）
         },
         "templates": {
             "entry_common": None,    # 活动列表里的普通副本卡片
@@ -125,8 +122,6 @@ def _mk_dungeon_shared():
             "xiashi_tab": None,      # 侠士进副本前先点的「侠士区」标签页（仅侠士用）
             "confirm": None,         # 侠士进副本后各号弹的「确认」按钮
             "settlement": None,      # 结算界面（副本结束信号；每轮打完轮询它，识别到即收尾）
-            "tuoying_title": None,   # 「拓印」临摹界面的标题/标志（点「进入」后被它拦截时识别用）
-            "tuoying_upload": None,  # 拓印临摹完要点的「上传」按钮
         },
         "selected": ["dt_70_common", "dt_60_common1", "dt_60_common2",
                      "dt_70_xiashi", "dt_60_xiashi"],
@@ -561,6 +556,22 @@ DEFAULT_CONFIG = {
             },
             "items": []                          # [{name, template, action}]，action ∈ use/discard/shop_sell/stall_sell（兼容旧 sell）
                                                  # 物品图存 templates/ob_<name>.png
+        },
+
+        # ---- 拓印（全局共享的临摹校验能力；不是可单独玩的玩法，是刷副本「拓印」弹窗的自动描摹）----
+        #   点「进入」偶发的「拓印」临摹弹窗（队长窗）需按住鼠标沿随机图案描一遍再点「上传」。
+        #   识别标题/上传按钮 + 标绘制区，存这份共享命名空间 tasks.tuoying，在「工具」页「拓印」里标定一次，
+        #   所有副本共用（dungeon_base / 拓印页只读这份，旧 tasks.shared、tasks.dungeon 残留值一律不沿用）。
+        #   「拓印」页可单独「演练」描一遍。
+        "tuoying": {
+            "dry_run": True,
+            "regions": {
+                "tuoying_area": None,    # 「拓印」临摹界面的图案绘制区（留空=检测到拓印时无法自动描、转手动）
+            },
+            "templates": {
+                "tuoying_title": None,   # 「拓印」临摹界面的标题/标志（点「进入」后被它拦截时识别用）
+                "tuoying_upload": None,  # 拓印临摹完要点的「上传」按钮
+            },
         },
 
         # ---- 帮派签到（单人任务页一键操作，也可进日常一条龙个人组）----
