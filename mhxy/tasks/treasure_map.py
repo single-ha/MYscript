@@ -35,6 +35,8 @@ from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
 from ..core import scan
+from ..ui import ui_state
+from ..core.config import BATTLE_FLAG_TPL_KEY
 from .base import Task, register
 
 # 每个号的状态机状态（非阻塞：每访问一次只推进一步）
@@ -59,11 +61,12 @@ _STILL_DIFF = 8.0   # 帧差低于此视为画面静止（人物不动）的默�
 # 必备模板（缺失则 preflight 阻断）与可选模板（缺失仅 warn）
 #   flag_join=活动列表里「宝图任务」那一行右侧的「参加」按钮——按行匹配点它（不是点条目本身）。
 _FLAG_KEYS = ["flag_treasure_entry", "flag_join", "flag_tingting",
-              "flag_battle", "flag_next_map", "treasure_item"]
-# 必备模板（缺失则 preflight 阻断）：flag_battle 虽不点它，但「静止判定」要在战斗期暂停——
-# 不标它一进战斗就被误判（收集提前完成/挖完），故必标。
+              "battle_flag", "flag_next_map", "treasure_item"]
+# 必备模板（缺失则 preflight 阻断）：battle_flag 虽不点它，但「静止判定」要在战斗期暂停——
+# 不标它一进战斗就被误判（收集提前完成/挖完），故必标。走公共共享模板 tasks.shared.templates.battle_flag
+# （「通用」页「标定（公共区域）」标定，全任务共用），task_config 已把它叠加进本任务 templates。
 _REQUIRED_FLAGS = ["flag_treasure_entry", "flag_join", "flag_tingting",
-                   "flag_next_map", "flag_battle", "treasure_item"]
+                   "flag_next_map", "battle_flag", "treasure_item"]
 
 
 @register
@@ -84,7 +87,7 @@ class TreasureMapTask(Task):
             ("flag_tingting", "「听听无妨」选项", "和 NPC 对话弹框里要点的那个选项"),
             ("flag_next_map", "「下一张使用」按钮", "挖完一张后游戏自动弹出的继续按钮"),
             ("treasure_item", "藏宝图道具", "背包里藏宝图那个图标的样子"),
-            ("flag_battle", "战斗界面标志", "战斗独有的画面元素。战斗期画面在动，静止判定要暂停，不标它会误判收集/挖宝——必标"),
+            # 战斗界面标志已移到「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
         ],
         "watchlist": False,
     }
@@ -106,7 +109,10 @@ class TreasureMapTask(Task):
         for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
             if not path or vision.load_template(path) is None:
-                problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
+                if tk == BATTLE_FLAG_TPL_KEY:
+                    problems.append("『战斗界面标志』未标定 —— 请到「通用」页点「标定（公共区域）」框选（全任务共用）")
+                else:
+                    problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
         # 判「是否已有宝图」要开活动列表找入口/参加，必须有 open_activity 快捷键（默认 Alt+C）
         if not ctx.hotkeys.get("open_activity"):
@@ -363,7 +369,7 @@ class TreasureMapTask(Task):
             return
         scene_rect = self._scene_rect(ctx, regions)
         cur = win_mod.grab(scene_rect)
-        in_battle = self._present(cur, "flag_battle", threshold)
+        in_battle = ui_state.is_present(cur, self.flags, "battle_flag", threshold)
         diff = self._frame_diff(rec["last"], cur) if rec["last"] is not None else None
         if in_battle:
             rec["still_since"], rec["last"] = None, None   # 战斗中不计静止
@@ -453,7 +459,7 @@ class TreasureMapTask(Task):
             self._interruptible_sleep(ctx, self._jitter(1.0, ctx))
             return
 
-        in_battle = self._present(cur, "flag_battle", threshold)
+        in_battle = ui_state.is_present(cur, self.flags, "battle_flag", threshold)
         diff = self._frame_diff(rec["last"], cur) if rec["last"] is not None else None
         if in_battle:
             rec["t0"], rec["last"], rec["still_since"] = time.time(), None, None   # 战斗中刷新计时
@@ -576,12 +582,6 @@ class TreasureMapTask(Task):
         rect = self._scene_rect(ctx, regions)
         return win_mod.grab(rect) if rect else None
 
-    def _present(self, scene, flag_key, threshold):
-        tpl = self.flags.get(flag_key)
-        if scene is None or tpl is None:
-            return False
-        return vision.match(scene, tpl, threshold) is not None
-
     def _match_scene(self, cur, scene_rect, flag_key, threshold):
         """在整张 scene 里匹配 flag_key，命中返回屏幕绝对 (x,y,score)，否则 None。"""
         tpl = self.flags.get(flag_key)
@@ -612,7 +612,7 @@ class TreasureMapTask(Task):
         """演练：周期性对【每个号】当前屏幕识别各标志，报告命中，便于用户验证模板/阈值。
         是否已有宝图走运行期自动判，故阶段A(宝图入口/参加/听听无妨)与阶段B(下一张/藏宝图)标志全自检。"""
         keys = [("flag_treasure_entry", "宝图入口"), ("flag_join", "参加按钮"),
-                ("flag_tingting", "听听无妨"), ("flag_battle", "战斗"),
+                ("flag_tingting", "听听无妨"), ("battle_flag", "战斗"),
                 ("flag_next_map", "下一张使用"), ("treasure_item", "藏宝图")]
         while not ctx.should_stop():
             if deadline and time.time() >= deadline:

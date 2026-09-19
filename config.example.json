@@ -193,6 +193,11 @@
             "regions": {
                 "activity_list": null,
                 "bag_list": null
+            },
+            "templates": {
+                "battle_flag": "templates/tm_battle_flag.png",
+                "shop_icon": "templates/tm_shop_icon.png",
+                "activity_icon": "templates/tm_activity_icon.png"
             }
         },
         "sniper": {
@@ -291,7 +296,6 @@
                 "flag_treasure_entry": "templates/tm_flag_treasure_entry.png",
                 "flag_join": "templates/tm_flag_join.png",
                 "flag_tingting": "templates/tm_flag_tingting.png",
-                "flag_battle": "templates/tm_flag_battle.png",
                 "flag_next_map": "templates/tm_flag_next_map.png",
                 "treasure_item": "templates/tm_treasure_item.png"
             }
@@ -338,8 +342,7 @@
                 "escort_join": "templates/tm_escort_join.png",
                 "escort_silver": "templates/tm_escort_silver.png",
                 "escort_confirm": "templates/tm_escort_confirm.png",
-                "escort_ongoing": "templates/tm_escort_ongoing.png",
-                "escort_battle": "templates/tm_escort_battle.png"
+                "escort_ongoing": "templates/tm_escort_ongoing.png"
             }
         },
         "secret_realm": {
@@ -394,8 +397,7 @@
                 "sr_challenge": "templates/tm_sr_challenge.png",
                 "sr_enter_battle": "templates/tm_sr_enter_battle.png",
                 "sr_leave": "templates/tm_sr_leave.png",
-                "sr_fail": "templates/tm_sr_fail.png",
-                "sr_battle": "templates/tm_sr_battle.png"
+                "sr_fail": "templates/tm_sr_fail.png"
             }
         },
         "teaming": {

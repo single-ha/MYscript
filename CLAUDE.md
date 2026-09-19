@@ -95,6 +95,7 @@ mhxy/
     pages/tuoying.py       TuoyingPage：拓印独立页（工具分类页「拓印」tab）——标定/就绪状态/一键拓印演练；
                           共享命名空间 tasks.tuoying（原在通用页公共标定，迁到这里）
     pages/tools.py      工具分类页（Tab: 秒装备 / 整理背包 / 拓印）
+    ui_state.py         界面状态判定（与玩法无关）：is_main_screen 主界面判定 + is_present 标志判定（战斗标识等）
   gui/ 旧版 UI 备份（未用，勿动）
 ```
 
@@ -149,9 +150,11 @@ mhxy/
     存 `tasks.tuoying`（模板键集 `TUOYING_TPL_KEYS`），一次标定覆盖全部副本；读取 = `dungeon_base._load_flags` +
     `_tuoying_area()`（绘制区单独并入 regions），**只读这份新值——旧 `tasks.shared` / `tasks.dungeon` 残留一律不沿用**。
     已从「通用」页公共标定移除、`TASK_SHARED_REGIONS` 已删（`EXCLUSIVE_SHARED_REGIONS` 现只含活动/背包两键）。
-  - **主界面判断（core/ui_state.py）**：`is_main_screen(cfg, window)` 在窗口画面里找**商城图标**（`tasks.shared.templates.shop_icon`，
+  - **主界面判断（ui/ui_state.py）**：`is_main_screen(cfg, window)` 在窗口画面里找**商城图标**（`tasks.shared.templates.shop_icon`，
     同「标定（公共区域）」里与活动图标 `activity_icon` 一起标，键集 `MAIN_ICON_TPL_KEYS`）→ True/False；未标/无窗口/抓图失败返回
     **None（调用方自行兜底，别当非主界面）**。任何任务要判断「是否已回到主界面」都用它。
+    同文件还有**标志判定 `ui_state.is_present(scene, flags, flag_key, threshold)`**（通用 `_present`：场景里找到该标志模板=True，
+    缺失/没找到=False 不抛错）——战斗标识 `battle_flag` 判定即走它（运镖/宝图/秘境），各任务不再各自复制 `_present`。
 - **日常一条龙分「个人/多人」两区（user 拍板，2026-09-07）**：`tasks/daily.py` 里
   `CHAINABLE_SINGLE`=个人组（宝图/运镖/秘境/三界奇缘/帮派签到/活跃度奖励，每窗口独立链）、
   `MULTI_BARRIER`=多人组（刷副本/抓鬼，集体屏障：所有活跃号停靠同一步等齐→组队→队长跑→放行）。
@@ -166,6 +169,10 @@ mhxy/
   统一存共享命名空间 `tasks.shared.regions`，**只在「通用」页「标定（公共区域）」标定一次**（各任务 CALIBRATION 不再列出这两项）；
   `core/config.py task_config()` 读取时自动叠加进各任务 regions（运行时与就绪判定都吃到；新任务直接用 `tc["regions"]` 读即可，
   别各标一份）。共享键集合在 `core/config.SHARED_REGION_KEYS`；各任务「就绪判定」还要查的共享键在 `core/config.TASK_SHARED_REQ`。
+  **战斗标识 `battle_flag` 也统一在此标定**（存 `tasks.shared.templates`、进位 `core/config.SHARED_TPL_KEYS`，`task_config` 同时把它
+  叠加进各任务 templates、任务直接用 `tc["templates"]["battle_flag"]` 读，各任务不再自带战斗标定、preflight 缺它时提示去「通用」页框）。
+  再次强调运行时只读 shared 标注副本：标定对话框**写**共享键走原始 `tasks.shared`、**写本任务**时剥离叠加值（`_save` 内
+  `EXCLUSIVE_SHARED_REGIONS` + `SHARED_TPL_KEYS`），两者读库均经 `task_config` 合并。
   **拓印临摹资产已不在共享里**：标定迁到「工具」页「拓印」（存 `tasks.tuoying`，见上「拓印」条），各任务不重复列出、不参与就绪。
   ⚠ 标定对话框写共享键走 `tasks.shared`、绝不回写任务自身命名空间（`ui/calibrate_dialog.py` 的 `_target_regions`/`_save` 只看 `EXCLUSIVE_SHARED_REGIONS`）；先补共享标定时让旧任务自带值兜底。
 - **「队长ID 库」（`gui/leader_gallery.py` + 纯函数 `core/leader_history.py`）非显而易见的约束**：

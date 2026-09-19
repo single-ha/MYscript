@@ -36,9 +36,17 @@ SHARED_REGION_LABELS = {"activity_list": "活动列表区域", "bag_list": "背�
 TUOYING_TPL_KEYS = ("tuoying_title", "tuoying_upload")
 
 # 主界面判断资产（tasks.shared.templates，在「通用」页「标定（公共区域）」里标定）：商城图标 / 活动图标。
-# 判断「当前界面是否是主界面」= 在窗口画面里能否找到商城图标（core/ui_state.is_main_screen）。可选：不标则
+# 判断「当前界面是否是主界面」= 在窗口画面里能否找到商城图标（ui/ui_state.is_main_screen）。可选：不标则
 # 无法做主界面判定（调用方自行兜底）。活动图标供后续界面判定复用，同处标定。
 MAIN_ICON_TPL_KEYS = ("shop_icon", "activity_icon")
+
+# 战斗界面标志（存 tasks.shared.templates.battle_flag，在「通用」页「标定（公共区域）」里标定）：
+# 各任务进战斗后的画面元素相同。运镖/宝图用它在战斗期暂停「运镖结束/静止」判定（必标），秘境仅日志诊断（可选）。
+# task_config 会把它叠加进各任务的 templates（见 SHARED_TPL_KEYS），任务用 tc["templates"]["battle_flag"] 直接读。
+BATTLE_FLAG_TPL_KEY = "battle_flag"
+# 需要把共享模板叠加进任务 templates 的键（目前只有战斗标识；shop/activity 由 ui_state 直接读 shared，不叠加，
+# 避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
+SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY,)
 
 # 各任务「就绪判定」还要查的共享区域键（这些键已从任务自身 CALIBRATION 移走、只在
 # 通用页「标定（公共区域）」里标定一次）。key 与任务名一致；dungeon 指共享 tasks.dungeon。
@@ -49,6 +57,13 @@ TASK_SHARED_REQ = {
     "zhuagui": ("activity_list",),
     "treasure_map": ("activity_list", "bag_list"),
     "dungeon": ("activity_list",),
+}
+
+# 各任务「就绪判定」还要查的共享模板键（tasks.shared.templates，同 TASK_SHARED_REQ 的语义，只是模板）。
+# 战斗标识已从各任务自身 CALIBRATION 移走、移到「通用」页「标定（公共区域）」，运镖/宝图是真实使用方（必标）。
+TASK_SHARED_TPL_REQ = {
+    "escort": (BATTLE_FLAG_TPL_KEY,),
+    "treasure_map": (BATTLE_FLAG_TPL_KEY,),
 }
 
 # 所有只存 tasks.shared.regions 的区域键（calibrate_dialog 写入路由 / _save 剥离用）：
@@ -292,7 +307,6 @@ DEFAULT_CONFIG = {
                 "flag_treasure_entry": None, # 活动列表里「宝图任务」条目
                 "flag_join": None,           # 「宝图任务」那一行右侧的「参加」按钮（按行匹配点它）
                 "flag_tingting": None,       # 对话框「听听无妨」选项
-                "flag_battle": None,         # 战斗界面独有标志（监控用，避免误判卡死）
                 "flag_next_map": None,       # 挖完弹出的「下一张使用」按钮
                 "treasure_item": None        # 背包里藏宝图道具图标（双击用图靠它定位）
             }
@@ -333,8 +347,7 @@ DEFAULT_CONFIG = {
                 "escort_join": None,     # 「运镖」那一行右侧的「参加」按钮（按行匹配点它）
                 "escort_silver": None,   # 对话框「押送普通镖银」按钮
                 "escort_confirm": None,  # 点押送后再弹出的「确认」按钮
-                "escort_ongoing": None,  # 运镖途中常驻的「运镖中」标志（在=还在运镖、不停）
-                "escort_battle": None    # 战斗界面独有标志（监控用，避免误判结束）
+                "escort_ongoing": None   # 运镖途中常驻的「运镖中」标志（在=还在运镖、不停）
             }
         },
 
@@ -380,8 +393,7 @@ DEFAULT_CONFIG = {
                 "sr_challenge": None,        # 「挑战」按钮（点它开始自动战斗）
                 "sr_enter_battle": None,     # 难度关卡的「进入战斗」按钮（监控期一出现就点）
                 "sr_leave": None,            # 「离开」按钮（失败/超时/结束后点它退出秘境）
-                "sr_fail": None,             # 「失败」标志（可选，判定该退出）
-                "sr_battle": None            # 战斗界面独有标志（可选，仅日志诊断）
+                "sr_fail": None              # 「失败」标志（可选，判定该退出）
             }
         },
 
@@ -693,6 +705,19 @@ def task_config(cfg, task_name):
                     changed = True
             if changed:
                 tc["regions"] = reg
+        # 共享模板同样叠加（目前只有战斗标识 battle_flag）：任务用 tc["templates"]["battle_flag"] 直接读。
+        # 只注入 SHARED_TPL_KEYS 里的键、且任务本身有 templates 才注入，避免污染无模板任务。
+        shared_block = (cfg.get("tasks", {}) or {}).get("shared", {}) or {}
+        shared_t = shared_block.get("templates") or {}
+        if shared_t and isinstance(tc.get("templates"), dict):
+            ttp = dict(tc["templates"])
+            changed = False
+            for k in SHARED_TPL_KEYS:
+                if shared_t.get(k):
+                    ttp[k] = shared_t[k]
+                    changed = True
+            if changed:
+                tc["templates"] = ttp
     return tc
 
 

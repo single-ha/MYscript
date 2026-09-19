@@ -274,9 +274,10 @@ class DailyPage(ctk.CTkFrame):
 
     def _calib_done(self, name, sub):
         spec = getattr(get_task(name), "CALIBRATION", None) or {}
-        # 每个任务自己的 spec 之外，还要查公共区域（tasks.shared）对该任务的必需项（如活动列表/背包列表）
+        # 每个任务自己的 spec 之外，还要查公共区域/公共模板（tasks.shared）对该任务的必需项
+        # （活动列表/背包列表、战斗标识等），统一在「通用」页「标定（公共区域）」标定。
         need_r = required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get(name, ()))
-        need_t = required_templates(spec)
+        need_t = required_templates(spec) + list(cfg_mod.TASK_SHARED_TPL_REQ.get(name, ()))
         regions, templates = sub.get("regions", {}), sub.get("templates", {})
         return all(regions.get(k) for k in need_r) and all(templates.get(k) for k in need_t)
 

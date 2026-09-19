@@ -31,6 +31,7 @@ from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
 from ..core import scan
+from ..ui import ui_state
 from .base import Task, register
 
 # 每个号的状态机状态（非阻塞：每访问一次只推进一步）
@@ -45,9 +46,11 @@ S_BATTLE = "BATTLE"                 # 自动战斗中：盯「进入战斗」续
 S_LEAVE = "LEAVE"                   # 失败/超时后：点「离开」收尾本轮
 
 # 模板键（用 sr_ 前缀，避免与运镖/宝图同名模板在磁盘互相覆盖——存盘按 templates/tm_<key>.png）。
+# 战斗标识走公共共享模板 tasks.shared.templates.battle_flag（「通用」页「标定（公共区域）」标定，全任务共用），
+# task_config 已把它叠加进本任务 templates，用同 key「battle_flag」读，不必各自标。
 _FLAG_KEYS = ["sr_entry", "sr_join", "sr_select", "sr_dungeon_enter", "sr_confirm",
               "sr_continue", "sr_challenge", "sr_enter_battle", "sr_leave",
-              "sr_fail", "sr_battle"]
+              "sr_fail", "battle_flag"]
 # 必备：缺失则 preflight 阻断（其余为可选，缺失仅提示）。
 _REQUIRED_FLAGS = ["sr_entry", "sr_join", "sr_select",
                    "sr_continue", "sr_challenge", "sr_enter_battle", "sr_leave"]
@@ -77,7 +80,7 @@ class SecretRealmTask(Task):
             ("sr_enter_battle", "「进入战斗」按钮", "难度关卡处不再自动、需要手动点的「进入战斗」按钮（监控期一出现就点）"),
             ("sr_leave", "「离开」按钮", "失败/超时后点的「离开」按钮，点它退出秘境"),
             ("sr_fail", "「失败」标志", "战斗失败时屏幕上的「失败」字样/弹窗，判定该退出（先点它结算，离开才点得到）", True),
-            ("sr_battle", "战斗界面标志", "战斗独有的画面元素，仅用于日志诊断", True),
+            # 战斗界面标志已移到「通用」页「标定（公共区域）」统一标定（全任务共用）；结界只用于日志诊断，可选。
         ],
         "watchlist": False,
     }
@@ -108,7 +111,7 @@ class SecretRealmTask(Task):
 
         # 可选模板缺失只提示
         for tk, label in [("sr_dungeon_enter", "选副本-进入"), ("sr_confirm", "确定(选副本后才有)"),
-                          ("sr_fail", "失败"), ("sr_battle", "战斗")]:
+                          ("sr_fail", "失败"), ("battle_flag", "战斗")]:
             if not templates.get(tk) or vision.load_template(templates.get(tk)) is None:
                 ctx.log(f"提示：可选模板『{tk}』({label})未标定，将降级处理（可靠性略降）。", level="warn")
 
@@ -390,7 +393,7 @@ class SecretRealmTask(Task):
         # 否则：自动战斗中/过场——节流打印诊断
         now = time.time()
         if now - rec["t_diag"] >= 10.0:
-            st = "战斗中" if self._present(cur, "sr_battle", threshold) else "自动推进/过场"
+            st = "战斗中" if ui_state.is_present(cur, self.flags, "battle_flag", threshold) else "自动推进/过场"
             ctx.log(f"监控…{st}（已 {now - rec['t_battle']:.0f}/{overall:.0f}s）")
             rec["t_diag"] = now
 
@@ -519,12 +522,6 @@ class SecretRealmTask(Task):
         rect = self._scene_rect(ctx, regions)
         return win_mod.grab(rect) if rect else None
 
-    def _present(self, scene, flag_key, threshold):
-        tpl = self.flags.get(flag_key)
-        if scene is None or tpl is None:
-            return False
-        return vision.match(scene, tpl, threshold) is not None
-
     def _match_scene(self, cur, scene_rect, flag_key, threshold):
         """在整张 scene 里匹配 flag_key，命中返回屏幕绝对 (x,y,score)，否则 None。"""
         tpl = self.flags.get(flag_key)
@@ -564,7 +561,7 @@ class SecretRealmTask(Task):
                 ("sr_dungeon_enter", "选副本-进入"), ("sr_confirm", "确定"),
                 ("sr_continue", "继续挑战"), ("sr_challenge", "挑战"),
                 ("sr_enter_battle", "进入战斗"), ("sr_leave", "离开"),
-                ("sr_fail", "失败"), ("sr_battle", "战斗")]
+                ("sr_fail", "失败"), ("battle_flag", "战斗")]
         while not ctx.should_stop():
             if deadline and time.time() >= deadline:
                 ctx.log("演练时间上限到，停止。")

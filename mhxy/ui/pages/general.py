@@ -13,7 +13,7 @@ from ...core import window as win_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
-from ...core.config import SHARED_REGION_KEYS, MAIN_ICON_TPL_KEYS
+from ...core.config import (SHARED_REGION_KEYS, MAIN_ICON_TPL_KEYS, BATTLE_FLAG_TPL_KEY)
 from ..common import Card, load_thumb, bind_wraplength
 
 
@@ -231,7 +231,7 @@ class GeneralPage(ctk.CTkFrame):
         txt_s = ctk.CTkFrame(head_s, fg_color="transparent")
         txt_s.grid(row=0, column=0, sticky="ew")
         ctk.CTkLabel(txt_s, text="公共区域（全局共享）", font=self.fonts["h2"], text_color=T.TEXT).pack(anchor="w")
-        # 区域：活动列表 / 背包列表（必标）。商城/活动图标（可选）只计数展示、不拖累「已就绪」。
+        # 区域：活动列表 / 背包列表（必标）。战斗标识（运镖/宝图必标）；商城/活动图标（可选）只计数展示、不拖累「已就绪」。
         # 拓印临摹资产已迁到「工具」页「拓印」（tasks.tuoying），不在这里标。
         shared_tc = cfg_mod.task_config(cfg, "shared")
         sreg = shared_tc.get("regions", {})
@@ -239,17 +239,19 @@ class GeneralPage(ctk.CTkFrame):
         sdone = sum(1 for k in shared_region_keys if sreg.get(k))
         sready = sdone == len(shared_region_keys)
         stpl = shared_tc.get("templates", {})
-        shared_tpl_keys = MAIN_ICON_TPL_KEYS
+        shared_tpl_keys = (BATTLE_FLAG_TPL_KEY,) + MAIN_ICON_TPL_KEYS
         tdone = sum(1 for k in shared_tpl_keys if stpl.get(k))
         # 商城/活动图标（主界面判定用）是可选项：只计数展示，不拖累「已就绪」（不标=无法做主界面判定，任务照常跑）。
-        already = sready
-        ctk.CTkLabel(txt_s, text=f"区域：{sdone}/{len(shared_region_keys)}　标志模板：{tdone}/{len(shared_tpl_keys)}（可选）"
+        # 战斗标识运镖/宝图必标（各任务 preflight 也会拦），缺了这里不显示「已就绪」。
+        already = sready and bool(stpl.get(BATTLE_FLAG_TPL_KEY))
+        ctk.CTkLabel(txt_s, text=f"区域：{sdone}/{len(shared_region_keys)}　标志模板：{tdone}/{len(shared_tpl_keys)}"
                                  + ("　✓ 已就绪" if already else "　（还需标定）"),
                      font=self.fonts["body"],
                      text_color=T.SUCCESS if already else T.WARN).pack(anchor="w", pady=(4, 0))
         sub_s = ctk.CTkLabel(txt_s, text="「活动」界面那一片卡片列表、打开背包后那一片物品列表，几乎所有任务的画面都一样——"
                                         "在这里框一次，宝图 / 运镖 / 秘境降妖 / 三界奇缘 / 抓鬼 / 刷副本 / 整理背包自动通用，"
                                         "不用每个任务各标一遍。各任务页里的同名两项也会自动显示共用。"
+                                        "「战斗界面标志」是进战斗后的画面元素（运镖/宝图必标，否则一进战斗就误判结束；秘境仅日志用）。"
                                         "「商城/活动图标」用来判断是否回到主界面：把主界面顶部的商城、活动按钮各框一次即可。"
                                         "「拓印」临摹（刷副本偶发的描图案校验）的标题/上传/绘制区已移到「工具」页「拓印」里标。",
                              font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")

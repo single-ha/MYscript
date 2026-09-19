@@ -30,6 +30,8 @@ from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
 from ..core import scan
+from ..ui import ui_state
+from ..core.config import BATTLE_FLAG_TPL_KEY
 from .base import Task, register
 
 # 每个号的状态机状态（非阻塞：每访问一次只推进一步）
@@ -41,12 +43,14 @@ S_ESCORTING = "ESCORTING"           # 运镖中：监控运镖中标志/对话�
 
 # 模板键（用 escort_ 前缀，避免和「宝图」任务的同名模板在磁盘上互相覆盖——
 #   标定存盘按 templates/tm_<key>.png 命名，只按 key 区分，不区分任务）。
+# 战斗标识走公共共享模板 tasks.shared.templates.battle_flag（「通用」页「标定（公共区域）」标定，全任务共用），
+# task_config 已把它叠加进本任务 templates，这里直接用同 key「battle_flag」读，不再各自标。
 _FLAG_KEYS = ["escort_entry", "escort_join", "escort_silver", "escort_confirm",
-              "escort_ongoing", "escort_battle"]
-# 必备模板（缺失则 preflight 阻断）：escort_battle 虽不点它，但运镖结束判定要在战斗期暂停——
-# 不标它进战斗就被误判「运镖结束」，故必标。
+              "escort_ongoing", "battle_flag"]
+# 必备模板（缺失则 preflight 阻断）：battle_flag 虽不点它，但运镖结束判定要在战斗期暂停——
+# 不标它进战斗就被误判「运镖结束」，故必标（在公共标定里框）。
 _REQUIRED_FLAGS = ["escort_entry", "escort_join", "escort_silver", "escort_confirm",
-                   "escort_ongoing", "escort_battle"]
+                   "escort_ongoing", "battle_flag"]
 
 
 @register
@@ -68,7 +72,7 @@ class EscortTask(Task):
             ("escort_confirm", "「确认」按钮", "点完「押送普通镖银」后再弹出的确认按钮，框按钮本身、要独特"),
             ("escort_ongoing", "「运镖中」标志", "运镖途中一直挂在屏幕上的标志（如镖银图标/运镖任务追踪条），"
                                               "只要它在就说明还在运镖、不会停。框它独特的部分"),
-            ("escort_battle", "战斗界面标志", "战斗独有的画面元素。战斗期帧差会误判成运镖结束，不标它必误判——必标"),
+            # 战斗界面标志已移到「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
         ],
         "watchlist": False,
     }
@@ -88,7 +92,10 @@ class EscortTask(Task):
         for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
             if not path or vision.load_template(path) is None:
-                problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
+                if tk == BATTLE_FLAG_TPL_KEY:
+                    problems.append("『战斗界面标志』未标定 —— 请到「通用」页点「标定（公共区域）」框选（全任务共用）")
+                else:
+                    problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
         if not ctx.hotkeys.get("open_activity"):
             problems.append("打开『活动』缺快捷键：请在 config.hotkeys.open_activity 填上（如 alt+c）")
@@ -341,8 +348,8 @@ class EscortTask(Task):
             self._goto(rec, S_CONFIRM)
             return
 
-        ongoing = self._present(cur, "escort_ongoing", threshold)
-        in_battle = self._present(cur, "escort_battle", threshold)
+        ongoing = ui_state.is_present(cur, self.flags, "escort_ongoing", threshold)
+        in_battle = ui_state.is_present(cur, self.flags, "battle_flag", threshold)
 
         if ongoing or in_battle:
             # 明确在运镖途中/战斗中 → 绝不停，刷新计时
@@ -500,12 +507,6 @@ class EscortTask(Task):
         rect = self._scene_rect(ctx, regions)
         return win_mod.grab(rect) if rect else None
 
-    def _present(self, scene, flag_key, threshold):
-        tpl = self.flags.get(flag_key)
-        if scene is None or tpl is None:
-            return False
-        return vision.match(scene, tpl, threshold) is not None
-
     def _match_scene(self, cur, scene_rect, flag_key, threshold):
         """在整张 scene 里匹配 flag_key，命中返回屏幕绝对 (x,y,score)，否则 None。"""
         tpl = self.flags.get(flag_key)
@@ -520,7 +521,7 @@ class EscortTask(Task):
         """演练：周期性对【每个号】当前屏幕识别各标志，报告命中，便于用户验证模板/阈值。"""
         keys = [("escort_entry", "运镖入口"), ("escort_join", "参加按钮"),
                 ("escort_silver", "押送普通镖银"), ("escort_confirm", "确认"),
-                ("escort_ongoing", "运镖中"), ("escort_battle", "战斗")]
+                ("escort_ongoing", "运镖中"), ("battle_flag", "战斗")]
         while not ctx.should_stop():
             if deadline and time.time() >= deadline:
                 ctx.log("演练时间上限到，停止。")

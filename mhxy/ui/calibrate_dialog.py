@@ -19,7 +19,8 @@ from .roi_overlay import select_roi_on_screen
 from ..core import config as cfg_mod
 from ..core import window as win_mod
 from ..core import vision
-from ..core.config import EXCLUSIVE_SHARED_REGIONS, SHARED_REGION_KEYS
+from ..core.config import (EXCLUSIVE_SHARED_REGIONS,
+                           SHARED_REGION_KEYS, SHARED_TPL_KEYS)
 from ..core.teaming import TEAM_CALIBRATION
 from ..tasks import get_task
 from ..tasks.dungeon_base import DUNGEON_CALIBRATION
@@ -40,6 +41,9 @@ _VIRTUAL_SPECS = {
             # 见默认配置块注释与 TUOYING_TPL_KEYS——刷副本遇「拓印」弹窗全部共用，别在这标。
         ],
         "templates": [
+            ("battle_flag", "战斗界面标志",
+             "进战斗后独有的画面元素（战斗面板/技能栏等）。运镖/宝图靠它在战斗期暂停「运镖结束/静止」判定——必标，"
+             "不标会一进战斗就被误判结束；秘境仅日志诊断。所有任务共用，框一次即可。"),
             ("shop_icon", "商城图标", "(可选)主界面顶部的「商城」按钮图标。脚本用它在任意任务里判断「当前是否回到主界面」（能找到=主界面）。所有任务共用，标一次即可。", True),
             ("activity_icon", "活动图标", "(可选)主界面顶部的「活动」按钮图标。与商城图标同处标定，供后续界面判定复用。所有任务共用。", True),
         ],
@@ -623,6 +627,10 @@ class CalibrateDialog(ctk.CTkToplevel):
             if reg:
                 for k in EXCLUSIVE_SHARED_REGIONS:
                     reg.pop(k, None)
+            tpl = self.tc.get("templates")
+            if tpl:
+                for k in SHARED_TPL_KEYS:
+                    tpl.pop(k, None)
         cfg_mod.set_task_config(self.cfg, self.task_name, self.tc)
         cfg_mod.save_config(self.cfg)
 

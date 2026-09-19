@@ -180,6 +180,16 @@ def shared_region_hint(regions, task_name):
     return f"；公共区域「{names}」未标定 —— 请到「通用」页点「标定（公共区域）」（全任务共用）"
 
 
+def shared_template_hint(templates, task_name):
+    """返回公共共享模板未标齐的提示文本（templates 应为已叠加 tasks.shared 模板的 task_config）。
+    战斗标识已统一移到「通用」页「标定（公共区域）」，运镖/宝图必标。已标齐返回 ""。"""
+    missing = [k for k in cfg_mod.TASK_SHARED_TPL_REQ.get(task_name, ()) if not templates.get(k)]
+    if not missing:
+        return ""
+    label = "战斗界面标志" if missing == [cfg_mod.BATTLE_FLAG_TPL_KEY] else "、".join(missing)
+    return f"；公共模板「{label}」未标定 —— 请到「通用」页点「标定（公共区域）」框选（运镖/宝图必标，全任务共用）"
+
+
 def calib_status(*, regions, templates, task_name,
                  region_keys=(), tpl_keys=(), tpl_opt_keys=(), label="标定", extra="", extra_ready=None):
     """统一的任务页「标定」状态文本格式。
@@ -207,7 +217,8 @@ def calib_status(*, regions, templates, task_name,
     r_ok = (not region_keys) or rdone == len(region_keys)
     t_ok = (not tpl_keys) or tdone == len(tpl_keys)
     shared_msg = shared_region_hint(regions, task_name)
-    ready = r_ok and t_ok and not shared_msg
+    shared_tpl_msg = shared_template_hint(templates, task_name)
+    ready = r_ok and t_ok and not shared_msg and not shared_tpl_msg
     if extra_ready is not None:
         ready = ready and bool(extra_ready)
     seg = []
@@ -221,7 +232,7 @@ def calib_status(*, regions, templates, task_name,
     body = "，".join(seg) if seg else "无必标项"
     text = (f"{label}：{body}{opt_txt}{extra}"
             + ("　✓ 可运行" if ready else "　（还需标定）")
-            + shared_msg)
+            + shared_msg + shared_tpl_msg)
     color = T.SUCCESS if ready else T.WARN
     return ready, text, color
 
