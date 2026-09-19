@@ -513,9 +513,10 @@
         "dungeon": {
             "loop": {
                 "match_threshold": 0.85,
+                "card_match_threshold": 0.9,
                 "npc_dialog_sec": 60,
                 "step_timeout_sec": 30,
-                "npc_dialog_tap_sec": 5.0,
+                "enter_clock_retries": 3,
                 "entry_skip_sec": 60,
                 "battle_timeout_sec": 600,
                 "max_rounds": 24,
@@ -532,7 +533,8 @@
                 "scroll_reset_top": true,
                 "scroll_end_diff": 2.0,
                 "scroll_reset_max": 20,
-                "activity_columns": 2
+                "activity_columns": 2,
+                "join_same_row_px": 55
             },
             "regions": {
                 "scene": null,
@@ -602,7 +604,7 @@
                     "enabled": true
                 }
             ],
-            "group_order": ["single", "multi"],
+            "group_order": ["multi", "single"],
             "loop": {
                 "time_limit_min": 0,
                 "shutdown_after": false,

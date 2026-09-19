@@ -176,7 +176,7 @@ class Task:
         return None
 
     def _find_join_in_column(self, ctx, list_region, entry_screen_xy, threshold, loop,
-                             join_tpl, entry_tpl=None):
+                             join_tpl, entry_tpl=None, max_follow_cap=None):
         """按「整列找参加按钮、取离卡片行最近那枚」定位——比纵向窄条裁剪稳得多。命中返回
         (screen_x, screen_y, score)，否则 None。
 
@@ -187,7 +187,12 @@ class Task:
         离条目中心最近的按钮」取目标，且距离须 ≤ max_follow（≈0.55×该列行距中位数、下限
         60px）——超出容差 = 该行按钮不在可视区（卡片贴列表边缘被裁/按钮状态不同），返回
         None 交由上层微滚或告警。整列裁剪只扫条目所在列，天然满足「卡片列内找、不跨列点
-        右邻」。"""
+        右邻」。
+
+        坑（实测踩过）：列里某些卡片的按钮当帧没匹配上（分数<阈值/状态不同），整列命中变得
+        稀疏，行距中位数被拉大 → max_follow 被撑到 ~95px，于是「最近那枚」会变成**隔壁行**的
+        按钮（曾 d=65 点到上一行运镖卡的「参加」进错活动）。传 max_follow_cap（如 55）把容差
+        钉死在卡片一行之内：本行按钮没匹配上就返回 None，宁可靠上层微滚重试，也不顺藤点隔壁。"""
         if join_tpl is None:
             ctx.log("找「参加」失败：join 模板未标定。", level="warn")
             return None
@@ -218,12 +223,24 @@ class Task:
         gaps = sorted(ys[i + 1] - ys[i] for i in range(len(ys) - 1))
         gap = gaps[len(gaps) // 2] if gaps else 0
         max_follow = max(60.0, float(gap) * 0.55)
+        if max_follow_cap:
+            max_follow = min(max_follow, float(max_follow_cap))
         best, best_d = None, None
         for (cx, cy, s) in hits:
             d = abs(cy - ey_local)
             if best_d is None or d < best_d:
                 best, best_d = (cx, cy, s), d
-        if best is None or best_d > max_follow:
+        if best is not None and best_d > max_follow:
+            now = time.time()
+            last = getattr(self, "_join_follow_warn_ts", 0.0)
+            if now - last > 20:  # 单次只告警一次，避免每帧刷屏（有卡片时每轮都可能重试）
+                self._join_follow_warn_ts = now
+                ctx.log(
+                    f"卡片在 ({ex_local},{ey_local})，该列「参加」按钮命中在 y={ys}，最近的距 "
+                    f"{best_d:.0f}px 越出本行带(±{max_follow:.0f}px)——本行按钮当帧没匹配上，"
+                    "拒绝点击隔壁行的按钮，微滚/原地重试。", level="warn")
+            return None
+        if best is None:
             return None
         cx, cy, s = best
         return (rx + x0 + cx, ry + cy, s)

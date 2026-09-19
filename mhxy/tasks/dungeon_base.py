@@ -45,9 +45,11 @@ from ..core import scan
 from ..core import scribble
 from ..core import vision
 from ..core import window as win_mod
-from ..core.teaming import (TeamFormation, TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES,
-                            DISBAND_REQUIRED_TEMPLATES)
+from ..core.teaming import (TeamFormation, TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES)
 from .base import Task, register
+
+from ..ui import ui_state
+
 
 DUNGEON_NS = "dungeon"                       # 共享配置命名空间（tasks.dungeon）
 
@@ -57,7 +59,7 @@ DUNGEON_NS = "dungeon"                       # 共享配置命名空间（tasks.
 #   卡片(普通/侠士) → 参加 → 选择副本 → 侠士区标签页(侠士进副本前) → 进入 → 侠士确认(侠士) → 跳过/闹钟/进入战斗 → 结算界面。
 SHARED_TPL_KEYS = ["entry_common", "entry_xiashi", "join", "select",
                    "xiashi_tab", "enter_dungeon", "confirm", "skip", "clock", "enter",
-                   "settlement", "tuoying_title", "tuoying_upload"]
+                   "settlement", "tuoying_title", "tuoying_upload", "battle_flag"]
 
 # 标定向导/就绪判据用的共享标定 spec（一次标定所有副本）
 DUNGEON_CALIBRATION = {
@@ -69,7 +71,9 @@ DUNGEON_CALIBRATION = {
     ],
     "templates": [
         ("entry_common", "普通副本卡片", "活动列表里普通副本的那张卡片——普通副本共用"),
-        ("entry_xiashi", "侠士副本卡片", "活动列表里侠士副本的那张卡片——侠士副本共用"),
+        ("entry_xiashi", "侠士副本卡片", "活动列表里侠士副本的那张卡片——侠士副本共用；可选项：侠士本优先用" 
+                                       "它找卡，找不到/没标定时用「普通副本卡」兜底（两者参加后寻路到同一 NPC）",
+         True),
         ("join", "参加按钮", "卡片右侧的「参加」按钮（所有副本共用）"),
         ("select", "选择副本按钮", "「选择副本」对话框里的按钮（所有副本共用）"),
         ("xiashi_tab", "侠士区标签页", "「选择副本」里的「侠士区」标签页，侠士副本先进副本前先点到它（仅侠士用）"),
@@ -153,11 +157,7 @@ class DungeonBaseTask(Task):
                 if not p or vision.load_template(p) is None:
                     problems.append(f"组队模板『{tk}』缺失 —— 请在「通用」页点「标定（组队）」裁图")
 
-        if team_tc.get("auto_disband", False):
-            for tk in DISBAND_REQUIRED_TEMPLATES:
-                p = team_tc.get("templates", {}).get(tk)
-                if not p or vision.load_template(p) is None:
-                    problems.append(f"勾了「跑完解散队伍」但退队模板『{tk}』缺失 —— 请在「通用」页标定「退出队伍」")
+        # 跑完解散已迁至「日常一条龙」页集中控制（tasks.teaming.auto_disband），副本自身不再解散。
 
         regions = tc.get("regions", {})
         if not regions.get("activity_list"):
@@ -165,11 +165,15 @@ class DungeonBaseTask(Task):
         templates = tc.get("templates", {})
         req_keys = [(k, label) for (k, label, _d, *_x) in DUNGEON_CALIBRATION["templates"]
                     if not (_x and _x[0])                                    # 第4元组=可选资产（拓印等），不参与就绪与 preflight
-                    and not ((k in ("confirm", "xiashi_tab")) and self.cat != "xiashi")]
+                    and not ((k in ("confirm", "xiashi_tab")) and self.cat != "xiashi")
+                    and k != "entry_xiashi"]               # 侠士卡可选：侠士本兜底用普通卡（见 probe）
         for k, label in req_keys:
             p = templates.get(k)
             if not p or vision.load_template(p) is None:
                 problems.append(f"副本共用模板『{label}』({k}) 缺失 —— 请在本页「标定」里框选裁图")
+        if self.cat == "xiashi":
+            if not (templates.get("entry_common") or templates.get("entry_xiashi")):
+                problems.append("副本卡片模板缺失 —— 请至少标定『普通副本卡片』或『侠士副本卡片』之一")
 
         if not ctx.hotkeys.get("open_activity"):
             problems.append("缺快捷键 open_activity（如 alt+c）—— 请在设置里填")
@@ -250,16 +254,7 @@ class DungeonBaseTask(Task):
         # —— 队长跑副本流程（侠士进副本后还要轮询各号点确认）——
         self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
         self._run_dungeon(cap_child, assignments, loop, regions, threshold)
-
-        # —— 自动解散（若勾选）——
-        if team_tc.get("auto_disband", False) and not ctx.should_stop():
-            ctx.log("副本结束，自动解散队伍（所有号退队）…", level="warn")
-            self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
-            team_cfg = ctx.task_cfg("teaming")
-            team = TeamFormation(ctx, assignments, team_cfg, dry_run=False)
-            ok, _ = team.run_disband()
-            if ok:
-                ctx.log("队伍已解散。", level="hit")
+        # 跑完解散已迁至「日常一条龙」页集中控制（见 _disband_after_multi），副本跑完不再自动解散。
 
     # ==================================================================
     # 副本流程（普通=蹈海去线性；侠士进副本后多一段确认轮询）
@@ -304,10 +299,11 @@ class DungeonBaseTask(Task):
             if not self._click_when(ctx, "clock", "小闹钟寻路", regions, threshold, step_to):
                 ctx.log("点「小闹钟」寻路超时，中止。", level="error")
                 return
-            # 3) 点「进入战斗」发起本场：寻路到位后偶尔会先弹 NPC 对话（点任意处可推进、不点过会儿自动过，对话结束自动进战斗），
-            #    故「进入战斗」迟迟不出现时点一下场景推进对话，而不是干等超时误判副本结束。
-            tap_every = max(0.0, float(loop.get("npc_dialog_tap_sec", 5.0)))
-            if not self._click_enter_or_dialog(ctx, regions, threshold, step_to, tap_every):
+            # 3) 点「进入战斗」发起本场：寻路到位后偶尔会先弹 NPC 对话（不点过会儿自动过），或寻路没到位导致
+            #    按钮迟迟不出现。等「进入战斗」超时(step_timeout_sec)后改判：小闹钟还在→点它重新寻路再等
+            #    （最多 enter_clock_retries 次）；小闹钟也没了→副本可能已结束，进入收尾。
+            clock_retry = max(0, int(loop.get("enter_clock_retries", 3)))
+            if not self._click_enter_or_dialog(ctx, regions, threshold, step_to, clock_retry):
                 ctx.log(f"第 {round_no} 场「进入战斗」按钮没出现（副本可能已结束），进入收尾。", level="warn")
                 break
             ctx.log(f"第 {round_no} 场已发起，等它打完…", level="hit")
@@ -610,7 +606,15 @@ class DungeonBaseTask(Task):
         self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
         list_region = regions.get("activity_list")
         # 找「参加」的微滚计数/告警标志（开活动→参加一次性发起、不复用轮转 record，局部状态即可）
-        rec = {"_join_warned": False, "_nudges": 0}
+        rec = {"_join_warned": False, "_nudges": 0, "_low_warned": False, "_fb_warned": False}
+        # 找出卡片的模板优先级：侠士本=侠士卡优先、普通卡兜底；普通本只用普通卡（见 probe）
+        card_keys = [self._card_key()]
+        if self.cat == "xiashi":
+            card_keys.append("entry_common")
+        # 找副本卡片专用的更严阈值：entry_common/entry_xiashi 若框到多卡公共UI，镜像卡常拿 0.9x 分、
+        # 真卡(标定原帧)≈0.99。用专属阈值分开，宁可继续滚动也不误认别的活动卡（曾因 0.85 误认运镖）。
+        card_cut = float(loop.get("card_match_threshold", 0.0))
+        card_cut = card_cut if card_cut > 0.0 else threshold
 
         def grab_rect():
             rect = (ctx.window.region_to_screen_rect(list_region)
@@ -618,17 +622,55 @@ class DungeonBaseTask(Task):
             return rect
 
         def probe(scene, rect):
-            hit = vision.match(scene, self.flags.get(self._card_key()), threshold) if scene is not None else None
-            if hit is None:
+            # 卡片模板优先级：侠士本=侠士卡优先、普通卡兜底（两者「参加」后寻路到同一 NPC，进本后再按
+            # 侠士区标签页+第 N 个「进入」选对副本）；普通本只用普通卡。逐级取第一枚 ≥ card_cut 的候选。
+            seek = 0.55  # 低门槛捞本屏所有候选，区分「没卡在屏」与「有卡但分数不足」
+            best_pick = None   # (key, tpl, sorted_cands)
+            meta = None        # (最高分, key)：仅当全没达到 card_cut 时用于告警
+            for k in card_keys:
+                tpl = self.flags.get(k)
+                if tpl is None:
+                    continue
+                cands = vision.match_multi(scene, tpl, seek) if scene is not None else []
+                if not cands:
+                    continue
+                cands.sort(key=lambda h: h[2], reverse=True)
+                if cands[0][2] >= card_cut:
+                    best_pick = (k, tpl, cands)
+                    break
+                if meta is None or cands[0][2] > meta[0]:
+                    meta = (cands[0][2], k)
+            if best_pick is None:
+                if meta is not None:
+                    # 本屏有候选但不够专属（镜像卡）——宁可滚动别处找，也不认成副本卡
+                    if not rec["_low_warned"]:
+                        rec["_low_warned"] = True
+                        ctx.log(
+                            f"卡片候选分数不足（{meta[0]:.3f} < loop.card_match_threshold {card_cut:.2f}），"
+                            "判定为镜像卡不敢认，继续滚动另找；如反复出现，请重新圈选副本卡上更独特的部分、"
+                            "或调大该阈值。", level="warn")
+                    return scan.SCROLL, None
+                # 主卡没候选（侠士卡不在/没标定、普通卡也不在）——滚动
                 rec["_join_warned"] = False
                 rec["_nudges"] = 0
+                rec["_low_warned"] = False
                 return scan.SCROLL, None
+            key, tpl, cands = best_pick
+            if key != card_keys[0] and not rec["_fb_warned"]:
+                rec["_fb_warned"] = True
+                ctx.log("侠士卡未识别到，用「普通副本卡」兜底（两者参加后寻路到同一 NPC，进本会自动选侠士区对应副本）。",
+                        level="warn")
+            rec["_low_warned"] = False
+            hit = cands[0]
             entry_xy = (rect[0] + hit[0], rect[1] + hit[1])
             r = self._find_join_ready(ctx, rec, list_region, entry_xy, threshold, loop,
-                                      entry_tpl=self.flags.get(self._card_key()))
+                                      entry_tpl=tpl)
             if r is not None and r != "nudged":
                 ctx.mouse.click(r[0], r[1])
-                ctx.log(f"找到副本卡片（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}），等寻路到 NPC。", level="hit")
+                ctx.log(
+                    f"找到副本卡片（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}）"
+                    f"，靶点屏内坐标：卡片=({hit[0]},{hit[1]})，「参加」=({r[0] - rect[0]},{r[1] - rect[1]})。",
+                    level="hit")
                 return scan.ACCEPT, r
             if r != "nudged":
                 if not rec["_join_warned"]:
@@ -687,14 +729,18 @@ class DungeonBaseTask(Task):
         ctx.mouse.click(cx, cy)
         ctx.log("再点一下屏幕（推进收尾）。")
 
-    def _click_enter_or_dialog(self, ctx, regions, threshold, timeout, tap_every=5.0):
-        """点「进入战斗」发起本场。寻路到位后偶尔会先弹 NPC 对话（点任意处可推进、
-        不点过会儿也自动继续，对话结束自动进战斗）——故「进入战斗」等 tap_every 秒仍未出现时，
-        点一下场景中心推进对话，再继续等。返回 True=点到「进入战斗」；False=超时。"""
+    def _click_enter_or_dialog(self, ctx, regions, threshold, timeout, clock_retry=3):
+        """等并点「进入战斗」发起本场。寻路到位后偶尔会先弹 NPC 对话（不点过会儿自动继续）、
+        或寻路没到位导致按钮迟迟不出现——故等 timeout（step_timeout_sec）秒仍没点到「进入战斗」时改判：
+        「小闹钟」还在画面里 → 点它重新寻路，重置计时再继续等「进入战斗」（最多 clock_retry 次）；
+        「小闹钟」也不在了 → 判定副本可能已结束，返回 False（由调用方进收尾）。
+
+        有部分副本点「小闹钟」寻路到位后【自动进入战斗】，根本不出「进入战斗」按钮——等待期间除
+        找按钮外还要盯「战斗标识」（共享 battle_flag，未标定则跳过此项退回原逻辑）：已开战就视为本场
+        已发起直接返回 True，别干等超时后误判副本结束。"""
         deadline = time.time() + timeout
-        center = self._scene_center(ctx, regions)
-        last_tap = 0.0
         last_diag = 0.0
+        bl_warned = False
         while not ctx.should_stop():
             scene_rect = self._scene_rect(ctx, regions)
             cur = win_mod.grab(scene_rect) if scene_rect else None
@@ -704,24 +750,40 @@ class DungeonBaseTask(Task):
                 ctx.log(f"点「进入战斗」（{hit[2]:.3f}）。", level="hit")
                 self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
                 return True
+            # 自动开战的副本：没有「进入战斗」按钮，识别到战斗已开始即视为本场已发起
+            if cur is not None:
+                if ui_state.is_present(cur, self.flags, "battle_flag", threshold):
+                    ctx.log("未出现「进入战斗」按钮，但已识别到战斗（寻路后自动开战），视为本场已发起。",
+                            level="hit")
+                    return True
+                if (self.flags.get("battle_flag") is None and not bl_warned
+                        and time.time() >= deadline - timeout + 2.0):
+                    bl_warned = True
+                    ctx.log("等「进入战斗」超时且未标定共享 battle_flag，无法得知是否已自动开战；请到 "
+                            "「通用」页「标定（公共区域）」补标『战斗标识』（自动开战副本需要它）。", level="warn")
             now = time.time()
-            if now > deadline:
+            if now <= deadline:
+                if now - last_diag >= 15.0:
+                    ctx.log(f"等「进入战斗」…（已 {now - (deadline - timeout):.0f}/{timeout:.0f}s）")
+                    last_diag = now
+                self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
+                continue
+            # 超时：先查「小闹钟」是否还在画面里——还在=>寻路目标没到位，点它重新寻路再等；
+            #          没了=>副本可能已结束（返回 False 由调用方收尾）。
+            clock_hit = self._match_scene(cur, scene_rect, "clock", threshold) if cur is not None else None
+            if clock_hit is None:
+                ctx.log(f"等「进入战斗」超时({timeout:.0f}s)且小闹钟已不在，判定副本可能已结束。", level="warn")
                 return False
-            if tap_every > 0 and center is not None and now - last_tap >= tap_every:
-                ctx.mouse.click(center[0], center[1])
-                ctx.log(f"「进入战斗」未出现（{now - (deadline - timeout):.0f}s），疑似 NPC 对话，点场景推进…")
-                last_tap = now
-            if now - last_diag >= 15.0:
-                ctx.log(f"等「进入战斗」…（已 {now - (deadline - timeout):.0f}/{timeout:.0f}s）")
-                last_diag = now
-            self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
+            if clock_retry <= 0:
+                ctx.log(f"等「进入战斗」超时({timeout:.0f}s)，已重寻路多次小闹钟仍在，判定副本可能已结束。", level="warn")
+                return False
+            ctx.mouse.click(clock_hit[0], clock_hit[1])
+            ctx.log(f"等「进入战斗」超时({timeout:.0f}s)，小闹钟仍在，点击重新寻路（还剩 {clock_retry} 次）。", level="warn")
+            self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
+            clock_retry -= 1
+            deadline = time.time() + timeout
+            last_diag = 0.0
         return False
-
-    def _scene_center(self, ctx, regions):
-        rect = self._scene_rect(ctx, regions)
-        if rect is None:
-            return None
-        return (rect[0] + rect[2] // 2, rect[1] + rect[3] // 2)
 
     def _wait_round_end(self, ctx, regions, threshold, timeout, round_no, loop=None):
         """等上一场战斗打完：每帧先主动查「结算界面」（副本结束信号），识别到即返回 "settled"；
@@ -869,7 +931,11 @@ class DungeonBaseTask(Task):
         return (scene_rect[0] + m[0], scene_rect[1] + m[1], m[2])
 
     def _find_join_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop):
-        """统一实现见 base.Task._find_join_in_column（整列枚举取距离卡片行最近那枚「进入」）。"""
+        """统一实现见 base.Task._find_join_in_column（整列枚举取距离卡片行最近那枚「进入」）。
+        副本卡在此传 max_follow_cap：认出的卡片那行若没有匹配上的「进入/参加」，宁可微滚重找，
+        也绝不把隔壁行按钮（例如运镖卡的「参加」，曾 d=65 被稀疏列容差放行而进错活动）当目标——
+        本任务卡片的「参加」从不该指向其它行。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
                                          self.flags.get("join"),
-                                         self.flags.get(self._card_key()))
+                                         self.flags.get(self._card_key()),
+                                         max_follow_cap=loop.get("join_same_row_px", 55))

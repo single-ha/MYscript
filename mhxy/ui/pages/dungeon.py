@@ -47,15 +47,16 @@ class DungeonPage(ctk.CTkFrame):
         self._dtitles = [c.title for c in self._dungeons]
         self._checkboxes = {}                 # name -> (CB, var)
 
-        # 副本展示/运行顺序：普通本列 + 侠士本列，每列按等级低→高。
+        # 副本展示/运行顺序：第一行侠士本、第二行普通本，每行内按等级低→高。
         # 与刷副本列无关——这里只决定「显示/勾选顺序」，运行也按此顺序（所见即所刷）。
         def _sort_key(name):
             m = re.match(r"dt_(\d+)_([a-z]+?)(\d*)$", name)
             if not m:
                 return (0, 0)
+            # 等级低→高；同等级里按子序号小→大（60普通1 在 60普通2 前）
             return (int(m.group(1)), int(m.group(3) or 0))
-        self._cat_order = ["common", "xiashi"]            # 左列普通本、右列侠士本
-        self._cat_label = {"common": "普通本", "xiashi": "侠士本"}
+        self._cat_order = ["xiashi", "common"]                     # 第1行侠士本、第2行普通本
+        self._cat_label = {"xiashi": "侠士本", "common": "普通本"}
         self._layout = {cat: [] for cat in self._cat_order}
         for c in self._dungeons:
             cat = getattr(c, "cat", "common")
@@ -94,9 +95,7 @@ class DungeonPage(ctk.CTkFrame):
         bar.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(bar, text="刷副本", font=self.fonts["title"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w")
-        sub = ctk.CTkLabel(bar, text="勾选要刷的副本，按顺序一个个自动刷（跑完一个再接下一个）。"
-                                     "目前收录：蹈海去·50。需多开≥2 个号、同尺寸。"
-                                     "组队功能本身在「通用」页（选队长→一键组队）。",
+        sub = ctk.CTkLabel(bar, text="按勾选顺序一个个自动刷",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
         sub.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         bind_wraplength(sub)
@@ -138,7 +137,7 @@ class DungeonPage(ctk.CTkFrame):
         ctk.CTkLabel(left, text="副本设置", font=self.fonts["h2"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w", padx=16, pady=(14, 6))
 
-        # 勾选区：普通本(左列) + 侠士本(右列)各一列复选框，每列按等级低→高
+        # 勾选区：第一行侠士本、第二行普通本，每行内按等级高→低横向排布
         sel = ctk.CTkFrame(left, fg_color="transparent")
         sel.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 6))
         sel.grid_columnconfigure(0, weight=1)
@@ -146,33 +145,28 @@ class DungeonPage(ctk.CTkFrame):
                      font=self.fonts["body"], text_color=T.TEXT).grid(row=0, column=0, sticky="w")
         self._cks = ctk.CTkFrame(sel, fg_color="transparent")
         self._cks.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        self._cks.grid_columnconfigure(0, weight=1)
-        self._cks.grid_columnconfigure(1, weight=1)
-        for col, cat in enumerate(self._cat_order):
-            colbox = ctk.CTkFrame(self._cks, fg_color="transparent")
-            colbox.grid(row=0, column=col, sticky="nw", padx=(0, 24))
-            ctk.CTkLabel(colbox, text=self._cat_label[cat] + "（等级低→高）",
-                         font=self.fonts["small"], text_color=T.TEXT_DIM).grid(
-                row=0, column=0, sticky="w", pady=(0, 4))
-            for r, name in enumerate(self._layout[cat], start=1):
+        for row, cat in enumerate(self._cat_order):
+            rowbox = ctk.CTkFrame(self._cks, fg_color="transparent")
+            rowbox.grid(row=row, column=0, sticky="ew", pady=(0, 6))
+            ctk.CTkLabel(rowbox, text=self._cat_label[cat] + "（等级低→高）",
+                         font=self.fonts["small"], text_color=T.TEXT_DIM).pack(anchor="w", pady=(0, 2))
+            cs = ctk.CTkFrame(rowbox, fg_color="transparent")
+            cs.pack(anchor="w")
+            for col, name in enumerate(self._layout[cat]):
                 c = next((cc for cc in self._dungeons if cc.name == name), None)
                 if c is None:
                     continue
                 var = ctk.BooleanVar(value=(name in self._selected))
-                cb = ctk.CTkCheckBox(colbox, text=c.title, variable=var, font=self.fonts["body"],
+                cb = ctk.CTkCheckBox(cs, text=c.title, variable=var, font=self.fonts["body"],
                                      text_color=T.TEXT, fg_color=T.SURFACE_2,
                                      hover_color=T.BORDER, checkmark_color=T.ON_ACCENT,
                                      border_color=T.BORDER, command=lambda n=name: self._on_toggle(n))
-                cb.grid(row=r, column=0, sticky="w", pady=3)
+                cb.grid(row=0, column=col, sticky="w", padx=(0, 18), pady=3)
                 self._checkboxes[name] = (cb, var)
 
         # 组队设置（队长/已组队/跑完解散）统一在「通用/多人任务」页共用一份，存共享 tasks.teaming
-        hint = ctk.CTkLabel(left, text="勾选要刷的副本；队长与「已组队/跑完解散」都在「多人任务」页统一设置，"
-                                       "副本会按选序一个个自动刷（某副本失败会跳过继续下一个）。\n"
-                                       "所有多人任务共用同一份组队设置（存 tasks.teaming）。\n"
-                                       "「已组队」勾上=已自行组好队，直接由队长开刷、不再组队（此时不需要组队标定）。\n"
-                                       "组队的模板/区域在「通用」页统一标定；副本自身模板用本页「标定」按钮。\n"
-                                       "鼠标甩到屏幕角落可紧急停止。",
+        hint = ctk.CTkLabel(left, text="按勾选顺序一个个刷，失败自动跳过下一个。\n"
+                                       "组队标定在「通用」页、副本模板用本页「标定」。",
                              font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         hint.grid(row=2, column=0, sticky="ew", padx=16, pady=(2, 8))
         bind_wraplength(hint)
@@ -209,8 +203,7 @@ class DungeonPage(ctk.CTkFrame):
 
     def _dungeons_calib_counts(self):
         """所有副本共用一套标定：按共享 DUNGEON_CALIBRATION 汇总 tasks.dungeon 完成情况。
-        每个副本都反馈同一份计数（一次标定覆盖全部副本）。
-        返回 ({name:(rdone,rneed,tdone,tneed)}, 全齐?)。"""
+        一次标定覆盖全部副本，返回 ((rdone, rneed, tdone, tneed), 全齐?)。"""
         spec = DUNGEON_CALIBRATION
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         regions, templates = tc.get("regions", {}), tc.get("templates", {})
@@ -221,11 +214,10 @@ class DungeonPage(ctk.CTkFrame):
         rdone = sum(1 for k in need_r if regions.get(k))
         tdone = sum(1 for k in need_t if templates.get(k))
         ok = (rdone == len(need_r) and tdone == len(need_t))
-        counts = {name: (rdone, len(need_r), tdone, len(need_t)) for name in self._selected_names()}
-        return counts, ok
+        return (rdone, len(need_r), tdone, len(need_t)), ok
 
     def _render_team_status(self):
-        """据当前 self._win_count + 组队标定 + 各勾选副本标定，渲染就绪状态。"""
+        """据当前 self._win_count + 组队标定 + 副本标定，渲染就绪状态（紧凑摘要）。"""
         n = self._win_count
         team_tc = teaming_ns(self.app.cfg)
         skip_team = team_tc.get("skip_team", False)
@@ -233,34 +225,22 @@ class DungeonPage(ctk.CTkFrame):
         if not (0 <= cap < max(1, n)):
             cap = 0
         team_ok = teaming_ready(team_tc)
-
-        counts, all_self_ok = self._dungeons_calib_counts()
-        names = self._selected_names()
-        if names:
-            lines = []
-            for nm in names:
-                rdone, rneed, tdone, tneed = counts.get(nm, (0, 0, 0, 0))
-                ok = (rdone == rneed and tdone == tneed)
-                lines.append(f"　· {self._title_of(nm)}：区域 {rdone}/{rneed}，模板 {tdone}/{tneed}"
-                             + (" ✓" if ok else " ✗")
-                             + ("（当前正在刷）" if nm == self._current_name else ""))
-            calib_lines = "副本标定（已勾 " + "、".join(self._selected_titles()) + "）：\n" + "\n".join(lines)
-        else:
-            calib_lines = "副本标定：未勾选任何副本（请至少勾一个）"
-            all_self_ok = False
+        (rdone, rneed, tdone, tneed), dun_ok = self._dungeons_calib_counts()
 
         if skip_team:
-            ready = all_self_ok and n >= 1
-            team_line = "组队：已勾「已组队」，本次跳过组队（无需组队标定）\n"
-            tail = "　✓ 可运行" if ready else "　（需≥1 个号 且所选副本标定齐全）"
+            ready = dun_ok and n >= 1
+            team_line = "组队标定：已勾「已组队」，本次跳过组队\n"
+            tail = "　✓ 可运行" if ready else "　（需≥1 个号 且副本标定齐全）"
         else:
-            ready = team_ok and all_self_ok and n >= 2
+            ready = team_ok and dun_ok and n >= 2
             team_line = "组队标定：" + ("齐全 ✓" if team_ok
-                                      else "区域内/模板未标齐（去「通用」页标定组队）") + "\n"
-            tail = "　✓ 可运行" if ready else "　（需多开≥2 且组队+所选副本标定齐全）"
-        self.lbl_calib.configure(
-            text=team_line + calib_lines
-                 + f"\n已选 {n} 个号，队长=号{cap + 1}" + tail)
+                                      else "需标定（去「通用」页标定组队）") + "\n"
+            tail = "　✓ 可运行" if ready else "　（需多开≥2 且组队+副本标定齐全）"
+        dun_line = f"副本标定：区域 {rdone}/{rneed}，模板 {tdone}/{tneed}" + (
+            "　✓（一次标定覆盖全部副本）" if dun_ok else "　✗（用本页「标定」补齐）")
+        color = T.SUCCESS if ready else T.WARN
+        self.lbl_calib.configure(text=f"{team_line}{dun_line}\n已选 {n} 个号，队长=号{cap + 1}" + tail,
+                                 text_color=color)
 
     def _title_of(self, name):
         for c in self._dungeons:
@@ -276,7 +256,7 @@ class DungeonPage(ctk.CTkFrame):
     def _write_enter_target(self, name):
         """启动某副本前，把 {cat, pos} 写进 tasks.dungeon.enter_target。
         pos = 该副本在其标签区里的序号(0-based)。游戏进入列表按标签区从上到下排布，
-        用该区展示顺序(等级低→高，_layout[cat]，即 GUI 两列所见顺序)当基准，多命中点按(行,列)排序后取第 pos 个。
+        用该区展示顺序(等级低→高，_layout[cat]，即 GUI 勾选区所见顺序)当基准，多命中点按(行,列)排序后取第 pos 个。
         注意：不能用「勾选队列」算序号——只勾一个时它在队列里是 0，但物理位置未必是列表第一个（曾进错副本）。"""
         cat = self._cat_of(name)
         order = self._layout.get(cat, [])

@@ -25,8 +25,7 @@ import time
 from ..core import scan
 from ..core import vision
 from ..core import window as win_mod
-from ..core.teaming import (TeamFormation, TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES,
-                            DISBAND_REQUIRED_TEMPLATES)
+from ..core.teaming import (TeamFormation, TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES)
 from .base import Task, register
 
 # 抓鬼自身模板键（gg_ 前缀=抓鬼，存盘 templates/tm_gg_*.png，避免与别的任务同名互相覆盖）。
@@ -91,11 +90,7 @@ class ZhuaguiTask(Task):
                 if not p or vision.load_template(p) is None:
                     problems.append(f"组队模板『{tk}』缺失 —— 请在「通用」页点「标定（组队）」裁图")
 
-        if team_tc.get("auto_disband", False):
-            for tk in DISBAND_REQUIRED_TEMPLATES:
-                p = team_tc.get("templates", {}).get(tk)
-                if not p or vision.load_template(p) is None:
-                    problems.append(f"勾了「跑完解散队伍」但退队模板『{tk}』缺失 —— 请在「通用」页标定「退出队伍」")
+        # 跑完解散已迁至「日常一条龙」页集中控制（tasks.teaming.auto_disband），抓鬼自身不再解散。
 
         regions = tc.get("regions", {})
         if not regions.get("activity_list"):
@@ -182,16 +177,7 @@ class ZhuaguiTask(Task):
         # —— 第二步：队长跑抓鬼循环（N 轮）——
         self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
         self._run_rounds(cap_child, loop, regions, threshold)
-
-        # —— 第三步（可选）：抓完后自动解散队伍 ——
-        if team_tc.get("auto_disband", False) and not ctx.should_stop():
-            ctx.log("抓鬼结束，自动解散队伍（所有号退队）…", level="warn")
-            self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
-            team_cfg = ctx.task_cfg("teaming")
-            team = TeamFormation(ctx, assignments, team_cfg, dry_run=False)
-            ok, _ = team.run_disband()
-            if ok:
-                ctx.log("队伍已解散。", level="hit")
+        # 跑完解散已迁至「日常一条龙」页集中控制（见 daily._disband_after_multi），抓鬼跑完不再自动解散。
 
     # ------------------------------------------------------------------
     # 队长抓鬼循环（线性、阻塞式；每轮= 领任务 → 战斗 → 领下一轮/收尾）

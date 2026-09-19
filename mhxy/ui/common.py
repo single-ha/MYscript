@@ -371,9 +371,10 @@ def teaming_summary(team_tc):
 
 
 class TeamSettingsCard(ctk.CTkFrame):
-    """多人任务共用的「组队设置」卡片：已组队 / 跑完解散 两个开关（队长/队长ID 统一在通用页选）。
-    所有控件读写共享 tasks.teaming 命名空间（skip_team / auto_disband），
-    故蹈海去、抓鬼等页只需嵌这一张卡、零重复；on_change 回调让宿主页刷新自己的标定状态。"""
+    """多人任务共用的「组队设置」卡片：「已组队」开关（队长/队长ID 统一在通用页选）。
+    「跑完解散队伍」开关已迁到「日常一条龙」页（见 DailyPage.var_disband，存共享 tasks.teaming.auto_disband）。
+    控件读写共享 tasks.teaming 命名空间，故各多人任务页只需嵌这一张卡、零重复；
+    on_change 回调让宿主页刷新自己的标定状态。"""
 
     def __init__(self, master, app, fonts, on_change=None):
         super().__init__(master, fg_color="transparent")
@@ -381,15 +382,12 @@ class TeamSettingsCard(ctk.CTkFrame):
         self.fonts = fonts
         self.on_change = on_change
 
-        # —— 已组队 / 跑完解散 开关 ——
+        # —— 已组队 开关 ——
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(fill="x", anchor="w")
         self.switch_skip = ctk.CTkSwitch(row, text="已组队（跳过组队，直接开刷）", font=fonts["body"],
                                          progress_color=T.ACCENT, command=self._on_skip)
         self.switch_skip.pack(anchor="w")
-        self.switch_disband = ctk.CTkSwitch(row, text="跑完解散队伍（所有号退队）", font=fonts["body"],
-                                            progress_color=T.ACCENT, command=self._on_disband)
-        self.switch_disband.pack(anchor="w", pady=(6, 0))
 
     # —— 读共享 teaming 命名空间 ——
     def _read(self):
@@ -413,22 +411,15 @@ class TeamSettingsCard(ctk.CTkFrame):
     def refresh(self):
         tc = self._read()
         (self.switch_skip.select if tc.get("skip_team", False) else self.switch_skip.deselect)()
-        (self.switch_disband.select if tc.get("auto_disband", False) else self.switch_disband.deselect)()
 
     # —— 读当前组队设置（供宿主页拼标定行/运行前回写）——
     def values(self):
         return {
             "skip_team": bool(self.switch_skip.get()),
-            "auto_disband": bool(self.switch_disband.get()),
         }
 
     # —— 回调：写入共享 teaming ——
     def _on_skip(self):
         skip = bool(self.switch_skip.get())
         self._write(skip_team=skip)
-        self._fire()
-
-    def _on_disband(self):
-        auto = bool(self.switch_disband.get())
-        self._write(auto_disband=auto)
         self._fire()

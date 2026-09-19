@@ -465,6 +465,54 @@ class CalibrateDialog(ctk.CTkToplevel):
         self._save()
         self._refresh()
         self._toast(f"已记录模板 {name}", T.SUCCESS)
+        # 副本卡片模板要能在活动面板里分清「普通副本/侠士副本」卡与相邻活动卡——框到公共UI就会误点运镖。
+        # 标注后立即用当前画面自检：模板同屏匹配到 ≥2 个格子 = 不独家，当场提醒重框，别等跑任务才发现。
+        if key in ("entry_common", "entry_xiashi"):
+            self._verify_card_tpl(key, crop)
+
+    def _verify_card_tpl(self, key, crop):
+        """「副本卡模板独特性」自检：把刚裁的模板在当前活动面板上扫一遍，若 ≥2 个格子都 ≥0.8，
+        说明框到公共UI（曾因此误点运镖），当场改框卡上【独有图案】。只告警、不强制回退。"""
+        try:
+            dc = cfg_mod.task_config(self.cfg, "dungeon")
+            region = (dc.get("regions") or {}).get("activity_list")
+            if not region:
+                return
+            title = self.cfg.get("window_title", "梦幻西游")
+            offset = self.cfg.get("window_offset", [0, 0])
+            wins = win_mod.locate_all(title, offset)
+            w = wins[0] if wins else None
+            if w is None:
+                return
+            rect = w.region_to_screen_rect(region)
+            if rect is None:
+                return
+            scene = win_mod.grab(rect)
+            if scene is None:
+                return
+            hits = vision.match_multi(scene, crop, 0.8, nms_iou=0.05, max_hits=32)
+            if not hits:
+                return
+            # 合并同格：横距 < 1/3 列宽、纵距 < 半屏画高算同一格（一个卡面可能出两个紧邻峰值）
+            col_w = rect[2] / max(1, int((dc.get("loop") or {}).get("activity_columns", 2)))
+            cells = []
+            for (cx, cy, s) in hits:
+                merged = False
+                for c in cells:
+                    if abs(c[0] - cx) < col_w * 0.6 and abs(c[1] - cy) < rect[3] * 0.35:
+                        c[2] = max(c[2], s)
+                        merged = True
+                        break
+                if not merged:
+                    cells.append([cx, cy, s])
+            if len(cells) >= 2:
+                scores = "、".join(f"{c[2]:.2f}" for c in cells)
+                self._toast(
+                    f"⚠ {key} 这个框【不独家】：同屏有 {len(cells)} 张卡都 ≥0.8（{scores}），"
+                    "其中必含镜像卡，跑起来仍会误点！请重新框选中卡面里【独有的图案/图标】"
+                    "（避开标题栏、边框和公共背景），别嫌小。", T.WARN)
+        except Exception:
+            pass  # 自检失败不影响标定结果
 
     # ---- 添加装备（watchlist）----
     def _add_item(self):

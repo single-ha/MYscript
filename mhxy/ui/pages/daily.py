@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""日常一条龙页：只做「勾选 + 排序」——各任务设置全在各任务页。任务按区分区展示，
-每区可折叠，区内左键拖动手柄排序，区右上 ▲▼ 移动整区顺序（两区互换=挪整区；支持以后新增分区）。
+"""日常一条龙页：只做「勾选 + 排序」——各任务设置全在各任务页。任务按区展示，
+每区可折叠，区内左键拖动手柄排序。两区分组固定：多人任务组在前、单人任务组在后（不支持两区互换）。
 独立页面类，由 App 统一导入（App.PAGE_CLASSES）。"""
 
 import customtkinter as ctk
@@ -14,16 +14,17 @@ from ...tasks.base import dungeon_tasks
 from ...tasks.daily import CHAINABLE, GROUP_OF, GROUP_TITLES, MULTI_BARRIER
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
-from ..common import (Card, Tooltip, bind_wraplength, required_regions, required_templates)
+from ..common import (Card, Tooltip, bind_wraplength, required_regions, required_templates,
+                      teaming_ns)
 
-# 分区集合（按 GROUP_OF 出现顺序）。以后加新分区：在 tasks/daily.py 里给 GROUP_OF 补映射即可，
-# 本页自动多出一区，无需改这里。
-_GROUPS = list(dict.fromkeys(GROUP_OF.values()))
+# 分区集合。两区分组固定：多人组在前、个人组在后（不提供互换）；GROUP_OF 里出现过的区都保留（以后加新区自动跟上）。
+_GROUPS = ["multi"] + [g for g in dict.fromkeys(GROUP_OF.values()) if g != "multi"]
 
 
 class DailyPage(ctk.CTkFrame):
     """日常一条龙：只做串联——勾选哪些任务、按什么顺序跑，存 tasks.daily.steps（全局有序=执行顺序）。
-    个人组（每号独立跑）在前、多人组（集体组队跑）在后，区顺序可调（集团 ▲▼，存 group_order）。
+    两区分组固定：多人组（集体组队跑）在前、个人组（每号独立跑）在后，不提供两区互换/挪动。
+    单人任务组在本趟流程中时，「跑完多人任务后解散队伍」开关会被强制打开并锁定（单人步在队伍外更干净）。
     多开/单开与各任务的标定、参数全部沿用各自任务页，本页不另设这些开关。"""
 
     TASK_NAME = "daily"
@@ -97,11 +98,19 @@ class DailyPage(ctk.CTkFrame):
         ctk.CTkFrame(card, fg_color=T.BORDER, height=1).grid(
             row=1, column=0, sticky="ew", padx=16, pady=(0, 4))
 
-        # 时间上限（整条龙的安全网）
+        # 设置项两列排布：左列=时间上限 / 跑完关机 / 自动整理背包，右列=解散队伍 / 定时延后执行
         opts = ctk.CTkFrame(card, fg_color="transparent")
         opts.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 10))
-        lim = ctk.CTkFrame(opts, fg_color="transparent")
-        lim.pack(anchor="w")
+        opts.grid_columnconfigure(0, weight=1)
+        opts.grid_columnconfigure(1, weight=1)
+
+        def _opt_row(r, c):
+            f = ctk.CTkFrame(opts, fg_color="transparent")
+            f.grid(row=r, column=c, sticky="w", padx=(0, 26), pady=(10, 0))
+            return f
+
+        # 时间上限（整条龙的安全网）
+        lim = _opt_row(0, 0)
         lim_lbl = ctk.CTkLabel(lim, text="整体时间上限(分钟，0=不限)", font=self.fonts["body"],
                                text_color=T.TEXT)
         lim_lbl.pack(side="left")
@@ -112,9 +121,21 @@ class DailyPage(ctk.CTkFrame):
         for w in (lim_lbl, self.lim_ent):
             Tooltip(w, "只是安全网：正常会按各子任务自身条件跑完。未就绪（缺标定/缺窗口）的任务会自动跳过。", self.fonts)
 
+        # 跑完多人任务后是否解散队伍（存共享 tasks.teaming.auto_disband，原在「多人任务」页组队设置里）
+        dis = _opt_row(0, 1)
+        dis_lbl = ctk.CTkLabel(dis, text="跑完多人任务后解散队伍", font=self.fonts["body"], text_color=T.TEXT)
+        dis_lbl.pack(side="left")
+        self.var_disband = ctk.BooleanVar(value=False)
+        self.sw_disband = ctk.CTkSwitch(dis, text="", variable=self.var_disband, width=44,
+                                        progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
+                                        command=self._on_disband_toggle)
+        self.sw_disband.pack(side="left", padx=(8, 0))
+        Tooltip(dis_lbl, "跑完「多人任务」整段后自动让所有号退队，再转后续任务。"
+                         "步骤里包含「单人任务」组时，此开关会被强制打开并锁定（单人步要在队伍外跑）；"
+                         "只有多人任务时可按需开关。", self.fonts)
+
         # 跑完关机（谨慎）：整条龙全部跑完且有实跑任务才触发，延迟倒计时可 shutdown -a 取消
-        shut = ctk.CTkFrame(opts, fg_color="transparent")
-        shut.pack(anchor="w", pady=(10, 0))
+        shut = _opt_row(1, 0)
         shut_lbl = ctk.CTkLabel(shut, text="跑完关机", font=self.fonts["body"], text_color=T.TEXT)
         shut_lbl.pack(side="left")
         self.var_shutdown = ctk.BooleanVar(value=False)
@@ -124,15 +145,14 @@ class DailyPage(ctk.CTkFrame):
         Tooltip(shut_lbl, "整条龙跑完后自动关机（先进入关机倒计时，期间按「停止」或急停热键即可取消）", self.fonts)
 
         # 定时延迟执行：点「开始一条龙」后先看有没有设置定时，有则等到该时刻才真正启动
-        sched = ctk.CTkFrame(opts, fg_color="transparent")
-        sched.pack(anchor="w", pady=(10, 0))
+        sched = _opt_row(1, 1)
         sched_lbl = ctk.CTkLabel(sched, text="定时延后执行", font=self.fonts["body"], text_color=T.TEXT)
         sched_lbl.pack(side="left")
         self.var_schedule_on = ctk.BooleanVar(value=False)
         ctk.CTkSwitch(sched, text="", variable=self.var_schedule_on, width=44,
                       progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
                       command=self._on_schedule_toggle).pack(side="left", padx=(8, 0))
-        ctk.CTkLabel(sched, text="执行时间(时:分)", font=self.fonts["body"], text_color=T.TEXT_DIM).pack(side="left")
+        ctk.CTkLabel(sched, text="执行时刻(时:分)", font=self.fonts["body"], text_color=T.TEXT_DIM).pack(side="left", padx=(4, 0))
         self.var_schedule_time = ctk.StringVar(value="10:00")
         time_ent = ctk.CTkEntry(sched, textvariable=self.var_schedule_time, width=64,
                                 font=self.fonts["body"], fg_color=T.SURFACE_2, border_color=T.BORDER)
@@ -143,8 +163,7 @@ class DailyPage(ctk.CTkFrame):
 
         # «自动整理背包»（从「工具 › 整理背包」页移到这里的控制区，因为它影响运镖/宝图/秘境/副本
         # 等一条龙任务运行中的行为；配置仍存共享 tasks.organize_bag.auto_organize）。
-        auto = ctk.CTkFrame(opts, fg_color="transparent")
-        auto.pack(anchor="w", pady=(10, 0))
+        auto = _opt_row(2, 0)
         auto_lbl = ctk.CTkLabel(auto, text="自动整理背包", font=self.fonts["body"], text_color=T.TEXT)
         auto_lbl.pack(side="left")
         self.switch_auto_organize = ctk.CTkSwitch(
@@ -173,7 +192,7 @@ class DailyPage(ctk.CTkFrame):
                                   text_color=T.TEXT)
         head_title.grid(row=0, column=0, sticky="w")
         Tooltip(head_title, "点区题折叠/展开　·　每区左侧 ⠿ 上下拖动排序（区内）　·　右侧开关启用/停用　·　"
-                            "序号即全局执行先后　·　区右上 ▲▼ 移动整区顺序（两区顺序互换=挪动整区）", self.fonts)
+                            "序号即全局执行先后　·　两区分组固定：多人任务组在前、单人任务组在后", self.fonts)
         self.list_frame = ctk.CTkScrollableFrame(left, fg_color="transparent")
         self.list_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 12))
         self.list_frame.grid_columnconfigure(0, weight=1)
@@ -187,16 +206,16 @@ class DailyPage(ctk.CTkFrame):
     def refresh(self):
         self.app.cfg = cfg_mod.load_config()
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
-        go = self._sanitize_group_order(tc.get("group_order"))
-        self._group_order = go
+        self._group_order = list(_GROUPS)      # 两区分组固定（多人在前、单人在后），不支持互换/挪动
         self._group_on = {g: bool((tc.get("group_enabled") or {}).get(g, True)) for g in _GROUPS}
-        self._steps = self._normalize(tc.get("steps", []), go)
+        self._steps = self._normalize(tc.get("steps", []), self._group_order)
         self.var_limit.set(str(tc.get("loop", {}).get("time_limit_min", 0)))
         self.var_shutdown.set(bool(tc.get("loop", {}).get("shutdown_after", False)))
         sched = tc.get("loop", {}).get("schedule", "") or ""
         self.var_schedule_on.set(bool(sched))
         if sched and ":" in sched:
             self.var_schedule_time.set(sched)
+        self.var_disband.set(bool(teaming_ns(self.app.cfg).get("auto_disband", False)))
         ob = cfg_mod.task_config(self.app.cfg, "organize_bag")
         if self.switch_auto_organize is not None:
             if ob.get("auto_organize"):
@@ -204,18 +223,27 @@ class DailyPage(ctk.CTkFrame):
             else:
                 self.switch_auto_organize.deselect()
         self._render_steps()
+        self._sync_disband_lock()
 
-    @staticmethod
-    def _sanitize_group_order(go):
-        """把存储的区顺序规整成合法全集：只留已知区、去重、保证每区都在（缺的按 _GROUPS 顺序补尾）。"""
-        out = []
-        for g in (go or []):
-            if g in _GROUPS and g not in out:
-                out.append(g)
-        for g in _GROUPS:
-            if g not in out:
-                out.append(g)
-        return out
+    def _has_single_selected(self):
+        """是否把「单人任务」组选进了本趟流程：整组启用 且 至少勾了一个单人任务。"""
+        if not self._group_on.get("single", True):
+            return False
+        return any(s["enabled"] for s in self._steps if GROUP_OF[s["task"]] == "single")
+
+    def _sync_disband_lock(self):
+        """「跑完多人任务后解散队伍」开关联动：只要单人任务组在本趟流程中，就必须是开——
+        强制打开并锁定（置灰不可点），同时把共享配置 tasks.teaming.auto_disband 写死 True
+        （引擎据此解散）；没有单人任务时恢复用户自由开关，显示配置里的值。"""
+        locked = self._has_single_selected()
+        if locked:
+            self.var_disband.set(True)
+        self.sw_disband.configure(state="disabled" if locked else "normal")
+        if locked and not bool(teaming_ns(self.app.cfg).get("auto_disband", False)):
+            cfg = cfg_mod.load_config()
+            cfg["tasks"].setdefault("teaming", {})["auto_disband"] = True
+            cfg_mod.save_config(cfg)
+            self.app.cfg = cfg
 
     @staticmethod
     def _normalize(stored, group_order):
@@ -329,8 +357,9 @@ class DailyPage(ctk.CTkFrame):
         self._grid_all()
 
     def _build_section_header(self, g):
-        """区头：标题（点它折叠/展开）+ 整组启用开关 + 计数 + ▲▼ 移动整区顺序。折叠是按 group 记状态、
-        仅隐藏该区行；整组开关=整区停用/启用（行级开关独立保留，组关了再开回来行勾选仍在）。"""
+        """区头：标题（点它折叠/展开）+ 整组启用开关 + 计数。折叠是按 group 记状态、
+        仅隐藏该区行；整组开关=整区停用/启用（行级开关独立保留，组关了再开回来行勾选仍在）。
+        两区分组固定（多人在前、单人在后），无 ▲▼ 挪动按钮。"""
         bar = ctk.CTkFrame(self.list_frame, fg_color="transparent")
         bar.grid_columnconfigure(2, weight=1)
         collapsed = self._collapsed.get(g, False)
@@ -351,24 +380,16 @@ class DailyPage(ctk.CTkFrame):
             except Exception:
                 pass
             w.bind("<Button-1>", lambda e, gg=g: self._toggle_collapse(gg))
-        # 整组启用开关（标题右侧常驻，折叠时也能切）
+        # 布局：标题右侧紧跟「已勾选 x/n」计数，整组启用开关放最右侧（重量列 2 把开关顶到右缘）。
         var = ctk.BooleanVar(value=group_on)
         self._group_vars[g] = var
         sw = ctk.CTkSwitch(bar, text="", variable=var, width=44,
                            progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
                            command=lambda gg=g, v=var: self._toggle_group(gg, v))
-        sw.grid(row=0, column=2, padx=(8, 0))
+        sw.grid(row=0, column=3, sticky="e", padx=(0, 6))
         lbl = ctk.CTkLabel(bar, text="", font=self.fonts["small"], text_color=T.TEXT_DIM)
-        lbl.grid(row=0, column=3, sticky="e", padx=(8, 0))
+        lbl.grid(row=0, column=2, sticky="w", padx=(10, 0))
         self._lbl_count[g] = lbl
-        btn_up = ctk.CTkButton(bar, text="▲", font=self.fonts["small"], width=30, height=26,
-                               corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
-                               text_color=T.TEXT, command=lambda gg=g: self._move_group(gg, -1))
-        btn_up.grid(row=0, column=4, padx=(8, 3))
-        btn_dn = ctk.CTkButton(bar, text="▼", font=self.fonts["small"], width=30, height=26,
-                               corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
-                               text_color=T.TEXT, command=lambda gg=g: self._move_group(gg, 1))
-        btn_dn.grid(row=0, column=5, padx=(0, 6))
         return bar
 
     def _build_row(self, g, step):
@@ -474,6 +495,7 @@ class DailyPage(ctk.CTkFrame):
                 s["enabled"] = bool(var.get())
                 break
         self._save()
+        self._sync_disband_lock()   # 单人任务勾选变化 → 解散开关联动（含单人任务时必须开）
         self._render_steps()
 
     def _toggle_group(self, g, var):
@@ -482,6 +504,7 @@ class DailyPage(ctk.CTkFrame):
         self._group_on[g] = on
         self._group_vars[g] = var
         self._save()
+        self._sync_disband_lock()   # 单人整组停用/启用 → 解散开关联动
         self._render_steps()
         n = len(self._steps_by_group(g))
         if on:
@@ -556,18 +579,6 @@ class DailyPage(ctk.CTkFrame):
                 return i
         return 0
 
-    def _move_group(self, g, delta):
-        """把整区向上/向下挪一位（组内顺序保留），存 group_order；两区互换=挪整区一次。"""
-        i = self._group_order.index(g)
-        j = i + delta
-        if j < 0 or j >= len(self._group_order):
-            return
-        self._group_order[i], self._group_order[j] = self._group_order[j], self._group_order[i]
-        self._steps = self._normalize(self._steps, self._group_order)
-        self._save()
-        self._steps_sig = None      # 区顺序已变，强制下次干净重建
-        self._render_steps()
-
     def _toggle_collapse(self, g):
         """折叠/展开分区：只改 group 级折叠状态 + 重排可见行（不销毁控件、不重建整页）。"""
         self._collapsed[g] = not self._collapsed.get(g, False)
@@ -579,7 +590,6 @@ class DailyPage(ctk.CTkFrame):
         cfg = cfg_mod.load_config()
         tc = cfg_mod.task_config(cfg, self.TASK_NAME)
         tc["steps"] = [{"task": s["task"], "enabled": bool(s["enabled"])} for s in self._steps]
-        tc["group_order"] = list(self._group_order)
         tc["group_enabled"] = {g: bool(self._group_on.get(g, True)) for g in _GROUPS}
         loopc = tc.setdefault("loop", {})
         try:
@@ -616,6 +626,21 @@ class DailyPage(ctk.CTkFrame):
                            "warn")
         else:
             self._log_line("已关闭定时延后执行：点「开始一条龙」立即执行。", "info")
+
+    def _on_disband_toggle(self):
+        """「跑完多人任务后解散队伍」开关：存共享 tasks.teaming.auto_disband（原在「多人任务」页组队设置卡）。
+        日常引擎跑完多人组后是否强制解散 = 该值；共享命名空间，副本页等别处也读到同一份。"""
+        on = bool(self.var_disband.get())
+        if self._has_single_selected():     # 单人任务组在本趟流程中：强制开（开关本已锁定，防逻辑缺口）
+            on = True
+            self.var_disband.set(True)
+        cfg = cfg_mod.load_config()
+        tc = cfg["tasks"].setdefault("teaming", {})
+        tc["auto_disband"] = on
+        cfg_mod.save_config(cfg)
+        self.app.cfg = cfg
+        self._log_line(("已开启：跑完多人任务后自动解散队伍。" if on
+                        else "已关闭：跑完多人任务后保留队伍（不主动解散）。"), "info")
 
     def _toggle_auto_organize(self):
         """「自动整理背包」开关：存共享 tasks.organize_bag.auto_organize（任何一条龙任务检测到背包满自动整理）。"""

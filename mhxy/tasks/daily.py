@@ -2,17 +2,18 @@
 """
 日常一条龙：把已有任务按用户勾选、分「单人任务/多人任务」两组串起来跑完。
 
-分组（用户拍板，2026-09-07 重做，与「单人任务/多人任务」两个页面对齐，两区顺序可互换）：
+分组（用户拍板，2026-09-07 重做，与「单人任务/多人任务」两个页面对齐；两区分组固定，不提供互换）：
   · 个人组（CHAINABLE_SINGLE）= 宝图 / 运镖 / 秘境降妖 / 三界奇缘 / 帮派签到 / 活跃度奖励
         —— 每窗口独立任务链，互不制约：号1 自己 运镖→宝图→… 一路跑，号2 独立同样跑，
         靠一只鼠标在号间轮转交错推进，谁也不等谁。
   · 多人组（MULTI_BARRIER）= 刷副本 / 抓鬼
         —— 本质跨窗口协作（必须先组队、且只有队长操作），做不成「每窗口独立」，
         故是【集体屏障】：各窗口在自己的链里走到这一步就【停靠等待】，直到所有未完成的号都汇合到
-        这一步，才集体跑一次（组队→队长线性跑完→可选解散），跑完一起放行、各自继续后面的独立链。
-        多人步可排在顺序里的任意位置（常放最前先刷活跃度），不强制最后；多个多人步按列表顺序逐一到齐跑。
-  · 组顺序存 tasks.daily.group_order（["single","multi"] 或反序），steps 全局有序=执行顺序，
-    界面「⇅ 两区互换」把两组整段对调（组内顺序保留）。
+        这一步，才集体跑一次（组队→队长线性跑完），跑完一起放行。
+        多人组固定排在单人组前面（用户拍板去掉两区排序），steps 全局有序=执行顺序。
+  · 单人任务组在本趟流程中 → 多人步跑完转入单人步前【强制解散】队伍（单人步=每窗口独立链，
+    残留队伍会干扰视角/点名；「日常一条龙」页的「跑完多人任务后解散队伍」开关随之强制打开并锁定）。
+    整条链只有多人步、后面没有单人步时，才按该开关决定是否收尾解散。
 
 「刷副本」步指向**副本中枢当前勾选的全部副本**（tasks.dungeon.selected，is_dungeon 列表，按勾选顺序），
 逐个跑它们各自的「先组队再跑流程」，而非 DungeonTask 本身（那只组队即停）；选哪些副本/顺序/队长/标定都在「刷副本」页。
@@ -36,6 +37,7 @@ import time
 
 from .base import Task, register, get_task, dungeon_tasks
 from .dungeon_base import DUNGEON_NS
+from ..core.teaming import TeamFormation
 
 # 可进一条龙的任务（这些都有明确「完成条件」、会自动结束）。秒装备 sniper 不在此列。
 # 个人组：每窗口独立链（各自都能经 make_chain_driver 逐窗口跑）。
@@ -47,7 +49,7 @@ MULTI_BARRIER = ["dungeon", "zhuagui"]
 CHAINABLE = CHAINABLE_SINGLE + MULTI_BARRIER
 GROUP_OF = {n: "single" for n in CHAINABLE_SINGLE}
 GROUP_OF.update({n: "multi" for n in MULTI_BARRIER})
-GROUP_ORDER_DEFAULT = ["single", "multi"]   # 界面的「区顺序」默认个人在前（可互换）
+GROUP_ORDER_DEFAULT = ["multi", "single"]   # 两区分组固定（多人在前、单人在后），保留作配置默认值
 GROUP_TITLES = {"single": "单人任务", "multi": "多人任务"}
 # 以后要加新分区：这里补 GROUP_OF 的映射 + GROUP_TITLES 标题即可；一条龙页的 _GROUPS、
 # 引擎的 steps 分段、config 的 group_order 都会自动跟进，无需改别处。
@@ -124,6 +126,15 @@ class DailyTask(Task):
             parked = [c for c in alive if self._at_barrier(c, steps)]
             if parked and len(parked) == len(alive):
                 self._run_collective(ctx, steps[parked[0]["idx"]])
+                # —— 多人组最后一个多人步跑完 → 其后若接单人任务：必须先解散（单人步=每窗口独立链，
+                # 残留队伍会干扰视角/点名，强制解散、无视开关）；整条链到此为止（无后续步骤）时，
+                # 才按「跑完多人任务后解散队伍」开关决定是否收尾解散。
+                rest = steps[parked[0]["idx"] + 1:]
+                if rest:
+                    if not any(s in MULTI_BARRIER for s in rest):
+                        self._disband_after_multi(ctx, wctxs, has_single=True)
+                elif bool(ctx.task_cfg("teaming").get("auto_disband", False)):
+                    self._disband_after_multi(ctx, wctxs, has_single=False)
                 for c in parked:
                     self._advance(c, steps)
                 continue
@@ -330,6 +341,39 @@ class DailyTask(Task):
             if done < total:
                 ctx.log(f"─── 副本 {i}/{total}「{title}」完成，接下一个副本 ───", level="hit")
         ctx.log(f"刷副本汇总：{done}/{total} 个副本完成。", level="hit" if done == total else "warn")
+
+    def _disband_after_multi(self, ctx, wctxs, has_single=False):
+        """多人步跑完后决定并执行一次解散。has_single=True=后面就是单人任务组（单人步在队伍外跑，
+        残留队伍会干扰视角/点名）→ 【强制解散】，无视「跑完解散」开关；has_single=False=整条链已到此
+        结束，仅当用户勾了「跑完多人任务后解散队伍」才收尾解散。解散对「本就不在队」的号也安全收尾。
+        单开/不足 2 个号直接跳过；失败只记日志，不阻塞整条龙。"""
+        if ctx.should_stop() or len(wctxs) < 2:
+            return
+        team_tc = ctx.task_cfg("teaming")
+        if not has_single and not team_tc.get("auto_disband", False):
+            ctx.log("多人任务已全部跑完（本次为最后一段），未勾「解散队伍」，保留队伍。", level="warn")
+            return
+        if not (team_tc.get("templates", {}) or {}).get("team_quit"):
+            ctx.log(("解散队伍需先在「通用」页标定「退出队伍」模板 —— 单人任务必须在队伍外跑，"
+                     "本次未解散，单人任务可能受影响。") if has_single
+                    else "解散队伍需先在「通用」页标定「退出队伍」模板 —— 本次保留队伍。", level="warn")
+            return
+        reason = ("后面是单人任务组，单人步必须在队伍外跑，强制解散") if has_single \
+                 else "已勾选「跑完多人任务后解散队伍」，收尾解散"
+        ctx.log(f"───── 多人任务全部完成，{reason} ─────", level="warn")
+        try:
+            cap = int(team_tc.get("captain_index", 0) or 0)
+            cap_child = wctxs[cap] if 0 <= cap < len(wctxs) else wctxs[0]
+            assignments = [(cap_child, TeamFormation.ROLE_CAPTAIN)] + \
+                          [(wc, TeamFormation.ROLE_MEMBER) for wc in wctxs if wc is not cap_child]
+            team = TeamFormation(ctx, assignments, team_tc, dry_run=False)
+            ok, reason = team.run_disband()
+            if ok:
+                ctx.log("队伍已解散，开始单人任务。", level="hit")
+            else:
+                ctx.log(f"解散队伍未完成（{reason}），继续后续任务。", level="warn")
+        except Exception as e:
+            ctx.log(f"解散队伍异常：{e}，继续后续任务。", level="warn")
 
     def _maybe_shutdown(self, ctx):
         """「跑完关机」：整条龙全部跑完且本趟有实跑任务后，先进关机倒计时——
