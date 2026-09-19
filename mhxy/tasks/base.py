@@ -2,8 +2,9 @@
 """
 任务基类与注册表。
 
-约定：每个任务继承 Task，实现 run(ctx)，并在 run 的循环里频繁检查 ctx.should_stop()。
-任务通过 ctx.log() 输出日志、ctx.window/ctx.mouse 操作游戏，绝不直接引用 GUI。
+约定：每个任务继承 Task，实现 _run(ctx)（run 由基类统一：先确保目标窗口回到主界面，再进 _run；
+若任务启动需要非主界面状态，覆盖 ENSURE_MAIN_ON_START=False 跳过那步），并在 _run 的循环里频繁检查
+ctx.should_stop()。任务通过 ctx.log() 输出日志、ctx.window/ctx.mouse 操作游戏，绝不直接引用 GUI。
 
 Task 基类还提供一组「与玩法无关」的纯工具方法（可被停止的等待、帧差判静止、点区域、
 存截图、抖动、管理员检测），供所有任务复用，避免每个任务各抄一份。
@@ -55,6 +56,9 @@ class Task:
     #   「每窗口一份 record + 单步推进函数」，与本任务自己的 run()/轮转共用同一套状态机。
     #   需跨窗口协作的任务（如组队副本）保持 False，由一条龙当「集体屏障」处理。
     CHAINS_PER_WINDOW = False
+    # True=开跑前先把目标窗口带回主界面（run() 入口统一做；找不到主界面只打日志不拦任务）。
+    #   特殊任务（如拓印「演练」需拓印弹窗已在前台）覆盖为 False，启动时绝不 ESC 关它。
+    ENSURE_MAIN_ON_START = True
 
     # 标定向导（calibrate_dialog）按此 spec 驱动渲染。子类覆盖：
     #   {"regions":  [(key, 显示名, 说明), ...],     # 框选区域，写入 tc["regions"][key]
@@ -63,8 +67,43 @@ class Task:
     CALIBRATION = {"regions": [], "templates": [], "watchlist": False}
 
     def run(self, ctx):
+        """任务入口（子类不要覆盖它）：开跑前先把目标窗口带回主界面（ENSURE_MAIN_ON_START=False 除外），
+        再进 self._run(ctx) 干正事。子类实现 _run 而不是 run。"""
+        if self.ENSURE_MAIN_ON_START:
+            try:
+                self._ensure_main_screen(ctx)
+            except Exception as e:
+                ctx.log(f"启动前确保主界面异常（已忽略，继续）：{e}", level="warn")
+        return self._run(ctx)
+
+    def _run(self, ctx):
         """任务主体。会在后台线程里执行；需自行在循环中检查 ctx.should_stop()。"""
         raise NotImplementedError
+
+    def _ensure_main_screen(self, ctx):
+        """启动前把选中/已绑定的目标窗口带回主界面：已绑定直接用；没绑定先选一个（_acquire_target_window），
+        切前台后走 ui_state.back_to_main_screen 逐层 ESC 关面板直到主界面。失败只打日志，不拦任务。"""
+        from ..ui import ui_state
+        if ctx.window.rect() is None and not self._acquire_target_window(ctx):
+            ctx.log("启动前没有可用窗口，先不确保主界面，任务自行处理。", level="warn")
+            return
+        if not ctx.window.activate():
+            ctx.log("启动前切前台失败，本次跳过确保主界面（任务流程仍继续）。", level="warn")
+            return
+        self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
+        st = ui_state.back_to_main_screen(ctx.cfg, ctx.window)
+        if st is True:
+            ctx.log("已确认在主界面，开跑。", level="info")
+        elif st is None:
+            ctx.log("无法判断主界面（大概率没标定「商城图标」）——可在「通用」页标定公共区域，本次照旧开跑。",
+                    level="warn")
+        else:
+            # 回不去：存一张现场截图，方便核对到底是「面板真没关掉」还是「其实已主界面但商城图标没认到」。
+            rect = ctx.window.rect()
+            scene = win_mod.grab(rect) if rect is not None else None
+            cap = self._save_capture(scene, "main_screen_fail") if scene is not None else None
+            ctx.log(f"未能回到主界面（面板没关掉或商城图标没认到），截图 {cap} 供核对，按任务原流程继续。",
+                    level="warn")
 
     def preflight(self, ctx):
         """启动前自检。返回 (ok: bool, problems: list[str])。默认通过。"""
@@ -113,6 +152,119 @@ class Task:
             if ctx.should_stop():
                 return
             time.sleep(min(0.05, max(0.0, end - time.time())))
+
+    def _find_join_ready(self, ctx, rec, list_region, entry_xy, threshold, loop, entry_tpl=None):
+        """找「参加」按钮。认出卡片但按钮没匹配上，最常见原因是卡片贴着列表区域上/下缘只露了半张、
+        按钮那半在裁剪线外（或按钮与条目中心有纵向错位、没进查找条带）。别猜精确几何：只要没找到
+        按钮，就朝「让被裁那半滚进来」的方向微滚一格再找（方向按条目在区域上/下半区粗判），返回
+        "nudged" 让调用方原地重试；连续微滚 nudge_max 次仍找不着 → 返回 None 交由调用方告警一次+
+        原地重试（scroll_search 的 STAY）。微滚计数记在 rec['_nudges']，命中/切到新屏即归零。
+        子类须已实现 _find_join_on_row。返回：命中=(x,y,score)；微滚过="nudged"；否则 None。"""
+        rec.setdefault("_join_warned", False)
+        join = self._find_join_on_row(ctx, list_region, entry_xy, threshold, loop)
+        if join is not None:
+            rec["_nudges"] = 0
+            return join
+        if rec.setdefault("_nudges", 0) < loop.get("nudge_max", 4):
+            dirn = self._join_clip_dir(ctx, list_region, entry_xy, entry_tpl)
+            if dirn is not None:
+                rec["_nudges"] += 1
+                self._nudge_list(ctx, list_region, dirn, loop)
+                return "nudged"
+            # 条目在区域内完整显示仍找不到按钮：不计入连拍（归零），由调用方告警+原地重试
+            rec["_nudges"] = 0
+        return None
+
+    def _find_join_in_column(self, ctx, list_region, entry_screen_xy, threshold, loop,
+                             join_tpl, entry_tpl=None):
+        """按「整列找参加按钮、取离卡片行最近那枚」定位——比纵向窄条裁剪稳得多。命中返回
+        (screen_x, screen_y, score)，否则 None。
+
+        旧法只搜「条目中心上下 ±条带高」的窄条，但游戏里卡片「参加」按钮常与图标/文字条带
+        有 ~20px 级纵向错位（按钮贴卡片中下部），错位稍大按钮就整枚漏在条带外（实测即此）。
+        这里改为：在条目所在【整列】里用 match_multi 枚举全部 join 模板命中（阈值取
+        max(threshold, 0.7) 滤掉背景噪声——实测真按钮 0.90+，噪点 ~0.38），按「垂直距离
+        离条目中心最近的按钮」取目标，且距离须 ≤ max_follow（≈0.55×该列行距中位数、下限
+        60px）——超出容差 = 该行按钮不在可视区（卡片贴列表边缘被裁/按钮状态不同），返回
+        None 交由上层微滚或告警。整列裁剪只扫条目所在列，天然满足「卡片列内找、不跨列点
+        右邻」。"""
+        if join_tpl is None:
+            ctx.log("找「参加」失败：join 模板未标定。", level="warn")
+            return None
+        rect = (ctx.window.region_to_screen_rect(list_region)
+                if list_region else ctx.window.rect())
+        if rect is None:
+            return None
+        scene = win_mod.grab(rect)
+        if scene is None:
+            return None
+        rx, ry = rect[0], rect[1]
+        sw, sh = scene.shape[1], scene.shape[0]
+        ex_local = int(entry_screen_xy[0] - rx)
+        ey_local = int(entry_screen_xy[1] - ry)
+        cols = max(1, int(loop.get("activity_columns", 2)))
+        col_w = sw / cols
+        col_idx = min(cols - 1, max(0, int(ex_local // col_w)))
+        x0 = max(0, int(round(col_idx * col_w)))
+        x1 = min(sw, int(round((col_idx + 1) * col_w)))
+        if x1 - x0 < 1:
+            return None
+        col = scene[:, x0:x1]
+        lo_thr = max(float(threshold), 0.7)
+        hits = vision.match_multi(col, join_tpl, lo_thr, max_hits=64, sort_origin_top_left=True)
+        if not hits:
+            return None
+        ys = sorted(h[1] for h in hits)
+        gaps = sorted(ys[i + 1] - ys[i] for i in range(len(ys) - 1))
+        gap = gaps[len(gaps) // 2] if gaps else 0
+        max_follow = max(60.0, float(gap) * 0.55)
+        best, best_d = None, None
+        for (cx, cy, s) in hits:
+            d = abs(cy - ey_local)
+            if best_d is None or d < best_d:
+                best, best_d = (cx, cy, s), d
+        if best is None or best_d > max_follow:
+            return None
+        cx, cy, s = best
+        return (rx + x0 + cx, ry + cy, s)
+
+    def _join_clip_dir(self, ctx, list_region, entry_screen_xy, entry_tpl):
+        """判定条目是否可能贴着列表区域上/下缘被裁剪，给出微滚方向：
+        "top"=向上滚(露出上一行) / "bottom"=向下滚(露出下一行) / None。
+        阈值放宽到两行高（条目模板常很小、缺口比一行宽就漏判了）：条目中心距上/下缘 < 两行高
+        即认为可能被裁；方向按条目在区域上下哪个半区决定（贴下缘多半向下滚、贴上缘多半向上滚）。"""
+        rect = (ctx.window.region_to_screen_rect(list_region)
+                if list_region else ctx.window.rect())
+        if rect is None:
+            return None
+        scene = win_mod.grab(rect)
+        if scene is None:
+            return None
+        sh = scene.shape[0]
+        if sh < 1:
+            return None
+        row_h = entry_tpl.shape[0] if entry_tpl is not None else 40
+        margin = max(40, int(row_h * 2))
+        ey_local = int(entry_screen_xy[1] - rect[1])
+        near_top = ey_local < margin
+        near_bot = sh - ey_local < margin
+        if not near_top and not near_bot:
+            return None
+        return "top" if ey_local <= sh // 2 else "bottom"
+
+    def _nudge_list(self, ctx, list_region, dirn, loop):
+        """把列表朝「让越界那半滚进来」的方向微滚一格。dirn: 'top'=向上滚（露出上一行），
+        'bottom'=向下滚（露出下一行）。格数取 nudge_step（默认同 scroll_step 幅值）。"""
+        rect = (ctx.window.region_to_screen_rect(list_region)
+                if list_region else ctx.window.rect())
+        if rect is None:
+            return
+        cx, cy = rect[0] + rect[2] // 2, rect[1] + rect[3] // 2
+        step = int(loop.get("nudge_step", abs(int(loop.get("scroll_step", -3)))))
+        step = 1 if step < 1 else step
+        delta = -step if dirn == "bottom" else step
+        ctx.log(f"卡片贴着列表边缘({dirn})，微滚 {step} 格把被裁那半露出再找「参加」…", level="info")
+        ctx.mouse.scroll(delta, cx, cy)
 
     def _make_rotation(self, ctx, records, step_fn, multi, switch_delay, tick, time_limit=0):
         """把「逐号 activate 切前台 + 非阻塞状态机推进」这套多开轮转包成 rotation.RotationConfig。

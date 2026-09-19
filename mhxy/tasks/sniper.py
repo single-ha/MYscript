@@ -52,7 +52,7 @@ class SniperTask(Task):
                             "，请先打开游戏并在「选择窗口」里选好")
         return (len(problems) == 0), problems
 
-    def run(self, ctx):
+    def _run(self, ctx):
         tc = ctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]

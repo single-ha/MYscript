@@ -85,9 +85,19 @@ class GuildCheckinPage(ctk.CTkFrame):
         hint.grid(row=1, column=0, sticky="ew", padx=16, pady=(2, 8))
         bind_wraplength(hint)
 
+        ctk.CTkLabel(left, text="运行参数", font=self.fonts["h2"], text_color=T.TEXT).grid(
+            row=2, column=0, sticky="w", padx=16, pady=(10, 6))
+        cnt = ctk.CTkFrame(left, fg_color="transparent")
+        cnt.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 6))
+        ctk.CTkLabel(cnt, text="等「福利」页签/「签到」按钮超时(秒，超时只跳过当前号)", font=self.fonts["body"],
+                     text_color=T.TEXT).pack(side="left")
+        self.var_timeout = ctk.StringVar(value="30")
+        ctk.CTkEntry(cnt, textvariable=self.var_timeout, width=70, font=self.fonts["body"],
+                     fg_color=T.SURFACE_2, border_color=T.BORDER).pack(side="left", padx=(8, 0))
+
         self.lbl_calib = ctk.CTkLabel(left, text="", font=self.fonts["small"], text_color=T.TEXT_DIM,
                                       justify="left")
-        self.lbl_calib.grid(row=2, column=0, sticky="ew", padx=16, pady=(2, 14))
+        self.lbl_calib.grid(row=4, column=0, sticky="ew", padx=16, pady=(2, 14))
         bind_wraplength(self.lbl_calib)
 
         # 日志已统一到 App 右侧的全局日志面板，本页不再单独建日志框。
@@ -96,6 +106,7 @@ class GuildCheckinPage(ctk.CTkFrame):
     def refresh(self):
         self.app.cfg = cfg_mod.load_config()
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
+        self.var_timeout.set(str(tc.get("loop", {}).get("step_timeout_sec", 30)))
         templates = tc.get("templates", {})
         spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
         need_t = required_templates(spec)
@@ -112,6 +123,7 @@ class GuildCheckinPage(ctk.CTkFrame):
             self.btn_run.configure(text="停止中…", state="disabled")
             return
         self.app.cfg = cfg_mod.load_config()
+        self._apply_params()
         task_cls = get_task(self.TASK_NAME)
         self.runner = TaskRunner(task_cls(), self.app.cfg)
         ok, problems = self.runner.start()
@@ -121,6 +133,19 @@ class GuildCheckinPage(ctk.CTkFrame):
             self.runner = None
             return
         self.btn_run.configure(text="■  停止", fg_color=T.DANGER, hover_color=T.DANGER_HOVER, state="normal")
+
+    def _apply_params(self):
+        """启动前把「运行参数」里可调项（等待超时）写回配置。"""
+        cfg = cfg_mod.load_config()
+        tc = cfg_mod.task_config(cfg, self.TASK_NAME)
+        loopc = tc.setdefault("loop", {})
+        try:
+            loopc["step_timeout_sec"] = max(1, round(float(self.var_timeout.get())))
+        except (TypeError, ValueError):
+            pass
+        cfg_mod.set_task_config(cfg, self.TASK_NAME, tc)
+        cfg_mod.save_config(cfg)
+        self.app.cfg = cfg
 
     def _on_runner_finished(self):
         self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,

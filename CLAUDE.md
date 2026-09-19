@@ -64,8 +64,10 @@ mhxy/
     base.py     Task 基类 + 注册表（register/get_task/all_tasks）+ _make_rotation()（包多开轮转）+ dungeon_tasks()
     sniper.py   SniperTask（秒装备）：preflight() 自检 + run() 主循环；刷新=每轮重进货架 _enter_shelf()
     escort.py        EscortTask（运镖）：开活动→参加→押送普通镖银→循环押满次数
-    treasure_map.py  TreasureMapTask（宝图）：开活动→自动判是否已有宝图(找不到「参加」=已有,
+    treasure_map.py  TreasureMapTask（宝图）：开活动→自动判是否已有宝图(找不到「参加」或翻完全列表没认出卡片=已有,
                       跳过领取直接挖)→收图/挖宝 领奖 两阶段状态机
+    appreciation.py AppreciationTask（趣味鉴赏）：开活动→参加→匹配并点击心形图案，点满 target_clicks 或鉴赏
+                      超时即停；当前屏没匹配到就在「图文列表区域」滚动再找（滚动只在该区内，反向滚回防漏）
     secret_realm.py  SecretRealmTask（秘境降妖）：开活动→参加→挑战→盯「进入战斗」续战，可连跑 max_runs 轮
     dungeon.py       DungeonTask（组队/一键组队）：把所选多开窗口组成一队即停（通用页「一键组队」跑它，
                       角色参数存共享 tasks.teaming）。name 仍叫 "dungeon" 仅为兼容；刷副本页跑的是选中副本而非它。
@@ -156,7 +158,7 @@ mhxy/
     同文件还有**标志判定 `ui_state.is_present(scene, flags, flag_key, threshold)`**（通用 `_present`：场景里找到该标志模板=True，
     缺失/没找到=False 不抛错）——战斗标识 `battle_flag` 判定即走它（运镖/宝图/秘境），各任务不再各自复制 `_present`。
 - **日常一条龙分「个人/多人」两区（user 拍板，2026-09-07）**：`tasks/daily.py` 里
-  `CHAINABLE_SINGLE`=个人组（宝图/运镖/秘境/三界奇缘/帮派签到/活跃度奖励，每窗口独立链）、
+  `CHAINABLE_SINGLE`=个人组（宝图/运镖/秘境/三界奇缘/帮派签到/活跃度奖励/趣味鉴赏，每窗口独立链）、
   `MULTI_BARRIER`=多人组（刷副本/抓鬼，集体屏障：所有活跃号停靠同一步等齐→组队→队长跑→放行）。
   `group_of(name)` 由任务名判定分组；**steps 全局有序=执行顺序**（按 `tasks.daily.group_order` 两段拼接，
   界面「⇅ 两区互换」整段对调、组内保留）。**整组开关 `tasks.daily.group_enabled`**（{single,multi}→bool，缺省

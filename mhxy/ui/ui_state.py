@@ -2,11 +2,13 @@
 """
 界面状态判定（与玩法无关，所有任务通用）。
 
-提供两个判定：
+提供三个判定/动作：
   · is_main_screen()——主界面判定：在窗口画面里找「商城图标」模板，找到=当前是主界面
     （商城/活动图标在「通用」页→标定（公共区域）里标，tasks.shared.templates，见 MAIN_ICON_TPL_KEYS）。
   · is_present()——「标志是否在画面里」判定：任务级通用（如 battle_flag 战斗标志），
     运镖/宝图/秘境等都共用这一份，不再各任务复制 _present。
+  · back_to_main_screen()——「确保回到主界面」：已在主界面直接返回，否则反复按 ESC 关面板
+    直到回主界面；回不去/无法判断时返回 False/None 交调用方兜底。
 
 用法（任务内）：
     from ..ui import ui_state
@@ -14,9 +16,14 @@
         已回主界面…
     if ui_state.is_present(scene, self.flags, "battle_flag", threshold):
         正在战斗（战斗期暂停「静止/结束」判定）…
+    if ui_state.back_to_main_screen(cfg, ctx.window):
+        已确保回到主界面（原不在主界面则逐层 ESC 关掉弹窗/活动/背包）…
 """
 
+import time
+
 from ..core import config as cfg_mod
+from ..core import input as input_mod
 from ..core import vision
 from ..core import window as win_mod
 
@@ -76,3 +83,31 @@ def is_main_screen(cfg, window, threshold=0.8, region=None):
     if scene is None:
         return None
     return vision.match(scene, tpl, threshold) is not None
+
+
+def back_to_main_screen(cfg, window, max_tries=6, settle=0.6, threshold=0.8):
+    """确保回到主界面：已在主界面直接返回 True，否则反复按 ESC（SendInput）关面板直到回主界面。
+
+    cfg: 整份配置（透传给 is_main_screen）。
+    window: core/window.GameWindow 实例。
+    max_tries: 最多按几层 ESC 还回不去就当失败（默认 6）。
+    settle: 每次按 ESC 后等画面落定的秒数。
+    threshold: 主界面判定门槛（透传 is_main_screen，默认 0.8）。
+
+    返回：
+      True  = 已回主界面（含一开始就在）
+      False = 连按 max_tries 次 ESC 还没在主界面（多半有模态弹窗关不掉、或商城图标没认到）
+      None  = 无法判断（shop_icon 未标定 / 窗口没定位 / 抓图失败）——与 is_main_screen 一致，
+              不去盲按 ESC，交调用方兜底。
+    """
+    keyboard = input_mod.Mouse()
+    for _ in range(max(1, max_tries)):
+        st = is_main_screen(cfg, window, threshold=threshold)
+        if st is True:
+            return True
+        if st is None:
+            return None
+        # 不在主界面 → 按 ESC 关掉当前面板一层，等画面落定再判
+        keyboard.press_key("esc")
+        time.sleep(max(0.1, settle))
+    return False

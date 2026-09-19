@@ -28,6 +28,7 @@ _DUNGEON_NS = "dungeon"
 class TuoyingTask(Task):
     name = "tuoying"
     title = "拓印"
+    ENSURE_MAIN_ON_START = False  # 演练需要拓印弹窗已在前台，启动时绝不 ESC 关它
     description = "刷副本「拓印」临摹弹窗的自动描摹能力；这里可单独演练描一遍"
 
     CALIBRATION = {
@@ -53,7 +54,7 @@ class TuoyingTask(Task):
             problems.append("没选到任何目标窗口 —— 请先「选择窗口」")
         return (len(problems) == 0), problems
 
-    def run(self, ctx):
+    def _run(self, ctx):
         tc = ctx.task_cfg(_NS)
         loop = (ctx.task_cfg(_DUNGEON_NS).get("loop", {}) or {})
         dry_run = tc.get("dry_run", True)

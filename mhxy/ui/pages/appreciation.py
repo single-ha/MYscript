@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""三界奇缘页（开活动→参加→答题循环，识别到完成字样即停）。独立页面类，由 App 统一导入（App.PAGE_CLASSES）。"""
+"""趣味鉴赏页（开活动→参加→匹配并点击心形图案，点满次数或超时即停）。独立页面类，由 App 统一导入（App.PAGE_CLASSES）。"""
 
 import customtkinter as ctk
 
@@ -7,13 +7,13 @@ from .. import theme as T
 from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
-from ..common import Card, bind_wraplength, calib_status, required_regions, required_templates, optional_templates
+from ..common import Card, bind_wraplength, calib_status, required_regions, required_templates
 
 
-class SanjiePage(ctk.CTkFrame):
-    TASK_NAME = "sanjie"
-    LOG_SOURCE = "奇缘"
-    RUN_LABEL = "▶  开始三界奇缘"
+class AppreciationPage(ctk.CTkFrame):
+    TASK_NAME = "appreciation"
+    LOG_SOURCE = "趣味鉴赏"
+    RUN_LABEL = "▶  开始趣味鉴赏"
 
     def __init__(self, master, app):
         super().__init__(master, fg_color="transparent")
@@ -34,9 +34,9 @@ class SanjiePage(ctk.CTkFrame):
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.grid(row=0, column=0, sticky="ew", padx=4, pady=(2, 14))
         bar.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(bar, text="三界奇缘", font=self.fonts["title"], text_color=T.TEXT).grid(
+        ctk.CTkLabel(bar, text="趣味鉴赏", font=self.fonts["title"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w")
-        sub = ctk.CTkLabel(bar, text="开活动→参加→直接进答题→任意点选项（自动进下一题）→识别到完成字样即停（支持多开逐号轮转）",
+        sub = ctk.CTkLabel(bar, text="开活动→参加→匹配并点击心形图案，点满设定次数或超时自动结束",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
         sub.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         bind_wraplength(sub)
@@ -68,7 +68,7 @@ class SanjiePage(ctk.CTkFrame):
     def _build_body(self):
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(row=2, column=0, sticky="nsew", padx=4)
-        body.grid_columnconfigure(0, weight=1)
+        body.grid_columnconfigure(0, weight=1)   # 日志已移到全局右栏，主体内容独占整宽
         body.grid_rowconfigure(0, weight=1)
 
         # 左：运行参数 + 标定状态
@@ -80,18 +80,26 @@ class SanjiePage(ctk.CTkFrame):
 
         cnt = ctk.CTkFrame(left, fg_color="transparent")
         cnt.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 6))
-        ctk.CTkLabel(cnt, text="时间上限(分钟，0=不限)", font=self.fonts["body"],
+        ctk.CTkLabel(cnt, text="心形图案点击次数（点满即停）", font=self.fonts["body"],
                      text_color=T.TEXT).pack(side="left")
-        self.var_limit = ctk.StringVar(value="30")
-        ctk.CTkEntry(cnt, textvariable=self.var_limit, width=70, font=self.fonts["body"],
+        self.var_clicks = ctk.StringVar(value="5")
+        ctk.CTkEntry(cnt, textvariable=self.var_clicks, width=70, font=self.fonts["body"],
                      fg_color=T.SURFACE_2, border_color=T.BORDER).pack(side="left", padx=(8, 0))
 
-        hint = ctk.CTkLabel(left, text="点「参加」后直接进答题界面：脚本对每道题点任意一个选项，点完自动跳下一题（答错无所谓）。\n"
-                               "识别到「完成」标志（今日已答完/次数用完等字样）即自动停；模板认不出选项按钮时，会在\n"
-                               "已标定的「答题选项区域」按网格盲点+画面反馈作答（点一下画面有变=答中）。\n"
-                               "鼠标甩到屏幕角落可紧急停止。",
+        lim = ctk.CTkFrame(left, fg_color="transparent")
+        lim.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 6))
+        ctk.CTkLabel(lim, text="时间上限(分钟，0=不限)", font=self.fonts["body"],
+                     text_color=T.TEXT).pack(side="left")
+        self.var_limit = ctk.StringVar(value="30")
+        ctk.CTkEntry(lim, textvariable=self.var_limit, width=70, font=self.fonts["body"],
+                     fg_color=T.SURFACE_2, border_color=T.BORDER).pack(side="left", padx=(8, 0))
+
+        hint = ctk.CTkLabel(left, text="进入鉴赏界面后：在「图文列表区域」里匹配「心形图案」并点击；\n"
+                               "当前屏没匹配到就自动在该区域滚动再找。\n"
+                               "结束条件：点击次数达标 或 鉴赏超时（默认120秒）。时间上限只是安全网。\n"
+                               "鼠标甩到屏幕右上角可紧急停止。",
                      font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
-        hint.grid(row=2, column=0, sticky="ew", padx=16, pady=(2, 8))
+        hint.grid(row=3, column=0, sticky="ew", padx=16, pady=(2, 8))
         bind_wraplength(hint)
 
         self.lbl_calib = ctk.CTkLabel(left, text="", font=self.fonts["small"], text_color=T.TEXT_DIM,
@@ -106,18 +114,15 @@ class SanjiePage(ctk.CTkFrame):
         self.app.cfg = cfg_mod.load_config()
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         loopc = tc.get("loop", {})
+        self.var_clicks.set(str(loopc.get("target_clicks", 5)))
         self.var_limit.set(str(loopc.get("time_limit_min", 30)))
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
         spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
-        need_r = required_regions(spec)   # 三界奇缘自身无区域；公共区域（活动列表）在「通用」页统一标定
+        need_r = required_regions(spec)   # scene 可留空、公共区域在「通用」页统一标定
         need_t = required_templates(spec)
-        opt_tpl = optional_templates(spec)
-        opt_ok = bool(templates.get("qq_option")) or bool(loopc.get("answer_pos")) or bool(regions.get("answer_area"))
         _ready, txt, color = calib_status(regions=regions, templates=templates, task_name=self.TASK_NAME,
-                                          region_keys=need_r, tpl_keys=need_t, tpl_opt_keys=opt_tpl,
-                                          extra=("" if opt_ok else "，答题选项模板/固定点位/选项区域至少一个"),
-                                          extra_ready=opt_ok)
+                                          region_keys=need_r, tpl_keys=need_t)
         self.lbl_calib.configure(text=txt, text_color=color)
 
     # ---- 运行控制 ----
@@ -140,10 +145,14 @@ class SanjiePage(ctk.CTkFrame):
         self.btn_run.configure(text="■  停止", fg_color=T.DANGER, hover_color=T.DANGER_HOVER, state="normal")
 
     def _apply_params(self):
-        """启动前把「运行参数」里可调项（时间上限）写回配置。"""
+        """启动前把「运行参数」里可调项（点击次数 / 时间上限）写回配置。"""
         cfg = cfg_mod.load_config()
         tc = cfg_mod.task_config(cfg, self.TASK_NAME)
         loopc = tc.setdefault("loop", {})
+        try:
+            loopc["target_clicks"] = max(1, int(float(self.var_clicks.get())))
+        except (TypeError, ValueError):
+            pass
         try:
             loopc["time_limit_min"] = max(0.0, round(float(self.var_limit.get()), 1))
         except (TypeError, ValueError):

@@ -70,7 +70,7 @@ class OrganizeBagTask(Task):
             problems.append("没选到任何目标窗口 —— 请先「选择窗口」")
         return (len(problems) == 0), problems
 
-    def run(self, ctx):
+    def _run(self, ctx):
         tc = ctx.task_cfg(_NS)
         dry_run = tc.get("dry_run", True)
         wins = ctx.select_windows()

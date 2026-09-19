@@ -61,7 +61,7 @@ _STILL_DIFF = 8.0   # 帧差低于此视为画面静止（人物不动）的默�
 # 必备模板（缺失则 preflight 阻断）与可选模板（缺失仅 warn）
 #   flag_join=活动列表里「宝图任务」那一行右侧的「参加」按钮——按行匹配点它（不是点条目本身）。
 _FLAG_KEYS = ["flag_treasure_entry", "flag_join", "flag_tingting",
-              "battle_flag", "flag_next_map", "treasure_item"]
+              "battle_flag", "flag_next_map", "treasure_item", "flag_bag_arrange"]
 # 必备模板（缺失则 preflight 阻断）：battle_flag 虽不点它，但「静止判定」要在战斗期暂停——
 # 不标它一进战斗就被误判（收集提前完成/挖完），故必标。走公共共享模板 tasks.shared.templates.battle_flag
 # （「通用」页「标定（公共区域）」标定，全任务共用），task_config 已把它叠加进本任务 templates。
@@ -87,6 +87,7 @@ class TreasureMapTask(Task):
             ("flag_tingting", "「听听无妨」选项", "和 NPC 对话弹框里要点的那个选项"),
             ("flag_next_map", "「下一张使用」按钮", "挖完一张后游戏自动弹出的继续按钮"),
             ("treasure_item", "藏宝图道具", "背包里藏宝图那个图标的样子"),
+            ("flag_bag_arrange", "背包「整理」按钮", "打开背包后那个「整理」按钮。每次回开背包确认前先点它让道具归位（可选，找不到就跳过）", True),
             # 战斗界面标志已移到「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
         ],
         "watchlist": False,
@@ -128,7 +129,7 @@ class TreasureMapTask(Task):
         return (len(problems) == 0), problems
 
     # ------------------------------------------------------------------
-    def run(self, ctx):
+    def _run(self, ctx):
         tc = ctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]
@@ -399,6 +400,19 @@ class TreasureMapTask(Task):
             return
         ctx.log("打开背包，翻找藏宝图…")
         self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 打开背包后先点一下「整理」让道具归位（藏宝图排到前面，翻找更稳）；模板未标定则静默跳过，
+        # 标定了却找不到（界面没这个按钮）才提示。
+        arrange_tpl = self.flags.get("flag_bag_arrange")
+        if arrange_tpl is not None:
+            scene_rect = self._scene_rect(ctx, regions)
+            cur = win_mod.grab(scene_rect)
+            hit = self._match_scene(cur, scene_rect, "flag_bag_arrange", threshold)
+            if hit is not None:
+                ctx.mouse.click(hit[0], hit[1])
+                ctx.log(f"背包「整理」点了一下（{hit[2]:.3f}）。")
+                self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
+            else:
+                ctx.log("背包「整理」按钮没找到，跳过整理。", level="warn")
         rec["phase_b"] = True
         rec["scrolls"] = 0
         self._goto(rec, S_DIG_FIND)
@@ -613,7 +627,8 @@ class TreasureMapTask(Task):
         是否已有宝图走运行期自动判，故阶段A(宝图入口/参加/听听无妨)与阶段B(下一张/藏宝图)标志全自检。"""
         keys = [("flag_treasure_entry", "宝图入口"), ("flag_join", "参加按钮"),
                 ("flag_tingting", "听听无妨"), ("battle_flag", "战斗"),
-                ("flag_next_map", "下一张使用"), ("treasure_item", "藏宝图")]
+                ("flag_next_map", "下一张使用"), ("treasure_item", "藏宝图"),
+                ("flag_bag_arrange", "整理按钮")]
         while not ctx.should_stop():
             if deadline and time.time() >= deadline:
                 ctx.log("演练时间上限到，停止。")

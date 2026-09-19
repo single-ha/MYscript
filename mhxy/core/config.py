@@ -56,6 +56,7 @@ TASK_SHARED_REQ = {
     "sanjie": ("activity_list",),
     "zhuagui": ("activity_list",),
     "treasure_map": ("activity_list", "bag_list"),
+    "appreciation": ("activity_list",),
     "dungeon": ("activity_list",),
 }
 
@@ -114,6 +115,8 @@ def _mk_dungeon_shared():
                                           #   才算通过（防止上传后界面一闪即认定成功、实则第二遍还等着描）
             "enter_check_sec": 10.0,     # 普通副本点「进入」后验证已进本的时长（出现结算/跳过剧情等即算进）；超时重试点「进入」
             "scroll_step": -3,           # 活动列表每次滚轮格数(负=向下翻)
+            "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
+            "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
             "scroll_max_tries": 8,       # 活动列表最多翻几屏找副本卡片
             "scroll_settle_sec": 0.35,   # 每滚一屏后等画面落定再重找的间隔(带抖动)
             "scroll_reset_top": True,    # 翻找前先把列表滚到顶
@@ -282,7 +285,6 @@ DEFAULT_CONFIG = {
                 "collect_idle_sec": 4.0,     # 收集阶段：人物连续静止这么久且非战斗非对话→判定收集完成
                 "activity_timeout_sec": 30,  # 开活动→找到宝图入口的超时
                 "dialog_timeout_sec": 30,    # 等 NPC 对话框出现的超时
-                "collect_timeout_sec": 600,  # 整个收集阶段上限（自动战斗可能很久，给足）
                 "dig_timeout_sec": 120,      # 单张挖宝（含战斗）超时
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
                 "scroll_max_tries": 8,       # 滑动找目标最多翻几屏，超了仍没找到→兜底
@@ -308,7 +310,8 @@ DEFAULT_CONFIG = {
                 "flag_join": None,           # 「宝图任务」那一行右侧的「参加」按钮（按行匹配点它）
                 "flag_tingting": None,       # 对话框「听听无妨」选项
                 "flag_next_map": None,       # 挖完弹出的「下一张使用」按钮
-                "treasure_item": None        # 背包里藏宝图道具图标（双击用图靠它定位）
+                "treasure_item": None,       # 背包里藏宝图道具图标（双击用图靠它定位）
+                "flag_bag_arrange": None     # 背包「整理」按钮（可选：回开背包确认前点一下让道具归位）
             }
         },
 
@@ -328,6 +331,8 @@ DEFAULT_CONFIG = {
                 "still_min_sec": 0.3,        # 帧差判静止：最短先等
                 "still_wait_sec": 2.0,       # 帧差判静止：单次最长等/超时
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
+                "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
+                "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
                 "scroll_max_tries": 8,       # 滑动找「运镖」最多翻几屏
                 "scroll_settle_sec": 0.35,   # 每滚一屏后等画面落定再重找的间隔（带抖动）；
                                              #   滚轮查找在同一个号上一气呵成跑完，故需自等画面静止
@@ -369,6 +374,8 @@ DEFAULT_CONFIG = {
                 "still_min_sec": 0.3,        # 帧差判静止：最短先等
                 "still_wait_sec": 2.0,       # 帧差判静止：单次最长等/超时
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
+                "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
+                "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
                 "scroll_max_tries": 8,       # 滑动找卡片最多翻几屏
                 "scroll_settle_sec": 0.35,   # 每滚一屏后等画面落定再重找的间隔（带抖动）；
                                              #   滚轮查找在同一个号上一气呵成跑完，故需自等画面静止
@@ -403,10 +410,18 @@ DEFAULT_CONFIG = {
             "loop": {
                 "time_limit_min": 30,        # 时间上限（分钟）安全网，0=不限
                 "match_threshold": 0.85,     # 标志模板匹配阈值
-                "answer_idle_sec": 15,       # 答题循环里长时间找不到选项按钮（答题界面可能已关）就按结束处理
+                "answer_idle_sec": 30,       # 答题循环里长时间找不到选项按钮就先进「结束确认」缓冲（见下），缓冲后仍无才按结束处理
+                "answer_idle_verify_sec": 10,  # 「结束确认」缓冲秒数：空闲超时后不急着收尾，这段时间里继续找选项/完成标志，
+                                                #   选项重现就续答（题间过渡动画/多开切前台会短暂不见选项，防止误判结束）
                 "answer_pos": None,          # 不标定选项模板时的固定点位 [fx, fy]（答题选项在 scene 内的相对坐标 0~1）；有模板时可留空
+                "answer_grid_rows": 4,       # 盲点兜底：在「答题选项区域」里竖向网格候选数（模板认不出选项时按网格盲点+画面反馈作答）
+                "answer_grid_cols": 2,       # 盲点兜底：横向网格候选数（同题选项通常竖向排列，横向 2 列可覆盖两列布局）
+                "answer_click_diff": 10.0,   # 盲点兜底：点一下后该区域像素平均差>此值=画面变了=答中进下一题；偏大更保守(防动画误判)
+                "answer_click_settle_sec": 0.8,  # 盲点兜底：点一下后等画面落定再对比的间隔（带抖动）
                 "tick_interval_sec": 0.5,    # 多开轮转节拍：所有号各推进一步后的间隔（带抖动）
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
+                "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
+                "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
                 "scroll_max_tries": 8,       # 滑动找卡片最多翻几屏
                 "scroll_settle_sec": 0.35,   # 每滚一屏后等画面落定再重找的间隔（带抖动）
                 "scroll_reset_top": True,    # 翻找前先把列表滚到顶，保证向下扫一遍能覆盖整段(不漏上半截)
@@ -418,6 +433,7 @@ DEFAULT_CONFIG = {
             },
             "regions": {                 # 相对游戏窗口 [x,y,w,h]，标定向导写入
                 "scene": None,           # 主识别区（整窗或大半屏，所有 flag 都在这里找）
+                "answer_area": None,     # 答题选项区域（模板认不出选项时的盲点兜底区；圈住选项所在整片，不必框准单个按钮）
                 "activity_list": None    # 活动列表区域（滚轮在此找三界奇缘卡片）
             },
             "templates": {               # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
@@ -426,6 +442,40 @@ DEFAULT_CONFIG = {
                 "qq_option": None,           # 答题界面里任意一个选项按钮（脚本点它作答本道题）
                 "qq_done": None,             # 答题「完成」标志（今日已答完/次数用完等字样），识别到即停
                 "qq_close": None             # 答题结束后的「关闭」按钮（可选）
+            }
+        },
+
+        # ---- 趣味鉴赏（点爱心玩法：开活动→参加→匹配并点心形图案，点满 N 次或超时即停）----
+        "appreciation": {
+            "dry_run": True,             # true=演练：只识别+打日志，不发快捷键/不点关键操作
+            "loop": {
+                "time_limit_min": 30,        # 时间上限（分钟）安全网，0=不限
+                "match_threshold": 0.85,     # 标志模板匹配阈值
+                "target_clicks": 5,          # 点击心形图案的目标次数，点满即停
+                "heart_timeout_sec": 120,    # 鉴赏环节超时（秒）：这么久没点满也收尾该号
+                "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
+                "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
+                "scroll_wait_sec": 0.8,      # 当前屏没匹配到心形图案后，等这么久才开始滚动（防刚点完画面未落定就滚）
+                "tick_interval_sec": 0.5,    # 多开轮转节拍：所有号各推进一步后的间隔（带抖动）
+                "scroll_step": -3,           # 图文列表区每次滚轮格数（负=向下翻）
+                "scroll_max_tries": 10,      # 滚动找心形图案：连续滚这么多屏还没找到就反向滚回重找
+                "scroll_settle_sec": 0.35,   # 找活动卡片时每滚一屏后等画面落定再重找的间隔（带抖动）
+                "scroll_reset_top": True,    # 翻找卡片前先把列表滚到顶，保证向下扫一遍能覆盖整段(不漏上半截)
+                "scroll_end_diff": 2.0,      # 滚一屏后该区域帧差<此值=列表滚不动了(到顶/到底)，据此判「整段翻完」；偏小更保守(动画/高亮时退回 max_tries)
+                "scroll_reset_max": 20,      # 「滚到顶」最多上滚几屏的防死循环上限
+                "activity_columns": 2,       # 活动列表每排几张卡片：找「参加」只在条目所属那一列内，
+                                             #   避免两张卡片一排时扫到右邻卡片、点错右边的「参加」
+                "max_stuck_recover": 3       # 连续卡死多少次就主动停
+            },
+            "regions": {                 # 相对游戏窗口 [x,y,w,h]，标定向导写入
+                "scene": None,           # 主识别区（整窗或大半屏）
+                "appr_region": None,     # 鉴赏界面里心形图案所在的「图文列表区域」（心形在此匹配、滚动也在此）
+                "activity_list": None    # 活动列表区域（滚轮在此找趣味鉴赏卡片）
+            },
+            "templates": {               # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
+                "appr_entry": None,          # 活动列表里要点「参加」的那张「趣味鉴赏」卡片
+                "appr_join": None,           # 那张卡片右侧的「参加」按钮（按行匹配点它）
+                "appr_heart": None           # 鉴赏界面里要点击的「心形图案」（没它就在图文列表区域滚动找）
             }
         },
 
@@ -441,6 +491,8 @@ DEFAULT_CONFIG = {
                 "nav_double_gap_sec": 0.3,   # 点任务条目需连点两次：两次点击的间隔（首击会被当聚焦吞掉）
                 "battle_timeout_sec": 2400,  # 一场战斗超时：挂够这么久没打完视为异常（默认 40 分钟）
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
+                "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
+                "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
                 "scroll_max_tries": 8,       # 滑动找卡片最多翻几屏
                 "scroll_settle_sec": 0.35,   # 每滚一屏后等画面落定再重找的间隔（带抖动）
                 "scroll_reset_top": True,    # 翻找前先把列表滚到顶，保证向下扫一遍能覆盖整段(不漏上半截)

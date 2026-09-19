@@ -39,8 +39,8 @@ from .dungeon_base import DUNGEON_NS
 
 # 可进一条龙的任务（这些都有明确「完成条件」、会自动结束）。秒装备 sniper 不在此列。
 # 个人组：每窗口独立链（各自都能经 make_chain_driver 逐窗口跑）。
-CHAINABLE_SINGLE = ["treasure_map", "escort", "secret_realm", "sanjie",
-                    "guild_checkin", "activity_reward"]
+CHAINABLE_SINGLE = ["treasure_map", "secret_realm", "escort", "sanjie",
+                    "guild_checkin", "activity_reward", "appreciation"]
 # 多人组：跨窗口协作，作为「集体屏障」——各号走到该步停靠，汇合齐才集体跑一次。
 # "dungeon" 是「刷副本」中枢步：跑时解析成 tasks.dungeon.selected 选中的那个副本（见 _resolve）。
 MULTI_BARRIER = ["dungeon", "zhuagui"]
@@ -73,7 +73,7 @@ class DailyTask(Task):
         return (len(problems) == 0), problems
 
     # ------------------------------------------------------------------
-    def run(self, ctx):
+    def _run(self, ctx):
         self._any_real_run = False     # 本趟是否有任何任务真跑（演练/未就绪被跳过的都不算）
         steps = self._enabled_steps(ctx)
         if not steps:

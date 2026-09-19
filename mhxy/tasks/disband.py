@@ -51,7 +51,7 @@ class DisbandTask(Task):
         return (len(problems) == 0), problems
 
     # ------------------------------------------------------------------
-    def run(self, ctx):
+    def _run(self, ctx):
         dc = ctx.task_cfg(_PARAM_NS)
         dry_run = dc.get("dry_run", False)
         wins = ctx.select_windows()

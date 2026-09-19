@@ -261,7 +261,6 @@
                 "collect_idle_sec": 4.0,
                 "activity_timeout_sec": 30,
                 "dialog_timeout_sec": 30,
-                "collect_timeout_sec": 600,
                 "dig_timeout_sec": 120,
                 "scroll_step": -3,
                 "scroll_max_tries": 8,
@@ -297,7 +296,8 @@
                 "flag_join": "templates/tm_flag_join.png",
                 "flag_tingting": "templates/tm_flag_tingting.png",
                 "flag_next_map": "templates/tm_flag_next_map.png",
-                "treasure_item": "templates/tm_treasure_item.png"
+                "treasure_item": "templates/tm_treasure_item.png",
+                "flag_bag_arrange": "templates/tm_flag_bag_arrange.png"
             }
         },
         "escort": {
@@ -595,6 +595,10 @@
                 },
                 {
                     "task": "activity_reward",
+                    "enabled": true
+                },
+                {
+                    "task": "appreciation",
                     "enabled": true
                 },
                 {

@@ -186,7 +186,7 @@ class DungeonBaseTask(Task):
         return (len(problems) == 0), problems
 
     # ==================================================================
-    def run(self, ctx):
+    def _run(self, ctx):
         tc = ctx.task_cfg(DUNGEON_NS)
         team_tc = ctx.task_cfg("teaming")
         loop = tc["loop"]
@@ -609,6 +609,8 @@ class DungeonBaseTask(Task):
         ctx.log("已打开活动，翻找副本卡片…")
         self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
         list_region = regions.get("activity_list")
+        # 找「参加」的微滚计数/告警标志（开活动→参加一次性发起、不复用轮转 record，局部状态即可）
+        rec = {"_join_warned": False, "_nudges": 0}
 
         def grab_rect():
             rect = (ctx.window.region_to_screen_rect(list_region)
@@ -618,14 +620,20 @@ class DungeonBaseTask(Task):
         def probe(scene, rect):
             hit = vision.match(scene, self.flags.get(self._card_key()), threshold) if scene is not None else None
             if hit is None:
+                rec["_join_warned"] = False
+                rec["_nudges"] = 0
                 return scan.SCROLL, None
             entry_xy = (rect[0] + hit[0], rect[1] + hit[1])
-            join = self._find_join_on_row(ctx, list_region, entry_xy, threshold, loop)
-            if join is not None:
-                ctx.mouse.click(join[0], join[1])
-                ctx.log(f"找到副本卡片（{hit[2]:.3f}）→ 点「参加」（{join[2]:.3f}），等寻路到 NPC。", level="hit")
-                return scan.ACCEPT, join
-            ctx.log("认出卡片但没找到右侧「参加」（检查 join 模板/阈值）。", level="warn")
+            r = self._find_join_ready(ctx, rec, list_region, entry_xy, threshold, loop,
+                                      entry_tpl=self.flags.get(self._card_key()))
+            if r is not None and r != "nudged":
+                ctx.mouse.click(r[0], r[1])
+                ctx.log(f"找到副本卡片（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}），等寻路到 NPC。", level="hit")
+                return scan.ACCEPT, r
+            if r != "nudged":
+                if not rec["_join_warned"]:
+                    rec["_join_warned"] = True
+                    ctx.log("认出卡片但「参加」按钮一直没出现（已自动微滚补全；检查 join 模板/阈值），原地重试。", level="warn")
             return scan.STAY, None
 
         res = scan.scroll_search(
@@ -861,38 +869,7 @@ class DungeonBaseTask(Task):
         return (scene_rect[0] + m[0], scene_rect[1] + m[1], m[2])
 
     def _find_join_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop):
-        join_tpl = self.flags.get("join")
-        entry_tpl = self.flags.get(self._card_key())
-        if join_tpl is None:
-            ctx.log("找「参加」失败：join 模板未标定。", level="warn")
-            return None
-        rect = (ctx.window.region_to_screen_rect(list_region)
-                if list_region else ctx.window.rect())
-        if rect is None:
-            return None
-        scene = win_mod.grab(rect)
-        if scene is None:
-            return None
-        rx, ry = rect[0], rect[1]
-        ex, ey = entry_screen_xy
-        row_h = entry_tpl.shape[0] if entry_tpl is not None else 40
-        band = max(40, int(row_h * 2))
-        sh, sw = scene.shape[:2]
-        ey_local = int(ey - ry)
-        ex_local = int(ex - rx)
-        cols = max(1, int(loop.get("activity_columns", 2)))
-        col_w = sw / cols
-        col_idx = min(cols - 1, max(0, int(ex_local // col_w)))
-        col_right = int(round((col_idx + 1) * col_w))
-        y0 = max(0, ey_local - band // 2)
-        y1 = min(sh, ey_local + band // 2)
-        x0 = max(0, ex_local)
-        x1 = min(sw, col_right)
-        if y1 - y0 < 1 or x1 - x0 < 1:
-            return None
-        crop = scene[y0:y1, x0:x1]
-        m = vision.match(crop, join_tpl, threshold)
-        if m is None:
-            return None
-        cx, cy, score = m
-        return (rx + x0 + cx, ry + y0 + cy, score)
+        """统一实现见 base.Task._find_join_in_column（整列枚举取距离卡片行最近那枚「进入」）。"""
+        return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
+                                         self.flags.get("join"),
+                                         self.flags.get(self._card_key()))

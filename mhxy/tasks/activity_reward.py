@@ -72,7 +72,7 @@ class ActivityRewardTask(Task):
         return (len(problems) == 0), problems
 
     # ------------------------------------------------------------------
-    def run(self, ctx):
+    def _run(self, ctx):
         tc = ctx.task_cfg(_NS)
         dry_run = tc.get("dry_run", True)
         loop = tc.get("loop", {}) or {}
