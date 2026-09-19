@@ -1625,7 +1625,7 @@ class SecretRealmPage(ctk.CTkFrame):
         templates = tc.get("templates", {})
         need_r = ["scene", "activity_list"]
         need_t = ["sr_entry", "sr_join", "sr_select",
-                  "sr_continue", "sr_challenge", "sr_enter_battle", "sr_leave"]
+                  "sr_continue", "sr_nav", "sr_enter_battle", "sr_leave"]
         rdone = sum(1 for k in need_r if regions.get(k))
         tdone = sum(1 for k in need_t if templates.get(k))
         self.lbl_calib.configure(
@@ -2733,7 +2733,7 @@ class DailyPage(ctk.CTkFrame):
                    ["escort_entry", "escort_join", "escort_silver", "escort_confirm", "escort_ongoing"]),
         "secret_realm": (["activity_list"],
                          ["sr_entry", "sr_join", "sr_select", "sr_continue",
-                          "sr_challenge", "sr_enter_battle", "sr_leave"]),
+                          "sr_nav", "sr_enter_battle", "sr_leave"]),
     }
 
     def __init__(self, master, app):

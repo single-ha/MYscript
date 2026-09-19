@@ -394,10 +394,11 @@
                 "sr_dungeon_enter": "templates/tm_sr_dungeon_enter.png",
                 "sr_confirm": "templates/tm_sr_confirm.png",
                 "sr_continue": "templates/tm_sr_continue.png",
-                "sr_challenge": "templates/tm_sr_challenge.png",
+                "sr_nav": "templates/tm_sr_nav.png",
                 "sr_enter_battle": "templates/tm_sr_enter_battle.png",
                 "sr_leave": "templates/tm_sr_leave.png",
-                "sr_fail": "templates/tm_sr_fail.png"
+                "sr_fail": "templates/tm_sr_fail.png",
+                "sr_victory": "templates/tm_sr_victory.png"
             }
         },
         "teaming": {

@@ -9,8 +9,10 @@
   → (可选) 若出现「选择副本」界面 → 点【屏幕左下角】的「进入」按钮
      ⚠ 几个副本的「进入」按钮长得一模一样，只能靠【位置】区分——故只在 scene 的左下角比例框里匹配。
      「确定」只在【选了副本】后才弹（不选副本没有确认键）。
-  → 点「确定」(选了副本才有)→ 点「继续挑战」→ 点「挑战」→ 开始自动战斗
-  → 难度关卡不再自动：实时盯「进入战斗」按钮，一出现就点它续战。
+→ 点「确定」(选了副本才有)→ 点「继续挑战」
+   → 没有「挑战」按钮、也不会自动战斗：点右侧任务栏的秘境任务条目（sr_nav）
+     → 角色自动寻路到 NPC → 自动战斗开始（点完继续挑战后画面右侧出现的是该任务栏条目）
+   → 难度关卡不再自动：实时盯「进入战斗」按钮，一出现就点它续战。
   → 直到【判定失败】(要先点掉失败结算，「离开」才点得到) 或 【时长超时】 → 点「离开」退出秘境，本轮结束。
     （秘境是打到失败/超时为止，没有正常通关弹离开；故不设「一看到离开就点」的旁路，避免误判提前退出。）
 
@@ -41,7 +43,7 @@ S_SELECT = "SELECT"                 # 等对话框 → 点「秘境降妖」
 S_DUNGEON = "DUNGEON"               # (可选)等「选择副本」→ 点左下角「进入」；超时无则跳过
 S_CONFIRM = "CONFIRM"               # (选了副本才有)点「确定」
 S_CONTINUE = "CONTINUE"             # 点「继续挑战」
-S_CHALLENGE = "CHALLENGE"           # 点「挑战」→ 进战斗监控
+S_NAV = "NAV"                       # 点右侧任务栏秘境条目寻路到NP→开始自动战斗 → 进战斗监控
 S_BATTLE = "BATTLE"                 # 自动战斗中：盯「进入战斗」续战 + 判失败/超时
 S_LEAVE = "LEAVE"                   # 失败/超时后：点「离开」收尾本轮
 
@@ -49,18 +51,19 @@ S_LEAVE = "LEAVE"                   # 失败/超时后：点「离开」收尾�
 # 战斗标识走公共共享模板 tasks.shared.templates.battle_flag（「通用」页「标定（公共区域）」标定，全任务共用），
 # task_config 已把它叠加进本任务 templates，用同 key「battle_flag」读，不必各自标。
 _FLAG_KEYS = ["sr_entry", "sr_join", "sr_select", "sr_dungeon_enter", "sr_confirm",
-              "sr_continue", "sr_challenge", "sr_enter_battle", "sr_leave",
-              "sr_fail", "battle_flag"]
-# 必备：缺失则 preflight 阻断（其余为可选，缺失仅提示）。
+              "sr_continue", "sr_nav", "sr_enter_battle", "sr_leave",
+              "sr_fail", "sr_victory", "battle_flag"]
+# 必备：缺失则 preflight 阻断（sr_victory=通关/胜利标志，用于判定一轮正常结束；缺失回退旧逻辑）。
 _REQUIRED_FLAGS = ["sr_entry", "sr_join", "sr_select",
-                   "sr_continue", "sr_challenge", "sr_enter_battle", "sr_leave"]
+                   "sr_continue", "sr_nav", "sr_enter_battle", "sr_leave",
+                   "sr_victory"]
 
 
 @register
 class SecretRealmTask(Task):
     name = "secret_realm"
     title = "秘境降妖"
-    description = "自动开活动→参加→秘境降妖→选副本/确定/继续挑战/挑战→盯进入战斗续战，失败/超时自动离开（支持多开轮转）"
+    description = "自动开活动→参加→秘境降妖→选副本/确定/继续挑战/点右侧任务栏寻路→盯进入战斗续战，失败/超时自动离开（支持多开轮转）"
     CHAINS_PER_WINDOW = True   # 可做「日常一条龙·每窗口独立链」
 
     CALIBRATION = {
@@ -76,10 +79,12 @@ class SecretRealmTask(Task):
                                                        "几个进入长得一样，运行时只在左下角比例框里找；没有选副本环节可不标", True),
             ("sr_confirm", "「确定」按钮", "选完副本后弹出的「确定」按钮；不选副本就没有这一步，可不标", True),
             ("sr_continue", "「继续挑战」按钮", "确定后出现的「继续挑战」按钮"),
-            ("sr_challenge", "「挑战」按钮", "「继续挑战」后出现的「挑战」按钮，点它开始自动战斗"),
+            ("sr_nav", "右侧任务栏·秘境任务条目", "点「继续挑战」后画面右侧任务栏里的当前秘境任务条目"
+                                                   "（没有「挑战」按钮、不会自动战斗，点它会自动寻路到NPC开始战斗）"),
             ("sr_enter_battle", "「进入战斗」按钮", "难度关卡处不再自动、需要手动点的「进入战斗」按钮（监控期一出现就点）"),
             ("sr_leave", "「离开」按钮", "失败/超时后点的「离开」按钮，点它退出秘境"),
             ("sr_fail", "「失败」标志", "战斗失败时屏幕上的「失败」字样/弹窗，判定该退出（先点它结算，离开才点得到）", True),
+            ("sr_victory", "「通关/胜利」标志", "一轮正常结束时出现的通关/胜利字样或结算画面标志，用于判定本轮完成（必标）"),
             # 战斗界面标志已移到「通用」页「标定（公共区域）」统一标定（全任务共用）；结界只用于日志诊断，可选。
         ],
         "watchlist": False,
@@ -230,8 +235,8 @@ class SecretRealmTask(Task):
             self._do_confirm(ctx, rec, loop, regions, threshold)
         elif st == S_CONTINUE:
             self._do_continue(ctx, rec, loop, regions, threshold)
-        elif st == S_CHALLENGE:
-            self._do_challenge(ctx, rec, loop, regions, threshold)
+        elif st == S_NAV:
+            self._do_nav(ctx, rec, loop, regions, threshold)
         elif st == S_BATTLE:
             self._do_battle(ctx, rec, loop, regions, threshold)
         elif st == S_LEAVE:
@@ -342,26 +347,32 @@ class SecretRealmTask(Task):
             ctx.log("等「确定」超时，继续。", level="warn")
             self._goto(rec, S_CONTINUE)
 
-    # ---- 「继续挑战」（容错：超时则进挑战）----
+    # ---- 「继续挑战」（容错：超时则进「点任务栏寻路」）----
     def _do_continue(self, ctx, rec, loop, regions, threshold):
-        if self._try_click(ctx, rec, regions, threshold, "sr_continue", "继续挑战", S_CHALLENGE):
+        if self._try_click(ctx, rec, regions, threshold, "sr_continue", "继续挑战", S_NAV):
             return
         if self._state_elapsed(rec) > loop.get("step_timeout_sec", 20):
             ctx.log("等「继续挑战」超时，继续。", level="warn")
-            self._goto(rec, S_CHALLENGE)
+            self._goto(rec, S_NAV)
 
-    # ---- 「挑战」（容错：超时也进战斗监控，靠 进入战斗/失败 兜底）----
-    def _do_challenge(self, ctx, rec, loop, regions, threshold):
+    # ---- 点右侧任务栏的秘境任务条目寻路到NPC → 自动战斗开始（没有「挑战」按钮；点条目触发寻路）----
+    #   首击常被游戏当成「聚焦/选中」吞掉（和抓鬼 gg_nav 同款），需隔 nav_double_gap_sec 补点一次。
+    def _do_nav(self, ctx, rec, loop, regions, threshold):
         scene_rect = self._scene_rect(ctx, regions)
         cur = win_mod.grab(scene_rect)
-        hit = self._match_scene(cur, scene_rect, "sr_challenge", threshold)
+        hit = self._match_scene(cur, scene_rect, "sr_nav", threshold)
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
-            ctx.log(f"点「挑战」（{hit[2]:.3f}）→ 进入秘境，开始自动战斗监控。", level="hit")
+            ctx.log(f"点右侧任务栏·秘境条目寻路到NPC（{hit[2]:.3f}）。", level="hit")
+            gap = loop.get("nav_double_gap_sec", 0.3)
+            if gap > 0:
+                self._interruptible_sleep(ctx, self._jitter(gap, ctx))
+                ctx.mouse.click(hit[0], hit[1])
+                ctx.log(f"补点「秘境条目」（防首击被吞，间隔 {gap:.1f}s）。", level="hit")
             self._enter_battle(rec)
             return
         if self._state_elapsed(rec) > loop.get("step_timeout_sec", 20):
-            ctx.log("没点到「挑战」，仍进入战斗监控（靠 进入战斗/失败 兜底）。", level="warn")
+            ctx.log("没点到右侧任务栏秘境条目，仍进入战斗监控（靠 进入战斗/失败 兜底）。", level="warn")
             self._enter_battle(rec)
 
     def _enter_battle(self, rec):
@@ -369,18 +380,12 @@ class SecretRealmTask(Task):
         rec["t_battle"] = time.time()
         self._goto(rec, S_BATTLE)
 
-    # ---- 战斗监控：每访问一次扫一遍——判失败/超时去离开；有「进入战斗」就续点 ----
+    # ---- 战斗监控：每访问一次扫一遍——判失败/胜利/「进入战斗」续战，不再设单轮超时 ----
     def _do_battle(self, ctx, rec, loop, regions, threshold):
-        overall = loop.get("battle_timeout_sec", 1800)
-        if time.time() - rec["t_battle"] > overall:
-            ctx.log(f"已超过 {overall:.0f}s 仍未结束 → 判定超时，去点「离开」。", level="warn")
-            self._goto(rec, S_LEAVE)
-            return
-
         scene_rect = self._scene_rect(ctx, regions)
         cur = win_mod.grab(scene_rect)
 
-        # 判定失败：先点掉「失败」结算，「离开」按钮才点得到（直接点离开会点空）
+        # 1) 判定失败：先点掉「失败」结算，「离开」按钮才点得到
         fail = self._match_scene(cur, scene_rect, "sr_fail", threshold)
         if fail is not None:
             ctx.log(f"判定失败（{fail[2]:.3f}）→ 先点掉「失败」结算，转去点「离开」。", level="hit")
@@ -389,19 +394,44 @@ class SecretRealmTask(Task):
             self._goto(rec, S_LEAVE)
             return
 
-        # 难度关卡：出现「进入战斗」就点它续战
+        # 2) 难度关卡：出现「进入战斗」就点它续战
         eb = self._match_scene(cur, scene_rect, "sr_enter_battle", threshold)
         if eb is not None:
             ctx.mouse.click(eb[0], eb[1])
             ctx.log(f"难度关卡：点「进入战斗」（{eb[2]:.3f}）继续。", level="hit")
             self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+            # 进新一轮战斗，重置胜利判定计数
+            rec.pop("victory_hint_since", None)
             return
 
-        # 否则：自动战斗中/过场——节流打印诊断
+# 3) 判定胜利/通关：匹配 sr_victory 模板（必标） → 直接视为本轮完成
+        vic = self._match_scene(cur, scene_rect, "sr_victory", threshold)
+        if vic is not None:
+            ctx.log(f"识别到通关/胜利标志（{vic[2]:.3f}）→ 判定本轮完成，去点「离开」。", level="hit")
+            self._goto(rec, S_LEAVE)
+            return
+
+        # 4) 旧兜底：未标 sr_victory 时的回退——非战斗态且「离开」可见持续 1.5s
+        in_battle = ui_state.is_present(cur, self.flags, "battle_flag", threshold)
+        leave = self._match_scene(cur, scene_rect, "sr_leave", threshold)
+        if not in_battle and leave is not None:
+            hint_since = rec.get("victory_hint_since")
+            now = time.time()
+            if hint_since is None:
+                rec["victory_hint_since"] = now
+            elif now - hint_since >= 1.5:
+                ctx.log(f"回退判定：非战斗态且「离开」可见（{leave[2]:.3f}）→ 视为本轮结束，去点「离开」。", level="warn")
+                rec.pop("victory_hint_since", None)
+                self._goto(rec, S_LEAVE)
+                return
+        else:
+            rec.pop("victory_hint_since", None)
+
+        # 5) 否则：自动战斗中/过场——节流打印诊断
         now = time.time()
         if now - rec["t_diag"] >= 10.0:
-            st = "战斗中" if ui_state.is_present(cur, self.flags, "battle_flag", threshold) else "自动推进/过场"
-            ctx.log(f"监控…{st}（已 {now - rec['t_battle']:.0f}/{overall:.0f}s）")
+            st = "战斗中" if in_battle else "自动推进/过场"
+            ctx.log(f"监控…{st}（已 {now - rec['t_battle']:.0f}s）")
             rec["t_diag"] = now
 
     # ---- 失败/超时后：点「离开」收尾本轮（超时容错按结束处理）----
@@ -534,7 +564,7 @@ class SecretRealmTask(Task):
         """演练：周期性对【每个号】当前屏幕识别各标志，报告命中，便于验证模板/阈值。"""
         keys = [("sr_entry", "活动卡片"), ("sr_join", "参加"), ("sr_select", "秘境降妖"),
                 ("sr_dungeon_enter", "选副本-进入"), ("sr_confirm", "确定"),
-                ("sr_continue", "继续挑战"), ("sr_challenge", "挑战"),
+                ("sr_continue", "继续挑战"), ("sr_nav", "任务栏秘境条目"),
                 ("sr_enter_battle", "进入战斗"), ("sr_leave", "离开"),
                 ("sr_fail", "失败"), ("battle_flag", "战斗")]
         while not ctx.should_stop():

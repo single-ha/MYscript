@@ -367,7 +367,8 @@ DEFAULT_CONFIG = {
                 "tick_interval_sec": 0.5,    # 多开轮转节拍：所有号各推进一步后的间隔（带抖动）
                 "dialog_timeout_sec": 30,    # 点「参加」后等「秘境降妖」对话框出现的超时
                 "dungeon_select_wait_sec": 6,  # 等「选择副本-进入」出现的短超时；没出现=本次无需选副本，跳过
-                "step_timeout_sec": 20,      # 确定/继续挑战/挑战/离开 等每步按钮出现的超时（容错继续）
+                "step_timeout_sec": 20,      # 确定/继续挑战/任务栏寻路/离开 等每步按钮出现的超时（容错继续）
+                "nav_double_gap_sec": 0.3,   # 点任务栏秘境条目后隔多久补点一次（首击常被游戏当聚焦吞掉，和抓鬼同款）
                 "battle_timeout_sec": 1800,  # 单轮秘境「超时判定」时长：挂够这么久仍没结束就视为超时、点离开（按真实关卡时限调）
                 "dungeon_enter_box": [0.0, 0.5, 0.55, 1.0],  # 「进入」按钮限定的左下角比例框 [x0,y0,x1,y1]（0~1）
                                              #   同款「进入」靠位置区分：只在 scene 这个左下角比例框里找
@@ -397,7 +398,7 @@ DEFAULT_CONFIG = {
                 "sr_dungeon_enter": None,    # 「选择副本」界面左下角的「进入」按钮（可选）
                 "sr_confirm": None,          # 「确定」按钮
                 "sr_continue": None,         # 「继续挑战」按钮
-                "sr_challenge": None,        # 「挑战」按钮（点它开始自动战斗）
+                "sr_nav": None,               # 右侧任务栏的秘境任务条目（点它自动寻路到NPC才开始战斗；没有「挑战」按钮）
                 "sr_enter_battle": None,     # 难度关卡的「进入战斗」按钮（监控期一出现就点）
                 "sr_leave": None,            # 「离开」按钮（失败/超时/结束后点它退出秘境）
                 "sr_fail": None              # 「失败」标志（可选，判定该退出）
