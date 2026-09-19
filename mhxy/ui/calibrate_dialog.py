@@ -419,15 +419,20 @@ class CalibrateDialog(ctk.CTkToplevel):
         return cfg_mod.task_config(self.cfg, "shared")
 
     def _target_regions(self, key):
-        """区域 key 的归属：共享区（活动/背包列表、拓印绘制区等，见 EXCLUSIVE_SHARED_REGIONS）写 tasks.shared，
-        其余写本任务自身。返回 (regions 字典, 入库保存函数)——共享键只存共享件，绝不复写到各任务命名空间。"""
+        """区域 key 的归属：共享区（活动/背包列表，见 EXCLUSIVE_SHARED_REGIONS）写 tasks.shared，
+        其余写本任务自身。返回 (regions 字典, 入库保存函数)。
+        注意：task_config() 每次返回全新深拷贝，共享键的保存必须沿用【本次所发】的那份拷贝，
+        不能重新 _shared_tc() 再回写（否则新写入的值会被未变过的拷贝盖掉，标了等于没标）。"""
         if key in EXCLUSIVE_SHARED_REGIONS:
-            return self._shared_tc().setdefault("regions", {}), self._save_shared
-        return self.tc.setdefault("regions", {}), self._save
+            tc = self._shared_tc()
+            regions = tc.setdefault("regions", {})
 
-    def _save_shared(self):
-        cfg_mod.set_task_config(self.cfg, "shared", self._shared_tc())
-        cfg_mod.save_config(self.cfg)
+            def _save_shared_tc():
+                cfg_mod.set_task_config(self.cfg, "shared", tc)
+                cfg_mod.save_config(self.cfg)
+
+            return regions, _save_shared_tc
+        return self.tc.setdefault("regions", {}), self._save
 
     def _calibrate_region(self, key, name):
         rel, _crop = self._grab_roi(f"框选「{name}」")
@@ -611,7 +616,7 @@ class CalibrateDialog(ctk.CTkToplevel):
                       command=btn_cmd).grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
 
     def _save(self):
-        # 共享区（活动/背包列表、拓印绘制区等，见 EXCLUSIVE_SHARED_REGIONS）走 _save_shared 单独存共享件，
+        # 共享区（活动/背包列表）由 _target_regions 的闭包单独存共享件（tasks.shared），
         # 不回写本任务——这里把 task_config 叠加进来自动带上来的共享值剥掉，避免污染本任务命名空间。
         if self.task_name != "shared":
             reg = self.tc.get("regions")
