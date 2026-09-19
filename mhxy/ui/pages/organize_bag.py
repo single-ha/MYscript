@@ -160,7 +160,7 @@ class OrganizeBagPage(ctk.CTkFrame):
             self._log_line("正在停止整理…", "warn")
             self.btn_run.configure(text="停止中…", state="disabled")
             return
-        # dry_run 由开关控制，这里不强改；只读最新配置开跑。
+        # 只读最新配置开跑，运行时直接整理。
         cfg = cfg_mod.load_config()
         self.app.cfg = cfg
         task_cls = get_task(self.TASK_NAME)

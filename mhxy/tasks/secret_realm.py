@@ -24,7 +24,7 @@
 导航靠 ctx.send_hotkey(动作名)（键位在 config.hotkeys，用户可按游戏「系统设置-快捷键」核对）。
 
 停止：①所有号都跑满 max_runs 轮 ②时间上限分钟(安全网) ③手动停止/鼠标甩左上角 failsafe。
-安全默认 dry_run=true：不发快捷键/不点关键操作，只对各号当前屏幕做识别自检，便于先验证模板。
+任务始终实跑（无演练模式）；先预飞自检模板齐全再开跑。
 """
 
 import time
@@ -127,7 +127,7 @@ class SecretRealmTask(Task):
         tc = ctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]
-        dry_run = tc.get("dry_run", True)
+        dry_run = False
         threshold = loop["match_threshold"]
         self.flags = self._load_flags(tc)
         self.max_runs = max(1, int(loop.get("max_runs", 1)))
@@ -407,11 +407,12 @@ class SecretRealmTask(Task):
 # 3) 判定胜利/通关：匹配 sr_victory 模板（必标） → 直接视为本轮完成
         vic = self._match_scene(cur, scene_rect, "sr_victory", threshold)
         if vic is not None:
-            ctx.log(f"识别到通关/胜利标志（{vic[2]:.3f}）→ 判定本轮完成，去点「离开」。", level="hit")
+            self._save_capture(cur, "victory_hit")
+            ctx.log(f"识别到通关/胜利标志（{vic[2]:.3f}，命中屏幕坐标 {vic[0]},{vic[1]}）→ 判定本轮完成，去点「离开」。", level="hit")
             self._goto(rec, S_LEAVE)
             return
 
-        # 4) 旧兜底：未标 sr_victory 时的回退——非战斗态且「离开」可见持续 1.5s
+        # 4) 旧兜底：未标 sr_victory 时的回退——非战斗态且「离开」可见持续 leave_confirm_sec(默认 15s)
         in_battle = ui_state.is_present(cur, self.flags, "battle_flag", threshold)
         leave = self._match_scene(cur, scene_rect, "sr_leave", threshold)
         if not in_battle and leave is not None:
@@ -419,8 +420,9 @@ class SecretRealmTask(Task):
             now = time.time()
             if hint_since is None:
                 rec["victory_hint_since"] = now
-            elif now - hint_since >= 1.5:
-                ctx.log(f"回退判定：非战斗态且「离开」可见（{leave[2]:.3f}）→ 视为本轮结束，去点「离开」。", level="warn")
+            elif now - hint_since >= loop.get("leave_confirm_sec", 15.0):
+                ctx.log(f"回退判定：非战斗态且「离开」可见（{leave[2]:.3f}）已持续 "
+                        f"{loop.get('leave_confirm_sec', 15.0):.0f}s → 视为本轮结束，去点「离开」。", level="warn")
                 rec.pop("victory_hint_since", None)
                 self._goto(rec, S_LEAVE)
                 return
@@ -566,7 +568,7 @@ class SecretRealmTask(Task):
                 ("sr_dungeon_enter", "选副本-进入"), ("sr_confirm", "确定"),
                 ("sr_continue", "继续挑战"), ("sr_nav", "任务栏秘境条目"),
                 ("sr_enter_battle", "进入战斗"), ("sr_leave", "离开"),
-                ("sr_fail", "失败"), ("battle_flag", "战斗")]
+                ("sr_fail", "失败"), ("sr_victory", "通关/胜利"), ("battle_flag", "战斗")]
         while not ctx.should_stop():
             if deadline and time.time() >= deadline:
                 ctx.log("演练时间上限到，停止。")

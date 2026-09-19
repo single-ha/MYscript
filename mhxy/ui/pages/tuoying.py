@@ -87,8 +87,8 @@ class TuoyingPage(ctk.CTkFrame):
         self.lbl_ready.pack(fill="x", anchor="w", pady=(4, 0))
         sub = ctk.CTkLabel(txt, text="就绪要求：框选好「拓印描摹绘制区」即可自动描摹；「界面标题」「上传按钮」"
                                      "用于自动识别弹窗与收尾，不标=遇拓印弹窗只能转手动临摹。"
-                                     "演练只对所选窗口里的第一个号操作：把拓印临摹界面调到前台再点「开始拓印」，"
-                                     "脚本会沿图案描一遍（不点上传）；实战开关控制真描/只识别。",
+"演练只对所选窗口里的第一个号操作：把拓印临摹界面调到前台再点「开始拓印」，"
+                                      "脚本会沿图案描一遍（不点上传）。",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub.pack(fill="x", anchor="w", pady=(2, 0))
         bind_wraplength(sub)

@@ -86,7 +86,7 @@ class TaskContext:
     # ---- 自动整理背包：任何任务流程在轮转节拍调用，检测到背包满则就地整理一遍 ----
     def maybe_auto_organize(self):
         """若开了 tasks.organize_bag.auto_organize，按节流间隔检测一次「背包满图标」，
-        命中就在【当前前台号】上整理背包一遍（dry_run 跟随 organize_bag 自身配置）。
+        命中就在【当前前台号】上整理背包一遍。
         由 core/rotation 在每个号切前台后调用，故覆盖所有多开轮转任务（运镖/宝图/秘境/副本）。
         未开开关 / 未标定满图标 / 没满 → 静默返回，不打扰任务流程。"""
         ob = self.task_cfg("organize_bag")
@@ -117,7 +117,7 @@ class TaskContext:
             pass
         from .inventory import InventoryOrganizer   # 延迟导入，避免 core 内循环依赖
         try:
-            InventoryOrganizer(self, ob, dry_run=ob.get("dry_run", True)).organize()
+            InventoryOrganizer(self, ob, dry_run=False).organize()
         except Exception as e:
             self.log(f"自动整理背包异常：{e}", level="error")
         self._last_bag_check = time.time()   # 整理耗时较久，以结束时刻重新计节流

@@ -26,7 +26,7 @@
 无快捷键的入口（如活动）降级为点标定坐标。滑动用鼠标滚轮。
 
 停止：①所有号背包都挖空自然结束(主)②时间上限分钟(安全网)③手动停止/鼠标甩左上角 failsafe。
-安全默认 dry_run=true：不发快捷键/不点关键操作/不双击用图，只对各号当前屏幕做识别自检，便于先验证模板。
+任务始终实跑（无演练模式）；先预飞自检模板齐全再开跑。
 """
 
 import time
@@ -133,7 +133,7 @@ class TreasureMapTask(Task):
         tc = ctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]
-        dry_run = tc.get("dry_run", True)
+        dry_run = False
         self._start_state = S_OPEN_ACTIVITY   # 是否已有宝图走运行期自动判断，号号从开活动开始
         threshold = loop["match_threshold"]
         self.flags = self._load_flags(tc)
@@ -292,17 +292,23 @@ class TreasureMapTask(Task):
             hit = (vision.match(scene, self.flags.get("flag_treasure_entry"), threshold)
                    if scene is not None else None)
             if hit is None:
+                rec["_nudges"] = 0
                 return (scan.SCROLL, None)
             entry_xy = (rect[0] + hit[0], rect[1] + hit[1])
-            # 稳定再确认几次「参加」：滚动/加载瞬间可能没匹配上，连错几次才算「已有宝图」，
-            # 避免卡片刚出现的一两帧误判为已领过、把还没领的号直接送去挖宝。
+            # 稳定再确认几次「参加」：卡片贴列表边缘被裁/按钮纵向错位时 _find_join_ready 会自动微滚补全；
+            # 连错几次才算「已有宝图」，避免卡片刚出现的一两帧误判为已领过、把还没领的号直接送去挖宝。
             for _ in range(max(1, int(loop.get("join_confirm_tries", 3)))):
-                join = self._find_join_on_row(ctx, list_region, entry_xy, threshold, loop)
-                if join is not None:
-                    ctx.mouse.click(join[0], join[1])
-                    ctx.log(f"找到「宝图任务」（{hit[2]:.3f}）→ 点「参加」（{join[2]:.3f}），"
+                r = self._find_join_ready(ctx, rec, list_region, entry_xy, threshold, loop,
+                                          entry_tpl=self.flags.get("flag_treasure_entry"))
+                if r is not None and r != "nudged":
+                    ctx.mouse.click(r[0], r[1])
+                    ctx.log(f"找到「宝图任务」（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}），"
                             "开始传送找 NPC。", level="hit")
-                    return (scan.ACCEPT, {"join": True, "pos": join})
+                    return (scan.ACCEPT, {"join": True, "pos": r})
+                if r == "nudged":
+                    # 微滚已把被裁的按钮补全，画面变了 → 原地重试（重拍一帧再确认）
+                    return (scan.STAY, None)
+                # 一次确认未命中：稍微等画面落定再试下一轮
                 self._interruptible_sleep(ctx, self._jitter(0.15, ctx))
             ctx.log("认出「宝图任务」但连确认多次都没找到其「参加」按钮 "
                     "→ 判定「已有宝图」，跳过领取、直接挖包裹里的藏宝图。", level="hit")
@@ -538,50 +544,11 @@ class TreasureMapTask(Task):
         rec["t_diag"] = now
 
     def _find_join_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop):
-        """在「宝图任务」条目所在【那张卡片】的右侧条带里匹配「参加」按钮(flag_join)。
-        命中返回 (screen_x, screen_y, score)，否则 None。
-        按行+只取条目右侧、且限制在条目所属卡片列内，能抗滚动、抗「一排多张卡片」时
-        扫进右邻卡片点到它的「参加」按钮（活动列表默认两张卡片一排）。"""
-        join_tpl = self.flags.get("flag_join")
-        entry_tpl = self.flags.get("flag_treasure_entry")
-        if join_tpl is None:
-            ctx.log("找「参加」失败：flag_join 模板未标定。", level="warn")
-            return None
-        rect = (ctx.window.region_to_screen_rect(list_region)
-                if list_region else ctx.window.rect())
-        if rect is None:
-            return None
-        scene = win_mod.grab(rect)
-        if scene is None:
-            return None
-        rx, ry = rect[0], rect[1]
-        ex, ey = entry_screen_xy
-        # 行条带高度：取条目模板高 ×2，下限 40px；纵向以条目中心为中线
-        row_h = entry_tpl.shape[0] if entry_tpl is not None else 40
-        band = max(40, int(row_h * 2))
-        sh, sw = scene.shape[:2]
-        # 换算到 scene 局部坐标：纵向取条带、横向从条目中心到列表右缘（只看右侧）
-        ey_local = int(ey - ry)
-        ex_local = int(ex - rx)
-        # 活动列表是「每排多张卡片」(默认两张一排)：参加按钮只在【条目所属那张卡片】内。
-        # 若一路扫到列表右缘(x1=sw)，右邻卡片的「参加」按钮会被一并扫进来、甚至胜出，
-        # 导致点到右边卡片的参加。故把列表按列等分，定位条目所在列，x1 收到该列右边界。
-        cols = max(1, int(loop.get("activity_columns", 2)))
-        col_w = sw / cols
-        col_idx = min(cols - 1, max(0, int(ex_local // col_w)))
-        col_right = int(round((col_idx + 1) * col_w))
-        y0 = max(0, ey_local - band // 2)
-        y1 = min(sh, ey_local + band // 2)
-        x0 = max(0, ex_local)
-        x1 = min(sw, col_right)
-        if y1 - y0 < 1 or x1 - x0 < 1:
-            return None
-        crop = scene[y0:y1, x0:x1]
-        m = vision.match(crop, join_tpl, threshold)
-        if m is None:
-            return None
-        cx, cy, score = m
-        return (rx + x0 + cx, ry + y0 + cy, score)
+        """统一实现见 base.Task._find_join_in_column（整列枚举取离卡片行最近那枚「参加」）。
+        宝图的参加按钮模板为 flag_join；卡片入口为 flag_treasure_entry。"""
+        return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
+                                         self.flags.get("flag_join"),
+                                         self.flags.get("flag_treasure_entry"))
 
     def _load_flags(self, tc):
         templates = tc.get("templates", {})

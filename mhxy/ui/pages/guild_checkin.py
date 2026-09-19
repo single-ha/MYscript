@@ -78,7 +78,7 @@ class GuildCheckinPage(ctk.CTkFrame):
         left.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(left, text="说明", font=self.fonts["h2"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w", padx=16, pady=(14, 6))
-        hint = ctk.CTkLabel(left, text="演练模式只识别不点击；实战才真的发快捷键、点福利页签和「签到」按钮。\n"
+        hint = ctk.CTkLabel(left, text="点「运行」后脚本给每个所选窗口自动发快捷键、点福利页签和「签到」按钮。\n"
                                        "标定菜单为共享命名空间 tasks.guild_checkin，只标「福利」页签与「签到」按钮两张图。\n"
                                        "已勾「日常一条龙」时，它在个人组里按每窗口独立链跑。",
                             font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")

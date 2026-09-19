@@ -12,7 +12,7 @@ from ...core import config as cfg_mod
 from ...core import window as win_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
-from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
+from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_CALIB_TPL_KEYS
 from ...core.config import (SHARED_REGION_KEYS, MAIN_ICON_TPL_KEYS, BATTLE_FLAG_TPL_KEY)
 from ..common import Card, load_thumb, bind_wraplength
 
@@ -274,16 +274,20 @@ class GeneralPage(ctk.CTkFrame):
         team_tc = cfg_mod.task_config(cfg, "teaming")
         treg, ttpl = team_tc.get("regions", {}), team_tc.get("templates", {})
         rdone = sum(1 for k in TEAM_REQUIRED_REGIONS if treg.get(k))
-        tdone = sum(1 for k in TEAM_REQUIRED_TEMPLATES if ttpl.get(k))
-        ready = (rdone == len(TEAM_REQUIRED_REGIONS) and tdone == len(TEAM_REQUIRED_TEMPLATES))
-        ctk.CTkLabel(txt_t, text=f"组队标定：必要区域 {rdone}/{len(TEAM_REQUIRED_REGIONS)}，"
-                                 f"必要模板 {tdone}/{len(TEAM_REQUIRED_TEMPLATES)}"
-                                 + ("　✓ 已就绪" if ready else "　（还需标定）"),
+        tdone = sum(1 for k in TEAM_CALIB_TPL_KEYS if ttpl.get(k))
+        calib_ready = (rdone == len(TEAM_REQUIRED_REGIONS) and tdone == len(TEAM_CALIB_TPL_KEYS))
+        ctk.CTkLabel(txt_t, text=f"组队标定：区域 {rdone}/{len(TEAM_REQUIRED_REGIONS)}，"
+                                 f"模板 {tdone}/{len(TEAM_CALIB_TPL_KEYS)}"
+                                 + ("　✓ 已就绪" if calib_ready else "　（还需标定）"),
                      font=self.fonts["body"],
-                     text_color=T.SUCCESS if ready else T.WARN).pack(anchor="w", pady=(4, 0))
+                     text_color=T.SUCCESS if calib_ready else T.WARN).pack(anchor="w", pady=(4, 0))
+        self.lbl_leader_status = ctk.CTkLabel(txt_t, text="", font=self.fonts["body"])
+        self.lbl_leader_status.pack(anchor="w", pady=(2, 0))
+        self._refresh_leader_status()
         sub_t = ctk.CTkLabel(txt_t, text="队长建队→队员申请→接受→关窗，是跨任务的共享能力。"
                                         "刷副本等任何用到组队的任务都自动读这份标定"
-                                        "（队长ID、创建/申请/接受/申请入队、好友列表区/队伍面板区等）。",
+                                        "（创建/申请/接受/申请入队 + 好友列表区/队伍面板区）。"
+                                        "「箭头」可选、不标也能用固定偏移兜底；「退出队伍」是解散用的。",
                              font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub_t.pack(fill="x", pady=(2, 0))
         bind_wraplength(sub_t)
@@ -307,12 +311,6 @@ class GeneralPage(ctk.CTkFrame):
                                          text_color=T.TEXT, border_width=1, border_color=T.BORDER,
                                          command=self._start_disband)
         self.btn_disband.pack(side="left", padx=(8, 0))
-        # 「选择窗口」带缩略图，且队长就在这里选（卡片上勾「队长」）——下拉框「号123」看不出是哪个窗口，故移进来。
-        ctk.CTkButton(act, text="选择窗口/队长", font=self.fonts["body"], height=36, width=120,
-                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
-                      border_width=1, border_color=T.BORDER,
-                      command=lambda: self.app.open_window_picker(self.refresh, captain_ns="teaming")).pack(
-                          side="left", padx=(8, 0))
         # 队长ID 入口：带缩略图的小按钮，点开「队长ID 库」（当前+最近3历史可切换）；
         # 和刷副本页写同一处 teaming.leader_id，天然同步。
         self.btn_leader = ctk.CTkButton(act, text="标定队长ID", font=self.fonts["small"], height=36, width=110,
@@ -487,6 +485,16 @@ class GeneralPage(ctk.CTkFrame):
         from ..leader_gallery import LeaderIdGallery
         LeaderIdGallery.open(self.app)
 
+    def _refresh_leader_status(self):
+        """刷新卡片上「队长ID」独立一行状态（新建/切换队长ID后由广播刷新）。"""
+        lbl = getattr(self, "lbl_leader_status", None)
+        if lbl is None:
+            return
+        team_tc = cfg_mod.task_config(self.app.cfg, "teaming")
+        ok = bool((team_tc.get("templates") or {}).get("leader_id"))
+        lbl.configure(text=("队长ID：✓ 已标定" if ok else "队长ID：⚠ 未标定（点「标定队长ID」）"),
+                      text_color=T.SUCCESS if ok else T.WARN)
+
     def _refresh_leader_btn(self):
         """重读激活队长ID图，更新行内按钮缩略图（无图则回退纯文字「标定队长ID」）。"""
         btn = getattr(self, "btn_leader", None)
@@ -504,7 +512,7 @@ class GeneralPage(ctk.CTkFrame):
     # ------------------------------------------------------------------
     def _render_team_action(self):
         """据当前 self._win_count + teaming.captain_index 渲染队长状态行（纯本地数据，秒回）。
-        队长已挪进「选择窗口/队长」里选（带缩略图），这里只读出来显示。"""
+        窗口/队长由「选择窗口」对话框（左侧栏目标窗口状态点开）里选定。"""
         if self.lbl_team_status is None:
             return
         n = self._win_count
@@ -516,7 +524,7 @@ class GeneralPage(ctk.CTkFrame):
         if n >= 2:
             tip = f"已选 {n} 个号，队长=第{cap + 1}个所选号，其余当队员。点「一键组队」开始。"
         elif not multi:
-            tip = "组队需多开：请点「选择窗口/队长」切到多开、勾 2~5 个号并指定队长。"
+            tip = "组队需多开：请从左侧栏点目标窗口状态进「选择窗口」，切到多开并勾 2~5 个号。"
         else:
             tip = f"已选 {n} 个号，组队至少 2 个号（队长+≥1 队员）。"
         self.lbl_team_status.configure(text=tip)
@@ -554,14 +562,6 @@ class GeneralPage(ctk.CTkFrame):
             self._log_line("正在停止…", "warn", "组队")
             self.btn_team.configure(text="停止中…", state="disabled")
             return
-        # 强制实战（一键组队是显式动作，不走演练）。窗口选择与队长都在「选择窗口/队长」里定好了。
-        cfg = cfg_mod.load_config()
-        tc = cfg_mod.task_config(cfg, "teaming")
-        tc["dry_run"] = False
-        cfg_mod.set_task_config(cfg, "teaming", tc)
-        cfg_mod.save_config(cfg)
-        self.app.cfg = self.cfg = cfg
-
         task_cls = get_task("dungeon")
         if task_cls is None:
             self._log_line("找不到组队任务。", "error", "组队")
@@ -587,14 +587,6 @@ class GeneralPage(ctk.CTkFrame):
             self._log_line("正在停止…", "warn", "解散")
             self.btn_disband.configure(text="停止中…", state="disabled")
             return
-        # 强制实战（一键解散是显式动作，不走演练）。窗口在「选择窗口/队长」里选定。
-        cfg = cfg_mod.load_config()
-        tc = cfg_mod.task_config(cfg, "teaming")
-        tc["dry_run"] = False
-        cfg_mod.set_task_config(cfg, "teaming", tc)
-        cfg_mod.save_config(cfg)
-        self.app.cfg = self.cfg = cfg
-
         task_cls = get_task("disband")
         if task_cls is None:
             self._log_line("找不到解散队伍任务。", "error", "解散")

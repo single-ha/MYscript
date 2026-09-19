@@ -72,7 +72,7 @@ class OrganizeBagTask(Task):
 
     def _run(self, ctx):
         tc = ctx.task_cfg(_NS)
-        dry_run = tc.get("dry_run", True)
+        dry_run = False
         wins = ctx.select_windows()
         if not wins:
             ctx.log("没选到任何目标窗口，已停止。", level="error")

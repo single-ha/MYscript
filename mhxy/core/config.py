@@ -87,7 +87,6 @@ def _mk_dungeon_shared():
     loop 各键同旧 _mk_dungeon；extra：enter_retry_*/confirm_sec 为侠士「进入+确认」重试参数、
     tuoying_* / enter_check_sec 为拓印临摹处理参数。"""
     return {
-        "dry_run": True,             # true=演练：不组队、不点，只识别副本+组队模板自检
         "loop": {
             "match_threshold": 0.85,     # 标志模板匹配阈值
             "npc_dialog_sec": 60,        # 点「参加」后等角色寻路到 NPC、弹出「选择副本」对话框的超时
@@ -169,8 +168,8 @@ DEFAULT_CONFIG = {
     "targets": {
         "multi": False,            # False=单开(操作1个号) / True=多开(轮流操作多个号)
         "single_index": 0,         # 单开：选中窗口的序号(左→右,从0起)；越界自动回退0
-        "multi_indices": [],       # 多开：选中的序号列表；空=检测到的全部
-        "max_windows": 3,          # 多开最多同时操作几个号(0=不限)
+        "multi_indices": [],       # 多开：选中的序号列表（勾选名单是权威）；空=自动跟踪全部(受 max_windows 上限)
+        "max_windows": 5,          # 仅「自动全部(multi_indices 为空)」时最多同时操作几个号(0=不限)；手动勾选不受限
         "switch_delay_sec": 0.15,  # 号与号之间切换的停顿(秒,带抖动)，别太机械
         "base_size": [907, 707]    # 基准窗口尺寸[w,h]；「还原尺寸/调整窗口」把号拉回/排成它。默认 907×707，可点「设为基准」改
     },
@@ -252,7 +251,6 @@ DEFAULT_CONFIG = {
     # ---- 各任务独立配置 ----
     "tasks": {
         "sniper": {
-            "dry_run": True,             # true=演练只识别不下单
             "loop": {
                 "refresh_interval_sec": 0.2,    # 两轮「进货架查看」之间的间隔（带抖动），别太机械【标准抢货档】
                 "shelf_load_wait_sec": 1.2,     # 等货架加载的「最长」等待（自适应：画面静止即提前结束，这是上限/超时）
@@ -272,7 +270,6 @@ DEFAULT_CONFIG = {
 
         # ---- 刷副本·宝图（一次性两阶段状态机；游戏自带自动战斗全托管，脚本只导航+监控+关键点击）----
         "treasure_map": {
-            "dry_run": True,             # true=演练：只识别+打日志，不发快捷键/不点关键操作/不真用图
             "loop": {
                 "time_limit_min": 30,        # 时间上限（分钟）安全网，0=不限；主终止是「背包挖空」
                 "match_threshold": 0.85,     # 标志模板匹配阈值
@@ -317,7 +314,6 @@ DEFAULT_CONFIG = {
 
         # ---- 运镖（一次性循环押镖状态机；游戏自带自动寻路+自动战斗，脚本只导航+监控+关键点击）----
         "escort": {
-            "dry_run": True,             # true=演练：只识别+打日志，不发快捷键/不点关键操作
             "loop": {
                 "time_limit_min": 30,        # 时间上限（分钟）安全网，0=不限；主终止是「对话框不再弹出」
                 "match_threshold": 0.85,     # 标志模板匹配阈值
@@ -358,7 +354,6 @@ DEFAULT_CONFIG = {
 
         # ---- 秘境降妖（一次性状态机；游戏自带自动战斗，脚本只导航+监控+关键点击）----
         "secret_realm": {
-            "dry_run": True,             # true=演练：只识别+打日志，不发快捷键/不点关键操作
             "loop": {
                 "time_limit_min": 45,        # 时间上限（分钟）安全网，0=不限；每轮主终止是 失败/离开 或 时长判超时。
                                              # ⚠ 必须 > battle_timeout_sec/60（单轮上限），否则多开时最后扛住的号永远等不到自己那轮自然结束就被总上限砍掉
@@ -407,7 +402,6 @@ DEFAULT_CONFIG = {
 
         # ---- 三界奇缘（答题型：开活动→参加→答题循环，识别到「完成」字样即停）----
         "sanjie": {
-            "dry_run": True,             # true=演练：只识别+打日志，不发快捷键/不点关键操作
             "loop": {
                 "time_limit_min": 30,        # 时间上限（分钟）安全网，0=不限
                 "match_threshold": 0.85,     # 标志模板匹配阈值
@@ -448,7 +442,6 @@ DEFAULT_CONFIG = {
 
         # ---- 趣味鉴赏（点爱心玩法：开活动→参加→匹配并点心形图案，点满 N 次或超时即停）----
         "appreciation": {
-            "dry_run": True,             # true=演练：只识别+打日志，不发快捷键/不点关键操作
             "loop": {
                 "time_limit_min": 30,        # 时间上限（分钟）安全网，0=不限
                 "match_threshold": 0.85,     # 标志模板匹配阈值
@@ -483,7 +476,6 @@ DEFAULT_CONFIG = {
         # ---- 抓鬼（多人·组队可跳过，队长跑 N 轮抓鬼循环）----
         #   组队设置（已组队/跑完解散/队长）统一在共享 tasks.teaming；这里只放抓鬼自己的模板/区域/流程超时。
         "zhuagui": {
-            "dry_run": True,             # true=演练：只识别+打日志，不发快捷键/不点关键操作
             "loop": {
                 "match_threshold": 0.85,     # 标志模板匹配阈值
                 "max_rounds": 2,             # 抓鬼轮数 = 领任务次数，跑满即停（默认 2）
@@ -531,11 +523,10 @@ DEFAULT_CONFIG = {
         # ---- 组队（全局共享资产；不是可运行任务，只存「组队」用到的标定+参数）----
         #   组队是跨窗口握手：队长建队→队员申请→队长接受→双方关窗。多个任务（刷副本/师门/帮派…）都会复用。
         #   故标定的模板/区域放这个共享命名空间 tasks.teaming，与具体任务解耦。
-        #   「一键组队」（通用页）的角色参数也放这里：captain_index=谁当队长、dry_run=是否演练。
+        #   「一键组队」（通用页）的角色参数也放这里：captain_index=谁当队长。
         #   所有多人任务共享的组队设置也放这里（skip_team=是否已组队跳过组队、auto_disband=跑完是否解散），
         #   各副本/抓鬼任务只读这份共享配置，不再各存一份（在 GUI 的「组队设置」组件里统一改）。
         "teaming": {
-            "dry_run": False,            # 一键组队默认直接组（不是只识别）——它是显式的手动动作
             "captain_index": 0,          # 队长是所选多开窗口里的第几号（0 起），其余自动当队员
             "skip_team": False,          # 已组队=跳过自动组队，直接由队长跑（无需组队标定）
             "auto_disband": False,       # 跑完后是否自动解散队伍（所有号退队）
@@ -585,10 +576,8 @@ DEFAULT_CONFIG = {
         #   翻包裹找到用户标定的物品图，按各自动作逐个 使用/丢弃/出售。核心在 core.inventory.InventoryOrganizer。
         #   标定的区域/按钮模板/物品清单都放共享命名空间 tasks.organize_bag，与具体任务解耦。
         "organize_bag": {
-            "dry_run": True,
             "auto_organize": False,              # true=「自动整理背包」：任何走多开轮转的任务流程(运镖/宝图/秘境/副本)
                                                  #   每轮检测一次背包满图标(bag_full_icon)，命中即自动整理一遍。
-                                                 #   全局开关，通用页可勾。用整理背包自己的 dry_run 决定真整理/只识别。
             "loop": {
                 "match_threshold": 0.85,
                 "auto_check_interval_sec": 20,   # 自动整理：同一个号两次「检测背包满」之间的最小间隔(秒)，
@@ -629,7 +618,6 @@ DEFAULT_CONFIG = {
         #   所有副本共用（dungeon_base / 拓印页只读这份，旧 tasks.shared、tasks.dungeon 残留值一律不沿用）。
         #   「拓印」页可单独「演练」描一遍。
         "tuoying": {
-            "dry_run": True,
             "regions": {
                 "tuoying_area": None,    # 「拓印」临摹界面的图案绘制区（留空=检测到拓印时无法自动描、转手动）
             },
@@ -642,7 +630,6 @@ DEFAULT_CONFIG = {
         # ---- 帮派签到（单人任务页一键操作，也可进日常一条龙个人组）----
         #   对每个所选窗口：打开帮派界面 → 点「福利」页签 → 点「签到」按钮。scene 留空=整窗检测。
         "guild_checkin": {
-            "dry_run": True,
             "loop": {
                 "match_threshold": 0.85,
                 "step_timeout_sec": 30,           # 等「福利」页签/「签到」按钮出现的单步超时
@@ -657,7 +644,6 @@ DEFAULT_CONFIG = {
         # ---- 领取每日活跃度奖励（单人任务页一键操作，也可进日常一条龙个人组）----
         #   对每个所选窗口：打开活动界面 → 依次点 20/40/60/80/100 五档「领取」按钮。scene 留空=整窗检测。
         "activity_reward": {
-            "dry_run": True,
             "loop": {
                 "match_threshold": 0.85,
                 "step_timeout_sec": 30,           # 等每档「领取」按钮出现的单步超时
@@ -772,24 +758,6 @@ def task_config(cfg, task_name):
             if changed:
                 tc["templates"] = ttp
     return tc
-
-
-def apply_global_dry_run(cfg):
-    """把顶层全局 dry_run 同步进每个任务的 tasks.<名>.dry_run（总开关管控，一把写全套）。
-    任务运行时读的是任务级 dry_run（`tc.get("dry_run", True)`），只改顶层不生效会踩坑——
-    「切了实战仍按演练跑」就是这么来的。返回 cfg（同一对象）。"""
-    tasks = cfg.get("tasks")
-    if not isinstance(tasks, dict):
-        tasks = {}
-        cfg["tasks"] = tasks
-    value = bool(cfg.get("dry_run", True))
-    for name in DEFAULT_CONFIG["tasks"]:
-        t = tasks.get(name)
-        if not isinstance(t, dict):
-            t = {}
-            tasks[name] = t
-        t["dry_run"] = value
-    return cfg
 
 
 def set_task_config(cfg, task_name, task_cfg):

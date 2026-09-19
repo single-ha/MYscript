@@ -192,7 +192,7 @@ class DungeonBaseTask(Task):
         loop = tc["loop"]
         regions = tc["regions"]
         threshold = loop["match_threshold"]
-        dry_run = tc.get("dry_run", True)
+        dry_run = False
         skip_team = team_tc.get("skip_team", False)
         cap = team_tc.get("captain_index", 0)
         self.flags = self._load_flags(tc, ctx)

@@ -256,10 +256,6 @@ class DailyTask(Task):
         if not getattr(task, "CHAINS_PER_WINDOW", False):
             wctx.log(f"「{title}」不支持每窗口独立链，跳过。", level="warn")
             return "skip"
-        if ctx.task_cfg(eff_name).get("dry_run", True):
-            wctx.log(f"「{title}」处于演练模式，一条龙不实跑它（到该任务页关掉「演练」再纳入），跳过。",
-                     level="warn")
-            return "skip"
         ok, probs = task.preflight(ctx)
         if not ok:
             wctx.log(f"跳过「{title}」（未就绪）：" + "；".join(probs), level="warn")
@@ -284,9 +280,6 @@ class DailyTask(Task):
             ctx.log(f"「{title}」无可跑任务（未收录/未选），跳过该步。", level="warn")
             return
         task = task_cls()
-        if ctx.task_cfg(eff_name).get("dry_run", True):
-            ctx.log(f"「{title}」处于演练模式，一条龙不实跑，跳过该步。", level="warn")
-            return
         ok, probs = task.preflight(ctx)
         if not ok:
             ctx.log(f"跳过「{title}」（未就绪）：" + "；".join(probs), level="warn")
@@ -319,9 +312,6 @@ class DailyTask(Task):
                 ctx.log(f"副本「{dname}」未收录，跳过。", level="warn")
                 continue
             title = cls.title
-            if tc.get("dry_run", True):
-                ctx.log(f"「{title}」处于演练模式，一条龙不实跑，跳过。", level="warn")
-                continue
             task = cls()
             ok, probs = task.preflight(ctx)
             if not ok:

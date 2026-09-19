@@ -61,6 +61,10 @@ TEAM_REQUIRED_TEMPLATES = ["team_create", "team_apply", "team_accept", "team_app
 # 解散队伍必备模板（team_button 可选——缺则跳过那一步直接找「退出队伍」）
 DISBAND_REQUIRED_TEMPLATES = ["team_quit"]
 
+# 标定对话框实际列出的模板键（TEAM_CALIBRATION 去掉在「标定队长ID」里单独处理的 leader_id），
+# 与 calibrate_dialog 的 exclude 保持同源；GUI 卡片文本的模板计数以此为准（对话框几款就写几）。
+TEAM_CALIB_TPL_KEYS = [it[0] for it in TEAM_CALIBRATION["templates"] if it[0] != "leader_id"]
+
 # 队长状态链
 C_OPEN_TEAM = "C_OPEN_TEAM"   # 发 open_team 开队伍面板
 C_CREATE = "C_CREATE"         # 点「创建队伍」→ 立刻去切申请页（队员仍门控、不抢前台）

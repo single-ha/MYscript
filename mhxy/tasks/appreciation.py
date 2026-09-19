@@ -17,8 +17,7 @@
 滑动用鼠标滚轮（滚动只发生在标定的「图文列表区域」内，不滚出该区）。
 
 停止：①点击次数达到目标 ②鉴赏环节超时 ③时间上限分钟(安全网) ④手动停止/鼠标甩右上角 failsafe。
-安全默认 dry_run=true：演练只发「开活动」快捷键（让活动列表真的打开以便识别入口卡片），
-其余关键操作（点参加/点心形/滚动）都不做，只对各号屏幕做识别自检，便于先验证模板。
+任务始终实跑（无演练模式）：开活动→参加→点心形图案，先预飞自检模板齐全再开跑。
 """
 
 import time
@@ -99,7 +98,7 @@ class AppreciationTask(Task):
         tc = ctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]
-        dry_run = tc.get("dry_run", True)
+        dry_run = False
         threshold = loop["match_threshold"]
         self.flags = self._load_flags(tc)
         self.target_clicks = max(1, int(loop.get("target_clicks", 5)))

@@ -18,8 +18,7 @@
 导航靠 ctx.send_hotkey(动作名)（键位在 config.hotkeys，用户可按游戏「系统设置-快捷键」核对）。
 
 停止：①所有号都识别到「完成」字样 ②时间上限分钟(安全网) ③手动停止/鼠标甩右上角 failsafe。
-安全默认 dry_run=true：演练只发「开活动」快捷键（让活动列表真的打开以便识别入口卡片），
-其余关键操作（点参加/点选项/点关闭）都不做，只对各号屏幕做识别自检，便于先验证模板。
+任务始终实跑（无演练模式）：开活动→参加→答题循环，先预飞自检模板齐全再开跑。
 """
 
 import time
@@ -106,7 +105,7 @@ class SanjieTask(Task):
         tc = ctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]
-        dry_run = tc.get("dry_run", True)
+        dry_run = False
         threshold = loop["match_threshold"]
         self.flags = self._load_flags(tc)
         self.answer_idle = float(loop.get("answer_idle_sec", 15))

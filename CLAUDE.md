@@ -25,7 +25,7 @@
 2. **必须拟人化**：贝塞尔曲线移动、加减速、落点随机偏移、按下/抬起与各种间隔随机抖动、偶尔走神。
 3. **操作原理越底层越好**（怕封号）：鼠标走 Windows `SendInput`(user32) 注入（见 `core/input.py`）。
    已诚实告知：真正不可检测要硬件级(KMBox/Arduino)/驱动级，本方案不保证 100% 安全。
-4. **安全默认 dry_run=true**（只识别不下单）。
+4. **安全靠 preflight 自检 + 多重急停**：任务无演练/实战模式、启动即实跑；跑前 preflight 校验标定/窗口，未就绪就拒跑（见「停止」条目）。
 5. 用户**基本不读代码**，只在被明确告知“需要你亲手改的地方”才动手；要尽量傻瓜化（一键 + GUI）。
 6. 用户要求**模块化**、可持续扩展，并要一个**现代、简约、精致、信息密度适中**的 GUI。
 7. **活动列表卡片布局（运镖/宝图等「开活动→参加」类任务共用）**：活动入口是**卡片**、**默认两张一排**，
@@ -81,7 +81,7 @@ mhxy/
                       五副本薄子类（侠士×2 / 普通×3，is_dungeon=True）；已删 taohaiqu.py（蹈海去被这 5 个取代）
     organize_bag.py     OrganizeBagTask（整理背包）：工具页(OrganizeBagPage)可单独跑的共享能力封装，逐号 activate→core/inventory 整理；详见 memory organize-bag-task
     tuoying.py          TuoyingTask（拓印）：刷副本偶发「拓印」临摹弹窗的自动描摹能力封装，工具页「拓印」可单独「演练」描一遍
-                        （标定存 tasks.tuoying；演练/实战共用手感）；完整自动流程（描→上传→确认不再重现）仍在 dungeon_base
+                        （标定存 tasks.tuoying；演练=只描不点上传，手感与副本内自动一致）；完整自动流程（描→上传→确认不再重现）仍在 dungeon_base
   tools/
     calibrate.py 旧的命令行标定（已不被 GUI 调用，仅留作 CLI 备用）
   ui/
@@ -98,19 +98,18 @@ mhxy/
                           共享命名空间 tasks.tuoying（原在通用页公共标定，迁到这里）
     pages/tools.py      工具分类页（Tab: 秒装备 / 整理背包 / 拓印）
     ui_state.py         界面状态判定（与玩法无关）：is_main_screen 主界面判定 + is_present 标志判定（战斗标识等）
-  gui/ 旧版 UI 备份（未用，勿动）
 ```
 
 ### 任务模块约定（加新功能照此做）
 - 任务在**后台线程**跑，通过 `ctx.log(msg, level)` 输出（level: info/hit/warn/error），
   循环里**勤查 `ctx.should_stop()`**，绝不直接碰 GUI。
-- config 用 `tasks.<name>.*` 存各任务配置（regions/watchlist/dry_run/loop 等）。
+- config 用 `tasks.<name>.*` 存各任务配置（regions/watchlist/loop 等）。
 - **多开轮转用 `core/rotation.py`**（非阻塞状态机：每号一份 record，处理方法只推进一小步，能往下做就 `_goto`
   改 state、在等待就不改 state；推进器据此「连续推进到等待点才让出」省切前台）。逐号任务接入走
   `base.Task._make_rotation()`，只传 `step_fn(rec)`；有跨窗口握手的自己构造 `RotationConfig`（见 `teaming.py`）。
   **铁律：监控态未触发转移时绝不 `_goto`**，否则在一个号上空转盯屏、饿死别号。详见 memory `rotation-engine`。
 - 加新任务示例：新建 `mhxy/tasks/xxx.py` 写 `@register class XxxTask(Task)`；在 `tasks/__init__.py` import；
-  在 `gui/app.py` 仿 `SniperPage` 加页面 + 在 `App.NAV` 加项。
+  在 `ui/app.py` 仿 `SniperPage` 加页面 + 在 `App.NAV` 加项。
 - **日志统一到「全局日志面板」（约束，别再各页造日志框）**：日志框只此一处——常驻主窗口右侧（`App._build_log_panel`），
   统一出口 `App.log_line(msg, level, source)`。新页面**不要**自建日志框：设个类属性 `LOG_SOURCE = "短名"`，
   页内 `_log_line` 照范式写成一行转发 `self.app.log_line(msg, level, getattr(self,"LOG_SOURCE",None))`，
@@ -120,7 +119,7 @@ mhxy/
   （一个跑完自动接下一个；某副本 preflight/异常失败**跳过继续下一个**，最后汇总；「停止」即停整个队列）。
   **加新副本只需写个 `is_dungeon = True` 的 Task**、在 `tasks/__init__.py` import——
   `base.dungeon_tasks()` 自动把它列进勾选清单，GUI 不用改。约定：勾选结果存 `tasks.dungeon.selected`（字符串列表，按勾选顺序）。
-  **所有副本共用一套标定**（只按普通/侠士区分）：模板/区域/loop/dry_run 全存共享 `tasks.dungeon` 命名空间，一次标定覆盖全部副本。
+  **所有副本共用一套标定**（只按普通/侠士区分）：模板/区域/loop 全存共享 `tasks.dungeon` 命名空间，一次标定覆盖全部副本。
   **组队设置（队长 captain_index / 已组队 skip_team / 跑完解散
   auto_disband）统一存共享 `tasks.teaming`**，各多人任务（蹈海去/抓鬼等）的 preflight/run 都读这份共享配置；
   **UI 上只在「多人任务」页顶层放一份「组队设置」（`common.TeamSettingsCard`，已组队/跑完解散开关）供该页所有
@@ -177,7 +176,7 @@ mhxy/
   `EXCLUSIVE_SHARED_REGIONS` + `SHARED_TPL_KEYS`），两者读库均经 `task_config` 合并。
   **拓印临摹资产已不在共享里**：标定迁到「工具」页「拓印」（存 `tasks.tuoying`，见上「拓印」条），各任务不重复列出、不参与就绪。
   ⚠ 标定对话框写共享键走 `tasks.shared`、绝不回写任务自身命名空间（`ui/calibrate_dialog.py` 的 `_target_regions`/`_save` 只看 `EXCLUSIVE_SHARED_REGIONS`）；先补共享标定时让旧任务自带值兜底。
-- **「队长ID 库」（`gui/leader_gallery.py` + 纯函数 `core/leader_history.py`）非显而易见的约束**：
+- **「队长ID 库」（`ui/leader_gallery.py` + 纯函数 `core/leader_history.py`）非显而易见的约束**：
   **激活图路径永远是 `templates/tm_leader_id.png`**（teaming 与 calibrate 都写死读它），切换当前队长 = 把选中历史图
   **字节复制覆盖**该文件、**绝不改 config 路径串**，故 `TeamFormation` 零改、零回归。⚠ 就绪度判定只看
   `templates.leader_id` 是否**非空**（不看文件存在），故历史空时 `leader_history` 把它置 None。画廊/槽位/广播刷新等
@@ -187,7 +186,7 @@ mhxy/
 > （treasure-map-task / escort-task / secret-realm-task / daily-chain-task / teaming-and-dungeon-task 等）。
 
 ## 怎么跑
-- 用户侧：双击 `启动.bat`，界面里「标定/加装备」→ 演练看 captures/ → 开「实战」开关再跑。
+- 用户侧：双击 `启动.bat`，界面里「标定/加装备」→ 看 captures/ 或跑一遍 → 就绪后直接点「运行」实跑。
 - 停止：界面「停止」按钮，或**急停热键**（默认 Ctrl+Alt+F12，设置里可改），或**鼠标甩到屏幕角**
   （默认右上角，设置 `failsafe_corner` 可改/可关）。
   ⚠ 甩角急停由 **GUI 轮询真实光标位置**实现（`app._poll_hotkey` + `_in_failsafe_corner`），不是 pyautogui

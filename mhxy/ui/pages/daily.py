@@ -14,7 +14,7 @@ from ...tasks.base import dungeon_tasks
 from ...tasks.daily import CHAINABLE, GROUP_OF, GROUP_TITLES, MULTI_BARRIER
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
-from ..common import (Card, bind_wraplength, required_regions, required_templates)
+from ..common import (Card, Tooltip, bind_wraplength, required_regions, required_templates)
 
 # 分区集合（按 GROUP_OF 出现顺序）。以后加新分区：在 tasks/daily.py 里给 GROUP_OF 补映射即可，
 # 本页自动多出一区，无需改这里。
@@ -24,7 +24,7 @@ _GROUPS = list(dict.fromkeys(GROUP_OF.values()))
 class DailyPage(ctk.CTkFrame):
     """日常一条龙：只做串联——勾选哪些任务、按什么顺序跑，存 tasks.daily.steps（全局有序=执行顺序）。
     个人组（每号独立跑）在前、多人组（集体组队跑）在后，区顺序可调（集团 ▲▼，存 group_order）。
-    多开/单开与各任务的演练/实战、标定、参数全部沿用各自任务页，本页不另设这些开关。"""
+    多开/单开与各任务的标定、参数全部沿用各自任务页，本页不另设这些开关。"""
 
     TASK_NAME = "daily"
     LOG_SOURCE = "一条龙"
@@ -67,14 +67,11 @@ class DailyPage(ctk.CTkFrame):
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.grid(row=0, column=0, sticky="ew", padx=4, pady=(2, 14))
         bar.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(bar, text="日常一条龙", font=self.fonts["title"], text_color=T.TEXT).grid(
-            row=0, column=0, sticky="w")
-        sub = ctk.CTkLabel(bar, text="单人任务（每号独立跑）与多人任务（刷副本/抓鬼，集体组队跑）分区勾选调序；"
-                                     "点区题可折叠/展开，区右上 ▲▼ 移动整区顺序。多开/单开与各任务的演练/实战、"
-                                     "标定、参数全部沿用各自任务页设置，本页只有勾选与排序。",
-                           font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
-        sub.grid(row=1, column=0, sticky="ew", pady=(2, 0))
-        bind_wraplength(sub)
+        title = ctk.CTkLabel(bar, text="日常一条龙", font=self.fonts["title"], text_color=T.TEXT)
+        title.grid(row=0, column=0, sticky="w")
+        Tooltip(title, "单人任务（每号独立跑）与多人任务（刷副本/抓鬼，集体组队跑）分区勾选调序；"
+                        "点区题可折叠/展开，区右上 ▲▼ 移动整区顺序。多开/单开与各任务的"
+                        "标定、参数全部沿用各自任务页设置，本页只有勾选与排序。", self.fonts)
 
     # ---- 控制区：运行按钮 + 工具（选择窗口/刷新），无标定/无模式开关 ----
     def _build_control(self):
@@ -105,31 +102,32 @@ class DailyPage(ctk.CTkFrame):
         opts.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 10))
         lim = ctk.CTkFrame(opts, fg_color="transparent")
         lim.pack(anchor="w")
-        ctk.CTkLabel(lim, text="整体时间上限(分钟，0=不限)", font=self.fonts["body"],
-                     text_color=T.TEXT).pack(side="left")
+        lim_lbl = ctk.CTkLabel(lim, text="整体时间上限(分钟，0=不限)", font=self.fonts["body"],
+                               text_color=T.TEXT)
+        lim_lbl.pack(side="left")
         self.var_limit = ctk.StringVar(value="0")
-        ctk.CTkEntry(lim, textvariable=self.var_limit, width=70, font=self.fonts["body"],
-                     fg_color=T.SURFACE_2, border_color=T.BORDER).pack(side="left", padx=(8, 0))
-        net = ctk.CTkLabel(opts, text="只是安全网：正常会按各子任务自身条件跑完。未就绪（缺标定/缺窗口）的任务会自动跳过。",
-                     font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
-        net.pack(fill="x", pady=(5, 0))
-        bind_wraplength(net)
+        self.lim_ent = ctk.CTkEntry(lim, textvariable=self.var_limit, width=70, font=self.fonts["body"],
+                                    fg_color=T.SURFACE_2, border_color=T.BORDER)
+        self.lim_ent.pack(side="left", padx=(8, 0))
+        for w in (lim_lbl, self.lim_ent):
+            Tooltip(w, "只是安全网：正常会按各子任务自身条件跑完。未就绪（缺标定/缺窗口）的任务会自动跳过。", self.fonts)
 
         # 跑完关机（谨慎）：整条龙全部跑完且有实跑任务才触发，延迟倒计时可 shutdown -a 取消
         shut = ctk.CTkFrame(opts, fg_color="transparent")
         shut.pack(anchor="w", pady=(10, 0))
-        ctk.CTkLabel(shut, text="跑完关机", font=self.fonts["body"], text_color=T.TEXT).pack(side="left")
+        shut_lbl = ctk.CTkLabel(shut, text="跑完关机", font=self.fonts["body"], text_color=T.TEXT)
+        shut_lbl.pack(side="left")
         self.var_shutdown = ctk.BooleanVar(value=False)
         ctk.CTkSwitch(shut, text="", variable=self.var_shutdown, width=44,
                       progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
                       command=self._on_shutdown_toggle).pack(side="left", padx=(8, 0))
-        ctk.CTkLabel(shut, text="整条龙跑完后自动关机（先进入关机倒计时，期间按「停止」或急停热键即可取消）",
-                     font=self.fonts["small"], text_color=T.TEXT_DIM).pack(side="left", padx=(8, 0))
+        Tooltip(shut_lbl, "整条龙跑完后自动关机（先进入关机倒计时，期间按「停止」或急停热键即可取消）", self.fonts)
 
         # 定时延迟执行：点「开始一条龙」后先看有没有设置定时，有则等到该时刻才真正启动
         sched = ctk.CTkFrame(opts, fg_color="transparent")
         sched.pack(anchor="w", pady=(10, 0))
-        ctk.CTkLabel(sched, text="定时延后执行", font=self.fonts["body"], text_color=T.TEXT).pack(side="left")
+        sched_lbl = ctk.CTkLabel(sched, text="定时延后执行", font=self.fonts["body"], text_color=T.TEXT)
+        sched_lbl.pack(side="left")
         self.var_schedule_on = ctk.BooleanVar(value=False)
         ctk.CTkSwitch(sched, text="", variable=self.var_schedule_on, width=44,
                       progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
@@ -139,26 +137,23 @@ class DailyPage(ctk.CTkFrame):
         time_ent = ctk.CTkEntry(sched, textvariable=self.var_schedule_time, width=64,
                                 font=self.fonts["body"], fg_color=T.SURFACE_2, border_color=T.BORDER)
         time_ent.pack(side="left", padx=(6, 0))
-        sched_hint = ctk.CTkLabel(opts, text="开启后，点「开始一条龙」不会立即执行，而是等到设定时刻才真正开始；"
-                                              "若设定时刻已过（如定时 10:00、下午点开始）则立即执行。等待中再点一次按钮可取消。",
-                                  font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
-        sched_hint.pack(fill="x", pady=(4, 0))
-        bind_wraplength(sched_hint)
+        for w in (sched_lbl, time_ent):
+            Tooltip(w, "开启后，点「开始一条龙」不会立即执行，而是等到设定时刻才真正开始；"
+                       "若设定时刻已过（如定时 10:00、下午点开始）则立即执行。等待中再点一次按钮可取消。", self.fonts)
 
         # «自动整理背包»（从「工具 › 整理背包」页移到这里的控制区，因为它影响运镖/宝图/秘境/副本
         # 等一条龙任务运行中的行为；配置仍存共享 tasks.organize_bag.auto_organize）。
         auto = ctk.CTkFrame(opts, fg_color="transparent")
         auto.pack(anchor="w", pady=(10, 0))
+        auto_lbl = ctk.CTkLabel(auto, text="自动整理背包", font=self.fonts["body"], text_color=T.TEXT)
+        auto_lbl.pack(side="left")
         self.switch_auto_organize = ctk.CTkSwitch(
-            auto, text="自动整理背包（任何任务检测到背包满就自动清）", font=self.fonts["body"],
+            auto, text="", width=44, progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
             command=self._toggle_auto_organize)
-        self.switch_auto_organize.pack(anchor="w")
-        auto_hint = ctk.CTkLabel(opts, text="开启后，运镖 / 宝图 / 秘境 / 副本等任务运行中会每隔一会儿检测一次背包"
-                                            "「满」图标，满了就自动整理一遍 —— 需先在「工具 › 整理背包」页「标定」里"
-                                            "框选『背包满图标』，否则无从判断、不会触发。",
-                                 font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
-        auto_hint.pack(fill="x", pady=(4, 0))
-        bind_wraplength(auto_hint)
+        self.switch_auto_organize.pack(side="left", padx=(8, 0))
+        Tooltip(auto_lbl, "开启后，运镖 / 宝图 / 秘境 / 副本等任务运行中会每隔一会儿检测一次背包"
+                          "「满」图标，满了就自动整理一遍 —— 需先在「工具 › 整理背包」页「标定」里"
+                          "框选『背包满图标』，否则无从判断、不会触发。", self.fonts)
 
     # ---- 主体：分区任务清单（日志已移到全局右栏）----
     def _build_body(self):
@@ -174,13 +169,11 @@ class DailyPage(ctk.CTkFrame):
         head = ctk.CTkFrame(left, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
         head.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(head, text="任务清单", font=self.fonts["h2"],
-                     text_color=T.TEXT).grid(row=0, column=0, sticky="w")
-        hint = ctk.CTkLabel(head, text="点区题折叠/展开　·　每区左侧 ⠿ 上下拖动排序（区内）　·　右侧开关启用/停用　·　"
-                                       "序号即全局执行先后　·　区右上 ▲▼ 移动整区顺序（两区顺序互换=挪动整区）",
-                            font=self.fonts["small"], text_color=T.TEXT_DIM, anchor="w")
-        hint.grid(row=1, column=0, sticky="ew", pady=(6, 0))
-        bind_wraplength(hint)
+        head_title = ctk.CTkLabel(head, text="任务清单", font=self.fonts["h2"],
+                                  text_color=T.TEXT)
+        head_title.grid(row=0, column=0, sticky="w")
+        Tooltip(head_title, "点区题折叠/展开　·　每区左侧 ⠿ 上下拖动排序（区内）　·　右侧开关启用/停用　·　"
+                            "序号即全局执行先后　·　区右上 ▲▼ 移动整区顺序（两区顺序互换=挪动整区）", self.fonts)
         self.list_frame = ctk.CTkScrollableFrame(left, fg_color="transparent")
         self.list_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 12))
         self.list_frame.grid_columnconfigure(0, weight=1)
@@ -262,15 +255,14 @@ class DailyPage(ctk.CTkFrame):
         return cls.title if cls else name
 
     def _task_status(self, name):
-        """返回 (模式串, 是否已就绪)。模式=演练/实战；就绪=必需区域+模板都已标定。
+        """返回该步是否已就绪（必需区域+模板都已标定）。
         多人步（刷副本/抓鬼）额外查（未勾「已组队」时的）组队标定。"""
         if name == "dungeon":
             return self._dungeon_step_status()
         if name in MULTI_BARRIER:
             return self._barrier_step_status(name)
         sub = cfg_mod.task_config(self.app.cfg, name)
-        mode = "演练" if sub.get("dry_run", True) else "实战"
-        return mode, self._calib_done(name, sub)
+        return self._calib_done(name, sub)
 
     def _calib_done(self, name, sub):
         spec = getattr(get_task(name), "CALIBRATION", None) or {}
@@ -282,24 +274,22 @@ class DailyPage(ctk.CTkFrame):
         return all(regions.get(k) for k in need_r) and all(templates.get(k) for k in need_t)
 
     def _barrier_step_status(self, name):
-        """多人步（如抓鬼）的 (模式, 就绪)：自身标定 +（未勾「已组队」时）组队标定。"""
+        """多人步（如抓鬼）的就绪：自身标定 +（未勾「已组队」时）组队标定。"""
         sub = cfg_mod.task_config(self.app.cfg, name)
-        mode = "演练" if sub.get("dry_run", True) else "实战"
         self_ok = self._calib_done(name, sub)
         team = cfg_mod.task_config(self.app.cfg, "teaming")
         if team.get("skip_team", False):     # 已勾「已组队」：不查组队标定
-            return mode, self_ok
+            return self_ok
         treg, ttpl = team.get("regions", {}), team.get("templates", {})
         team_ok = (all(treg.get(k) for k in TEAM_REQUIRED_REGIONS)
                    and all(ttpl.get(k) for k in TEAM_REQUIRED_TEMPLATES))
-        return mode, (self_ok and team_ok)
+        return self_ok and team_ok
 
     def _dungeon_step_status(self):
-        """「刷副本」步的 (模式, 就绪)：模式/标定看共享 tasks.dungeon；多开≥2 是运行期条件，留给链内 preflight。"""
+        """「刷副本」步的就绪：标定看共享 tasks.dungeon；多开≥2 是运行期条件，留给链内 preflight。"""
         if not self._selected_dungeon():
-            return "演练", False
+            return False
         sub = cfg_mod.task_config(self.app.cfg, "dungeon")
-        mode = "演练" if sub.get("dry_run", True) else "实战"
         spec = DUNGEON_CALIBRATION
         need_r = required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get("dungeon", ()))
         need_t = required_templates(spec)
@@ -307,11 +297,11 @@ class DailyPage(ctk.CTkFrame):
         self_ok = all(regions.get(k) for k in need_r) and all(templates.get(k) for k in need_t)
         team = cfg_mod.task_config(self.app.cfg, "teaming")
         if team.get("skip_team", False):     # 已勾「已组队」：不查组队标定
-            return mode, self_ok
+            return self_ok
         treg, ttpl = team.get("regions", {}), team.get("templates", {})
         team_ok = (all(treg.get(k) for k in TEAM_REQUIRED_REGIONS)
                    and all(ttpl.get(k) for k in TEAM_REQUIRED_TEMPLATES))
-        return mode, (self_ok and team_ok)
+        return self_ok and team_ok
 
     def _steps_by_group(self, g):
         return [s for s in self._steps if GROUP_OF[s["task"]] == g]
@@ -413,7 +403,7 @@ class DailyPage(ctk.CTkFrame):
         title.grid(row=0, column=0, sticky="ew")
         bind_wraplength(title)
 
-        _mode, ready = self._task_status(name)
+        ready = self._task_status(name)
         ctk.CTkLabel(mid, text=("✓ 已就绪" if ready else "⚠ 还需标定"), font=self.fonts["small"],
                      text_color=(T.SUCCESS if ready else T.WARN)).grid(
             row=1, column=0, sticky="w", pady=(5, 0))

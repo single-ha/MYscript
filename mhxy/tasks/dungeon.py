@@ -19,7 +19,7 @@ from ..core import vision
 from ..core.teaming import (TeamFormation, TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES)
 from .base import Task, register
 
-_PARAM_NS = "teaming"   # 角色参数（captain_index/dry_run）与组队标定共用 teaming 命名空间
+_PARAM_NS = "teaming"   # 角色参数（captain_index）与组队标定共用 teaming 命名空间
 
 
 @register
@@ -73,7 +73,7 @@ class DungeonTask(Task):
     # ------------------------------------------------------------------
     def _run(self, ctx):
         dc = ctx.task_cfg(_PARAM_NS)
-        dry_run = dc.get("dry_run", False)
+        dry_run = False
         cap = dc.get("captain_index", 0)
         wins = ctx.select_windows()
         if len(wins) < 2:

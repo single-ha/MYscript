@@ -302,7 +302,8 @@ def resolve_targets(title_substr, offset, targets):
 
     targets 结构见 config.DEFAULT_CONFIG["targets"]：
       - 单开(multi=False)：返回 [第 single_index 个窗口]（序号越界自动回退 0）。
-      - 多开(multi=True) ：按 multi_indices 选子集（空=全部），再按 max_windows 截断。
+      - 多开(multi=True) ：按 multi_indices 选子集（空=自动跟踪全部，此时才受 max_windows 上限）。
+        手动勾选的一组序号是权威，不再被 max_windows 截断（勾 5 个就跑 5 个）。
     找不到任何窗口返回 []。
     """
     targets = targets or {}
@@ -310,12 +311,15 @@ def resolve_targets(title_substr, offset, targets):
     if not wins:
         return []
     if targets.get("multi"):
-        idxs = targets.get("multi_indices") or list(range(len(wins)))
-        sel = [wins[i] for i in idxs if 0 <= i < len(wins)]
+        idxs = targets.get("multi_indices") or []
+        if idxs:
+            sel = [wins[i] for i in idxs if 0 <= i < len(wins)]
+        else:                             # 空=自动全部：只有这个兜底分支受 max_windows 限制
+            sel = wins
         if not sel:                       # 选中的序号全失效 → 兜底用全部
             sel = wins
         cap = targets.get("max_windows", 0)
-        if cap and cap > 0:
+        if cap and cap > 0 and not idxs:
             sel = sel[:cap]
         return sel
     i = targets.get("single_index", 0)

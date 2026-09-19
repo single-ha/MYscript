@@ -17,7 +17,7 @@
 队伍里只有队长操作：队员被传送 + 自动战斗，全程不点。故组队成功后是【队长单角色线性循环】，
 不需要多开轮转（轮转是给「各号各跑同一状态机」的任务用的）。
 
-安全默认 dry_run=true：不组队/不发快捷键/不点，只对各号识别组队+抓鬼相关模板做自检。
+任务始终实跑（无演练模式）：组队+抓鬼流程真打；组队可用「已组队」跳过。
 """
 
 import time
@@ -127,7 +127,7 @@ class ZhuaguiTask(Task):
         loop = tc["loop"]
         regions = tc["regions"]
         threshold = loop["match_threshold"]
-        dry_run = tc.get("dry_run", True)
+        dry_run = False
         skip_team = team_tc.get("skip_team", False)
         cap = team_tc.get("captain_index", 0)
         self.flags = self._load_flags(tc)

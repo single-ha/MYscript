@@ -129,6 +129,86 @@ def Pill(master, fonts):
     return lbl
 
 
+class Tooltip:
+    """悬停提示浮窗：鼠标进入控件后延时弹出小窗，移出即销毁。
+
+    只绑 <Enter>/<Leave>，不抢控件自身事件；浮窗宽度按 small 字体实测文字决定（不写死），
+    用于把页面里的说明文本收成悬停提示。一控件一个实例，销毁时随窗口被销毁，无需显式清理。
+    """
+
+    _delay_ms = 400
+    _max_w = 380
+    _min_w = 140
+
+    def __init__(self, widget, text, fonts):
+        self.widget = widget
+        self.text = text
+        self.fonts = fonts
+        self._after_id = None
+        self._tip = None
+        widget.bind("<Enter>", self._on_enter)
+        widget.bind("<Leave>", self._on_leave)
+
+    def _on_enter(self, _event):
+        self._cancel_pending()
+        self._after_id = self.widget.after(self._delay_ms, self._popup)
+
+    def _on_leave(self, _event):
+        self._cancel_pending()
+        self._hide()
+
+    def _cancel_pending(self):
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+    def _popup(self):
+        self._after_id = None
+        self._hide()
+        if not self.text:
+            return
+        try:
+            root = self.widget.winfo_toplevel()
+            f = self.fonts.get("small")
+            try:
+                w = int(f.measure(self.text)) + 24
+            except Exception:
+                w = self._max_w
+            w = max(self._min_w, min(self._max_w, w))
+            tip = ctk.CTkToplevel(root)
+            tip.overrideredirect(True)
+            tip.attributes("-topmost", True)
+            tip.configure(fg_color=T.SURFACE_2)
+            lbl = ctk.CTkLabel(tip, text=self.text, font=f, text_color=T.TEXT,
+                               fg_color=T.SURFACE_2, corner_radius=T.RADIUS_SM,
+                               wraplength=w - 24, justify="left", anchor="w")
+            lbl.pack(padx=12, pady=8)
+            tip.update_idletasks()
+            pw, ph = tip.winfo_reqwidth(), tip.winfo_reqheight()
+            x, y = root.winfo_pointerx() + 14, root.winfo_pointery() + 14
+            sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+            if x + pw > sw:
+                x = max(0, x - pw - 28)
+            if y + ph > sh:
+                y = max(0, y - ph - 28)
+            tip.geometry(f"{pw}x{ph}+{x}+{y}")
+            tip.lift()
+            self._tip = tip
+        except Exception:
+            self._tip = None
+
+    def _hide(self):
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except Exception:
+                pass
+            self._tip = None
+
+
 # bind_wraplength 现统一定义在 theme 里（window_picker / calibrate_dialog 也复用，避免循环依赖）。
 def bind_wraplength(label, padding=4):
     """自动换行助手，见 theme.bind_wraplength（此处只是转发，避免各页面直接再 import theme 的写法差异）。"""

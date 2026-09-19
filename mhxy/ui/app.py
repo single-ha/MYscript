@@ -40,21 +40,16 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.cfg = cfg_mod.load_config()
-        # 全局「演练/实战」是总开关：启动时把顶层 dry_run 同步进各任务命名空间并落盘，
-        # 修掉旧版本「切了实战但任务仍按演练跑」（任务读的是 tasks.<名>.dry_run）的历史不一致。
-        cfg_mod.apply_global_dry_run(self.cfg)
-        cfg_mod.save_config(self.cfg)
         # 全局窗口识别按进程名过滤（避免把终端/编辑器等同名标题窗口当游戏号）；GUI 各窗口操作据此生效。
         win_mod.set_game_process(self.cfg.get("window_process", "MyGame_x64r.exe"))
         mode = self.cfg.get("appearance", "dark")
         ctk.set_appearance_mode(mode if mode in ("dark", "light") else "dark")
         self.title("梦幻 · 时空 助手")
-        # 主界面默认大小 1360x720，打开时在屏幕上居中显示
-        win_w, win_h = 1360, 720
+        # 主界面默认尺寸启动（1310x700），不再设最小尺寸限制，可拖到任意大小
+        win_w, win_h = 1310, 700
         pos_x = max(0, (self.winfo_screenwidth() - win_w) // 2)
         pos_y = max(0, (self.winfo_screenheight() - win_h) // 2)
         self.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
-        self.minsize(1180, 640)
         self.configure(fg_color=T.BG)
 
         self.fonts = T.build_fonts()
@@ -89,27 +84,13 @@ class App(ctk.CTk):
         ctk.CTkLabel(bar, text="辅助助手", font=self.fonts["small"], text_color=T.TEXT_DIM).grid(
             row=1, column=0, sticky="w", padx=22, pady=(0, 22))
 
-        # 全局【演练/实战】总开关（放导航顶部）：右侧「运行日志」之上，管所有任务。
-        # 关=演练（只识别自检，不真正操作，安全）；开=实战（真正操作，有封号风险请用小号）。
-        dry_area = ctk.CTkFrame(bar, fg_color=T.SURFACE, corner_radius=T.RADIUS_SM)
-        dry_area.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 12))
-        dry_area.grid_columnconfigure(0, weight=1)
-        dry_area.grid_columnconfigure(1, weight=0)
-        self.lbl_global_dry = ctk.CTkLabel(dry_area, text="", font=self.fonts["nav"])
-        self.lbl_global_dry.grid(row=0, column=0, sticky="w", padx=14, pady=(10, 10))
-        self.switch_global_dry = ctk.CTkSwitch(
-            dry_area, text="", progress_color=T.DANGER,
-            command=self._toggle_global_dry_run)
-        self.switch_global_dry.grid(row=0, column=1, padx=(6, 14), pady=(10, 10))
-        self._render_global_dry()   # 按当前 config 同步开关显示
-
         self.nav_buttons = {}
         for i, (key, label) in enumerate(self.NAV):
             b = ctk.CTkButton(bar, text=label, font=self.fonts["nav"], anchor="w",
                               height=42, corner_radius=T.RADIUS_SM,
                               fg_color="transparent", hover_color=T.SURFACE,
                               text_color=T.TEXT_DIM, command=lambda k=key: self._show(k))
-            b.grid(row=3 + i, column=0, sticky="ew", padx=12, pady=3)
+            b.grid(row=2 + i, column=0, sticky="ew", padx=12, pady=3)
             self.nav_buttons[key] = b
 
         # 明暗切换按钮（置于风险提示之上，随侧栏底部对齐）
@@ -231,13 +212,15 @@ class App(ctk.CTk):
         return p, True
 
     def refresh_leader_thumb(self):
-        """广播刷新所有含行内队长ID缩略图的页（刷副本页、通用页等），无论从哪个改了「队长ID 库」都同步。"""
+        """广播刷新所有含行内队长ID缩略图/状态的页（刷副本页、通用页等），无论从哪个改了「队长ID 库」都同步。"""
         for p in self._iter_pages():
-            if hasattr(p, "_refresh_leader_btn"):
-                try:
-                    p._refresh_leader_btn()
-                except Exception:
-                    pass
+            for meth in ("_refresh_leader_btn", "_refresh_leader_status"):
+                fn = getattr(p, meth, None)
+                if callable(fn):
+                    try:
+                        fn()
+                    except Exception:
+                        pass
 
     def _iter_pages(self):
         """产出所有顶层页 + 各分类页已建成的内嵌子页。急停/广播/查运行都要扫到子页里的 runner。"""
@@ -354,38 +337,6 @@ class App(ctk.CTk):
                 T.apply_log_tags(log._textbox)
             except Exception:
                 pass
-
-    def _render_global_dry(self):
-        """按当前配置同步侧栏总开关显示：演练(dry_run=True)=开关关+绿色，实战=开关开+红色。"""
-        live = not bool(self.cfg.get("dry_run", True))   # 开关开 = 实战（非演练）
-        sw = getattr(self, "switch_global_dry", None)
-        if sw is not None:
-            if live:
-                sw.select()
-            else:
-                sw.deselect()
-        lbl = getattr(self, "lbl_global_dry", None)
-        if lbl is not None:
-            if live:
-                lbl.configure(text="实战模式", text_color=T.DANGER)
-            else:
-                lbl.configure(text="演练模式", text_color=T.SUCCESS)
-
-    def _toggle_global_dry_run(self):
-        """侧栏【实战模式】总开关：把改动同步进「顶层 + 每个任务命名空间」的 dry_run。
-        任务运行时读的是任务级 dry_run（`tc.get("dry_run", True)`），只写顶层不会生效——
-        曾踩坑：切了实战所有任务仍按演练跑。故统一走 cfg_mod.apply_global_dry_run 一把写。"""
-        live = bool(self.switch_global_dry.get())   # 1=实战
-        cfg = cfg_mod.load_config()
-        cfg["dry_run"] = not live
-        cfg_mod.apply_global_dry_run(cfg)
-        cfg_mod.save_config(cfg)
-        self.cfg = cfg
-        self._render_global_dry()
-        if live:
-            self.log_line("已切到【实战模式】：所有任务将真正操作（命中/下单/组队等都会落实）。请用小号！", "warn")
-        else:
-            self.log_line("已切到【演练模式】（安全）：所有任务只识别自检、不真正操作。", "info")
 
     def toast(self, msg):
         """简单的右下角浮层提示。"""

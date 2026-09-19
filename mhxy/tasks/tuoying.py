@@ -5,7 +5,7 @@
 玩法：刷副本点「进入」后，队长窗口偶发弹「拓印」临摹界面——需按住鼠标沿随机图案描一遍再点「上传」。
 
 本任务把它封装成可在「工具」页「拓印」里单独「演练」的动作：对所选窗口第一个号先切前台、
-在其「拓印临摹绘制区」里识别图案并沿骨架描一遍（实战描；演练=只识别图案、不描）。
+在其「拓印临摹绘制区」里识别图案并沿骨架描一遍（演练=只描不点上传）。
 
 与刷副本共用一套资产与手感：
   · 标定资产存 tasks.tuoying（绘制区 + 标题/上传模板，在「拓印」页标一次，所有副本共用）
@@ -57,7 +57,6 @@ class TuoyingTask(Task):
     def _run(self, ctx):
         tc = ctx.task_cfg(_NS)
         loop = (ctx.task_cfg(_DUNGEON_NS).get("loop", {}) or {})
-        dry_run = tc.get("dry_run", True)
         area = (tc.get("regions") or {}).get("tuoying_area")
         wins = ctx.select_windows()
         if not wins:
@@ -82,15 +81,8 @@ class TuoyingTask(Task):
             ctx.log("绘制区截图失败，请把「拓印」临摹界面调到前台再试。", level="warn")
             return
 
-        # 演练只识别：不描，只报「能否认出图案」。
+        # 演练=沿图案描一遍（不点上传），先确认识别得出图案。
         ok_pattern = scribble.has_pattern(frame, label="拓印绘制区")
-        if dry_run:
-            ctx.log("拓印·演练（只识别）：绘制区画面里%s。"
-                    % ("能识别出图案笔画，可自动描摹。" if ok_pattern
-                       else "没认出图案笔画——请确认临摹界面已弹出、且绘制区框得对。"),
-                    level="hit" if ok_pattern else "warn")
-            return
-
         ctx.log("拓印·演练：按标定绘制区自动沿图案描一遍（临摹界面若没弹开，请先手动打开它）…", level="warn")
         if not ok_pattern:
             ctx.log("绘制区里没认出图案笔画，未描摹（绝不盲描）。请把「拓印」临摹界面调到前台再试。",

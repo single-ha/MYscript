@@ -20,8 +20,7 @@
 滑动用鼠标滚轮。
 
 停止：①所有号都押满 max_escorts 趟（或对话框不再弹出）②时间上限分钟(安全网)
-③手动停止/鼠标甩左上角 failsafe。
-安全默认 dry_run=true：不发快捷键/不点关键操作，只对各号当前屏幕做识别自检，便于先验证模板。
+③手动停止/鼠标甩左上角 failsafe。任务始终实跑（无演练模式）；先预飞自检模板齐全再开跑。
 """
 
 import time
@@ -111,7 +110,7 @@ class EscortTask(Task):
         tc = ctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]
-        dry_run = tc.get("dry_run", True)
+        dry_run = False
         threshold = loop["match_threshold"]
         self.flags = self._load_flags(tc)
         self.max_escorts = max(1, int(loop.get("max_escorts", 3)))

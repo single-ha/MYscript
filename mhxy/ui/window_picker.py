@@ -274,8 +274,8 @@ class WindowPickerDialog(ctk.CTkToplevel):
             idxs = sorted(i for i, v in self._multi_vars.items() if v.get())
             if not idxs:                       # 没勾任何号 → 视为「全部」
                 idxs = list(range(len(self._wins)))
-            # 存空列表＝运行时取全部；否则存所选绝对序号
-            self.targets["multi_indices"] = idxs if len(idxs) != len(self._wins) else []
+            # 存所选绝对序号＝勾选名单是权威（运行时不再被 max_windows 截断）；空列表＝自动全部
+            self.targets["multi_indices"] = idxs
             if self.captain_ns:
                 cap_abs = self._captain_var.get()
                 if cap_abs not in idxs:        # 队长没在所选里 → 落到第一个所选号

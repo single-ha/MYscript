@@ -151,7 +151,7 @@ class SettingsPage(ctk.CTkFrame):
         head.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 2))
         ctk.CTkLabel(head, text="速度与节奏（手速）", font=self.fonts["h2"],
                      text_color=T.TEXT).pack(anchor="w")
-        warn = ctk.CTkLabel(head, text="抢不过别人就往「快」调；但越快越规律越像机器、封号风险越高。先在演练模式下试。",
+        warn = ctk.CTkLabel(head, text="抢不过别人就往「快」调；但越快越规律越像机器、封号风险越高。先用小号试。",
                      font=self.fonts["small"], text_color=T.WARN, justify="left")
         warn.pack(fill="x", pady=(2, 0))
         bind_wraplength(warn)

@@ -8,7 +8,7 @@
 
 实现：非阻塞轮转状态机（每号一份 record，_step_once 只推一小步，随时让出）。
 run() 逐号把状态机一直推到 done（一气呵成）；make_chain_driver() 把同一套状态机交给
-「日常一条龙·多开每窗口独立链」逐次推进。dry_run=演练：只做各标志识别自检、不点不按键。
+「日常一条龙·多开每窗口独立链」逐次推进。任务始终实跑（无演练模式），点到即生效。
 配置/标定放共享命名空间 tasks.guild_checkin（scene 留空=整窗检测；模板=福利页签 + 签到按钮）。
 """
 
@@ -68,7 +68,7 @@ class GuildCheckinTask(Task):
     # ------------------------------------------------------------------
     def _run(self, ctx):
         tc = ctx.task_cfg(_NS)
-        dry_run = tc.get("dry_run", True)
+        dry_run = False
         loop = tc.get("loop", {}) or {}
         regions = tc.get("regions", {}) or {}
         threshold = loop.get("match_threshold", 0.85)

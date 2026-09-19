@@ -56,7 +56,7 @@ class SniperTask(Task):
         tc = ctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]
-        dry_run = tc.get("dry_run", True)
+        dry_run = False
 
         templates = [(it, vision.load_template(it["template"])) for it in tc["watchlist"]]
         templates = [(it, tpl) for it, tpl in templates if tpl is not None]
