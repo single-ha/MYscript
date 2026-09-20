@@ -10,8 +10,14 @@ from .. import theme as T
 from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
-from ...core.inventory import _ALL_BTN_KEYS
+from ...tasks.organize_bag import OrganizeBagTask
 from ..common import Card, bind_wraplength
+
+# 完成度统计用的模板清单 = 「标定（整理背包）」窗口展示的同一份 spec（唯一事实源，二者永不漂移）。
+# 只统计【必需】模板（可选模板第4元=True，如「更多按钮」不参与分数线），避免出现「9/10 却已就绪」。
+_CAL_TPLS = [(it[0], it[1], bool(len(it) > 3 and it[3])) for it in
+             OrganizeBagTask.CALIBRATION.get("templates", [])]
+_REQ_TPLS = [(k, n) for k, n, opt in _CAL_TPLS if not opt]
 
 
 class OrganizeBagPage(ctk.CTkFrame):
@@ -97,7 +103,8 @@ class OrganizeBagPage(ctk.CTkFrame):
         txt.grid(row=0, column=0, sticky="ew")
         self.lbl_ready = ctk.CTkLabel(txt, text="", font=self.fonts["body"], text_color=T.TEXT_DIM, anchor="w")
         self.lbl_ready.pack(fill="x", anchor="w", pady=(4, 0))
-        sub = ctk.CTkLabel(txt, text="完成度只统计动作用到的按钮模板（不含物品清单）——还没加物品时不会显示"
+        bind_wraplength(self.lbl_ready)
+        sub = ctk.CTkLabel(txt, text="完成度只统计「标定」窗口里列出的模板（不含物品清单）——还没加物品时不会显示"
                                      " 0/0 误以为已就绪。点「管理物品」框选要整理的道具并设动作，点「标定」框选按钮。",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub.pack(fill="x", anchor="w", pady=(2, 0))
@@ -112,14 +119,20 @@ class OrganizeBagPage(ctk.CTkFrame):
         items = ob_tc.get("items", []) or []
         tpl = ob_tc.get("templates", {}) or {}
 
-        # 完成度 = 所有动作会用到的按钮模板（含可选「更多」与收尾的「整理」按钮）里已标定的数。
-        all_btn = set(_ALL_BTN_KEYS)
-        done = sum(1 for k in all_btn if tpl.get(k))
-        total = len(all_btn)
-        ready = (done == total)
+        # 完成度 = 运行真正需要的【必需】模板已标定的数（可选模板不卡就绪，但单独提示还有几项可标）。
+        done = sum(1 for k, _n in _REQ_TPLS if tpl.get(k))
+        total = len(_REQ_TPLS)
+        missing = [n for _k, n in _REQ_TPLS if not tpl.get(_k)]
+        ready = not missing
+        opt_missing = [n for k, n, o in _CAL_TPLS if o and not tpl.get(k)]
+        if ready:
+            tail = "　✓ 已就绪"
+            if opt_missing:
+                tail = f"（还有 {len(opt_missing)} 项可选项待标定）　✓ 已就绪"
+        else:
+            tail = "　（还需标定：" + "、".join(missing) + "）"
         self.lbl_ready.configure(
-            text=f"物品 {len(items)} 件；动作按钮 {done}/{total} 已标定"
-                 + ("　✓ 已就绪" if ready else "　（还需标定）"),
+            text=f"物品 {len(items)} 件；动作按钮 {done}/{total} 已标定" + tail,
             text_color=T.SUCCESS if ready else T.WARN)
 
     def _open_organize_calibrate(self):

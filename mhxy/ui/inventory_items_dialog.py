@@ -40,8 +40,8 @@ class InventoryItemsDialog(ctk.CTkToplevel):
         self._thumbs = []   # 防缩略图被 GC（_refresh 开头清空再重建）
 
         self.title("整理背包 · 物品清单")
-        self.geometry("620x600")
-        self.minsize(520, 420)
+        self.geometry("700x660")
+        self.minsize(560, 460)
         self.configure(fg_color=T.BG)
         self.transient(app)
         self.protocol("WM_DELETE_WINDOW", self._close)
@@ -108,14 +108,14 @@ class InventoryItemsDialog(ctk.CTkToplevel):
             return
         for i, it in enumerate(items):
             row = ctk.CTkFrame(self.list_frame, fg_color=T.SURFACE_2, corner_radius=T.RADIUS_SM)
-            row.grid(row=i, column=0, sticky="ew", pady=4, padx=4)
+            row.grid(row=i, column=0, sticky="ew", pady=3, padx=4)
             row.grid_columnconfigure(1, weight=1)
 
-            thumb = load_thumb(it.get("template"), self._thumbs, max_h=40)
+            thumb = load_thumb(it.get("template"), self._thumbs, max_h=30)
             if thumb is not None:
-                ctk.CTkLabel(row, text="", image=thumb).grid(row=0, column=0, padx=(10, 8), pady=8)
+                ctk.CTkLabel(row, text="", image=thumb).grid(row=0, column=0, padx=(10, 8), pady=6)
             else:
-                ctk.CTkLabel(row, text="🎒", font=self.fonts["h2"]).grid(row=0, column=0, padx=(10, 8), pady=8)
+                ctk.CTkLabel(row, text="🎒", font=self.fonts["body"]).grid(row=0, column=0, padx=(10, 8), pady=6)
 
             nm = ctk.CTkLabel(row, text=it.get("name", "?"), font=self.fonts["body_b"],
                               text_color=T.TEXT, justify="left", anchor="w", cursor="hand2")

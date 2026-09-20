@@ -29,7 +29,8 @@ class OrganizeBagTask(Task):
             # bag_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用，留空=整窗检测），见 tasks.shared
         ],
         "templates": [
-("discard_button", "「丢弃」按钮", "操作菜单里的「丢弃」按钮"),
+            ("discard_button", "「丢弃」按钮", "操作菜单里的「丢弃」按钮"),
+            ("more_button", "更多按钮", "商会/摆摊出售前，物品详情面板里的「更多」按钮；有就点开子菜单，没有可跳过（可选）", True),
             ("shop_sell_button", "「商会出售」按钮", "详情/更多里的「商会出售」按钮"),
             ("sell_full_button", "出售窗「满」按钮", "商会出售弹窗里把数量设到最大的「满」按钮"),
             ("sell_confirm_button", "出售窗「出售」按钮", "商会出售弹窗里最终确认的「出售」按钮"),

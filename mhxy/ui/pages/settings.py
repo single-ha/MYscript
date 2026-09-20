@@ -55,21 +55,49 @@ class SettingsPage(ctk.CTkFrame):
         ctk.CTkLabel(self, text="设置", font=self.fonts["title"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w", padx=4, pady=(2, 14))
 
-        # 参数多了，内容区做成可滚动
-        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        scroll.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
-        scroll.grid_columnconfigure(0, weight=1)
-        T.tune_scroll_speed(scroll)
-
+        # 分页签：基础 / 速度与节奏（用户拍板 2026-09-20 改为页签展示）。
         self._value_labels = {}   # key -> 数值显示 Label
         self.speed_vars = {}      # key -> DoubleVar
 
-        self._build_basic_card(scroll)
-        self._build_speed_card(scroll)
+        self.tabs = ctk.CTkTabview(
+            self, fg_color="transparent", anchor="w",
+            segmented_button_fg_color=T.SURFACE_2,
+            segmented_button_selected_color=T.ACCENT,
+            segmented_button_selected_hover_color=T.ACCENT_HOVER,
+            segmented_button_unselected_color=T.SURFACE_2,
+            segmented_button_unselected_hover_color=T.SURFACE,
+            text_color=T.TEXT_DIM, text_color_disabled=T.TEXT_DIM,
+            command=self._paint_tab_selection)
+        self.tabs.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 12))
 
-        ctk.CTkButton(scroll, text="保存设置", font=self.fonts["btn"], height=42, width=160,
-                      corner_radius=T.RADIUS_SM, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, text_color=T.ON_ACCENT,
-                      command=self._save).grid(row=2, column=0, padx=4, pady=(4, 20), sticky="w")
+        self._tab_scrolls = {}
+        for name, builder in (("基础", self._build_basic_card),
+                              ("速度与节奏", self._build_speed_card)):
+            tab = self.tabs.add(name)
+            tab.grid_columnconfigure(0, weight=1)
+            tab.grid_rowconfigure(0, weight=1)
+            scroll = ctk.CTkScrollableFrame(tab, fg_color="transparent")
+            scroll.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+            scroll.grid_columnconfigure(0, weight=1)
+            T.tune_scroll_speed(scroll)
+            builder(scroll)
+            self._tab_scrolls[name] = scroll
+        # 页签按钮靠左对齐（anchor="w"）+ 等宽（用户拍板 2026-09-20）：
+        # CTkSegmentedButton 不提供统一宽度参数，直接给每个 segment 设相同 width。
+        try:
+            sb = getattr(self.tabs, "_segmented_button", None)
+            if sb is not None:
+                for value, btn in (getattr(sb, "_buttons_dict", None) or {}).items():
+                    btn.configure(width=112)
+        except Exception:
+            pass
+        # 初始选中第一个 tab（CTkTabview 初建无高亮，须手动补一次字色）
+        self._paint_tab_selection()
+
+        ctk.CTkButton(self, text="保存设置", font=self.fonts["btn"], height=42, width=160,
+                      corner_radius=T.RADIUS_SM, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+                      text_color=T.ON_ACCENT, command=self._save).grid(
+                          row=2, column=0, padx=4, pady=(2, 16), sticky="w")
 
     # ---- 基础卡片 ----
     def _build_basic_card(self, parent):
@@ -109,6 +137,26 @@ class SettingsPage(ctk.CTkFrame):
                                           progress_color=T.ACCENT_HOVER)
         self._row(card, 6, "调试日志", self.var_debug_sw)
 
+        # 配置迁移：导出 / 导入（zip 打包 config.json + templates/，换机/换号搬标定）——用户拍板 2026-09-20。
+        box = ctk.CTkFrame(card, fg_color="transparent")
+        box.grid(row=7, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 14))
+        box.grid_columnconfigure(0, weight=1)
+        btns = ctk.CTkFrame(box, fg_color="transparent")
+        btns.grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(btns, text="导出配置", font=self.fonts["body"], height=32, width=104,
+                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
+                      text_color=T.TEXT, border_width=1, border_color=T.BORDER,
+                      command=self._export_config).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btns, text="导入配置", font=self.fonts["body"], height=32, width=104,
+                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
+                      text_color=T.TEXT, border_width=1, border_color=T.BORDER,
+                      command=self._import_config).pack(side="left")
+        hint = ctk.CTkLabel(box, text="导出把 config.json 和 templates/（标定的模板图）打成 zip；导入用 zip 覆盖还原，"
+                                      "换机/换号搬标定就靠它。导入会覆盖当前配置。",
+                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
+        hint.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        bind_wraplength(hint)
+
     def _build_hotkey(self, parent):
         box = ctk.CTkFrame(parent, fg_color="transparent")
         row = ctk.CTkFrame(box, fg_color="transparent")
@@ -144,7 +192,7 @@ class SettingsPage(ctk.CTkFrame):
     # ---- 速度与节奏卡片 ----
     def _build_speed_card(self, parent):
         card = Card(parent)
-        card.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 14))
+        card.grid(row=0, column=0, sticky="ew", padx=4, pady=(0, 14))
         card.grid_columnconfigure(0, weight=1)
 
         head = ctk.CTkFrame(card, fg_color="transparent")
@@ -191,6 +239,19 @@ class SettingsPage(ctk.CTkFrame):
     def _on_slider(self, key, val):
         lbl, fmt = self._value_labels[key]
         lbl.configure(text=fmt.format(float(val)))
+
+    def _paint_tab_selection(self, _=None):
+        """选中页签白字（T.ON_ACCENT），未选中回到 TEXT_DIM。
+        CTkSegmentedButton 选中态只变背景不变字色，这里手动补字色（同 category.py 先例）。"""
+        cur = self.tabs.get()
+        bd = getattr(self.tabs._segmented_button, "_buttons_dict", None)
+        if not bd:
+            return
+        for value, btn in bd.items():
+            try:
+                btn.configure(text_color=T.ON_ACCENT if value == cur else T.TEXT_DIM)
+            except Exception:
+                pass
 
     # ---- 取值/存值助手 ----
     def _get_value(self, loc, key):
@@ -239,6 +300,94 @@ class SettingsPage(ctk.CTkFrame):
 
     def _on_threshold(self, val):
         self.thr_value.configure(text=f"{float(val):.2f}")
+
+    # ---- 配置迁移：导出 / 导入（整体备份 config.json + templates/，换机/换号搬标定）----
+    def _export_config(self):
+        from tkinter import filedialog
+        import zipfile
+        path = filedialog.asksaveasfilename(
+            title="导出配置", defaultextension=".zip",
+            initialfile="mhxy_config.zip",
+            filetypes=[("压缩包", "*.zip")])
+        if not path:
+            return
+        cfg_file = cfg_mod.DATA_ROOT / "config.json"
+        if not cfg_file.exists():
+            self.app.toast("没有可导出的配置（config.json 不存在）。", T.WARN)
+            return
+        try:
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(str(cfg_file), arcname="config.json")
+                tpl_dir = cfg_mod.DATA_ROOT / "templates"
+                if tpl_dir.is_dir():
+                    for p in sorted(tpl_dir.rglob("*")):
+                        if p.is_file():
+                            zf.write(str(p), arcname="templates/" + p.relative_to(tpl_dir).as_posix())
+        except Exception as e:
+            self.app.toast(f"导出配置失败：{e}", T.DANGER)
+            return
+        self.app.toast(f"已导出配置 → {path}", T.SUCCESS)
+
+    def _import_config(self):
+        from tkinter import filedialog, messagebox
+        import json, zipfile
+        path = filedialog.askopenfilename(title="导入配置", filetypes=[("压缩包", "*.zip")])
+        if not path:
+            return
+        ok, detail = self._probe_config_zip(path)
+        if not ok:
+            self.app.toast("选中的文件不是配置文件", T.WARN)
+            return
+        if not messagebox.askyesno("导入配置",
+                                   f"该压缩包是工具配置包：{detail}\n导入会用它覆盖当前 config.json 与标定模板，是否继续？"):
+            return
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                self._extract_safely(zf, cfg_mod.DATA_ROOT)
+        except Exception as e:
+            self.app.toast(f"导入配置失败：{e}", T.DANGER)
+            return
+        self.app.cfg = cfg_mod.load_config()
+        try:
+            self.refresh()
+        except Exception:
+            pass
+        self.app.toast("已导入配置（其它页面切过去会自动刷新）", T.SUCCESS)
+
+    def _probe_config_zip(self, path):
+        """校验 zip 是不是本工具配置文件包：内含 config.json 且 JSON 为 dict 且带 tasks 键。
+        返回 (True, 描述) 或 (False, 原因)。""" 
+        import json, zipfile
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                names = [n for n in zf.namelist() if n.split("/")[-1] == "config.json"]
+                for name in names:
+                    try:
+                        data = json.loads(zf.read(name).decode("utf-8"))
+                    except Exception:
+                        continue
+                    if isinstance(data, dict) and (isinstance(data.get("tasks"), dict)
+                                                   or "targets" in data):
+                        has_tpl = any(n.startswith("templates/") for n in zf.namelist())
+                        return True, ("config.json" + (" + templates/" if has_tpl else ""))
+                return False, "无本工具 config.json"
+        except Exception as e:
+            return False, str(e)
+
+    def _extract_safely(self, zf, dest):
+        """把 zip 内容安全解压到 dest（过滤路径穿越，防 zip slip）。"""
+        import shutil
+        for info in zf.infolist():
+            rel = info.filename.replace("\\", "/")
+            if rel.startswith("/") or ".." in rel.split("/"):
+                continue
+            target = dest / rel
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
 
     def _save(self):
         # 重新读盘再改，避免覆盖掉标定向导刚写入的 regions/watchlist。
