@@ -108,7 +108,7 @@ class App(ctk.CTk):
             bar, text="○ 未检测到目标窗口", font=self.fonts["small"], height=34,
             corner_radius=T.RADIUS_SM, fg_color=T.SURFACE, hover_color=T.BORDER,
             border_width=1, border_color=T.WARN,
-            text_color=T.WARN, command=self.open_window_picker)
+            text_color=T.WARN, command=lambda: self.open_window_picker(captain_ns="teaming"))
         self.btn_game_status.grid(row=101, column=0, sticky="ew", padx=12, pady=(4, 2))
 
         ctk.CTkLabel(bar, text="⚠ 脚本有封号风险\n请用小号测试", font=self.fonts["small"],
