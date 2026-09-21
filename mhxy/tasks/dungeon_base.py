@@ -31,9 +31,13 @@
 
 子类只写：name / title / cat。其余完全通用。
 
-副本内每轮流程（user 拍板）：点跳过剧情 → 点小闹钟寻路 → 点进入战斗 → 等战斗打完 → 循环直到副本结束
-收尾判定（settlement 结算界面）：每轮等上一场打完时**主动轮询**是否出现结算界面——识别到即判副本结束、
-立即进收尾，替代「纯等超时」；轮数上限 max_rounds 仍是防死循环兜底。
+副本内统一轮询（user 2026-09-21 拍板，取代「等上一场→点闹钟→点进入战斗」的三段式分步等待）：
+  每帧按优先级检测 结算界面 → 战斗标识 → 跳过剧情 → 进入战斗 → 小闹钟：
+  结算界面即判副本结束、立即进收尾；战斗标识=战斗中不做任何动作、等下次轮询；
+  跳过剧情/小闹钟/进入战斗 出现即点（点「进入战斗」计一场，达 max_rounds 强制收尾防死循环）。
+  保留两层兜底：阶段空闲超时（开局 entry_skip_sec / 寻路 step_timeout_sec / 战斗 battle_timeout_sec，
+  超时=副本可能卡住或已结束，进收尾）与静止画面兜底（still_end_sec：结算界面一闪而过/副本结束后的
+  静止场景也判结束，战斗中画面在动不会误判）。
 收尾动作：判结束后，再点一下屏幕 + 点小闹钟。
 
 配置/标定全存共享 tasks.dungeon（见 DUNGEON_CALIBRATION），各副本无独立配置。
@@ -263,8 +267,6 @@ class DungeonBaseTask(Task):
         self._focus(ctx)
         npc_to = loop.get("npc_dialog_sec", 60)
         step_to = loop.get("step_timeout_sec", 30)
-        entry_skip_to = loop.get("entry_skip_sec", 60)
-        battle_to = loop.get("battle_timeout_sec", 600)
 
         if not self._open_and_join(ctx, loop, regions, threshold):
             return
@@ -277,37 +279,10 @@ class DungeonBaseTask(Task):
         if not self._enter_with_tuoying(ctx, assignments, loop, regions, threshold, step_to):
             return
 
-        # —— 副本内每轮：跳过剧情 → 小闹钟寻路 → 进入战斗 → 等战斗 → 循环直到副本结束 ——
-        max_rounds = max(1, int(loop.get("max_rounds", 24)))
-        skip_to = entry_skip_to
-        round_no = 0
-        while not ctx.should_stop():
-            round_no += 1
-            if round_no > max_rounds:
-                ctx.log(f"已达最大轮数上限({max_rounds})，进入收尾。", level="warn")
-                break
-            # 1) 等上一场打完：先主动查是否已到结算界面（判定副本结束），否则等并点「跳过剧情」续战
-            #    （首轮用 entry_skip 超时等进本传送/首场前剧情，之后用 battle 超时等上一场打完）
-            status = self._wait_round_end(ctx, regions, threshold, skip_to, round_no, loop)
-            if status == "settled":
-                ctx.log("识别到结算界面，副本已结束，进入收尾。", level="hit")
-                break
-            if status is None:
-                ctx.log("等本场打完超时（副本可能已结束或战斗卡住），进入收尾。", level="warn")
-                break
-            # 2) 点「小闹钟」寻路到当前目标
-            if not self._click_when(ctx, "clock", "小闹钟寻路", regions, threshold, step_to):
-                ctx.log("点「小闹钟」寻路超时，中止。", level="error")
-                return
-            # 3) 点「进入战斗」发起本场：寻路到位后偶尔会先弹 NPC 对话（不点过会儿自动过），或寻路没到位导致
-            #    按钮迟迟不出现。等「进入战斗」超时(step_timeout_sec)后改判：小闹钟还在→点它重新寻路再等
-            #    （最多 enter_clock_retries 次）；小闹钟也没了→副本可能已结束，进入收尾。
-            clock_retry = max(0, int(loop.get("enter_clock_retries", 3)))
-            if not self._click_enter_or_dialog(ctx, regions, threshold, step_to, clock_retry):
-                ctx.log(f"第 {round_no} 场「进入战斗」按钮没出现（副本可能已结束），进入收尾。", level="warn")
-                break
-            ctx.log(f"第 {round_no} 场已发起，等它打完…", level="hit")
-            skip_to = battle_to   # 之后等「跳过剧情」= 等上一场打完
+        # —— 副本内统一轮询（user 2026-09-21 拍板）：按优先级逐帧检测
+        #      结算界面 → 战斗标识 → 跳过剧情 → 进入战斗 → 小闹钟 ——
+        if not self._run_rounds(ctx, loop, regions, threshold):
+            return
 
         # —— 收尾：再点一下屏幕推进结算 + 点小闹钟 ——
         self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
@@ -317,6 +292,174 @@ class DungeonBaseTask(Task):
             ctx.log(f"★ {self.title} 完成，已点小闹钟收尾。★", level="hit")
         else:
             ctx.log("没点到「小闹钟」（副本可能已自动结束）。流程结束。", level="warn")
+
+    # ------------------------------------------------------------------
+    # 副本内统一轮询：结算界面 → 战斗标识 → 跳过剧情 → 小闹钟 → 进入战斗
+    # ------------------------------------------------------------------
+    def _run_rounds(self, ctx, loop, regions, threshold):
+        """副本内主循环（取代原「等上一场→点小闹钟→等进入战斗」的三段式分步等待）：
+        每 poll_sec（loop.poll_sec，默认 1s，可配）按优先级统一轮询识别：
+          · 结算界面  → 判副本结束，返回 True（调用方进收尾）；识别阈值比统一阈值放宽 settle_grace
+          · 战斗标识  → 战斗中不做任何动作，等下次轮询（不重开阶段计时——战斗太久由 battle 超时兜底；
+                        自动开战副本没机会点「进入战斗」，见其出现即切战斗阶段，让 battle_timeout_sec 生效）
+          · 跳过剧情  → 点它（过剧情/上一场打完续战）
+          · 进入战斗  → 点它发起本场（发起场次计数 +1，等待窗口结束）；检测先于小闹钟——寻路到位后
+                        两者同帧并存时优先点它，不怕小闹钟抢戏
+          · 小闹钟    → 点它（寻路到当前目标）；点后进「等待窗口」+ 冷却，冷却期内小闹钟再现不再重复点，
+                        避免寻路动画期间被反复重寻路（真没寻到位由超时兜底点它重寻路）
+        保留三层兜底：
+          · 阶段空闲超时：开局 entry_skip_sec / 寻路等待 step_timeout_sec / 战斗 battle_timeout_sec，
+            超时=副本可能卡住或已结束，返回 True 进收尾；其中寻路等待超时且「小闹钟」仍在画面时，
+            先点它重新寻路再等（最多 enter_clock_retries 次，同旧语义）
+          · 发起战斗场次达 max_rounds 上限 → 强制收尾防死循环
+          · 静止画面兜底：画面连续静止 still_end_sec 秒（结算界面一闪而过/副本结束后的静止场景）也判结束
+        返回：True=正常/兜底收尾；False=should_stop 中止。"""
+        entry_to = float(loop.get("entry_skip_sec", 60))
+        step_to = float(loop.get("step_timeout_sec", 30))
+        battle_to = float(loop.get("battle_timeout_sec", 600))
+        max_rounds = max(1, int(loop.get("max_rounds", 24)))
+        still_sec = max(0, int(loop.get("still_end_sec", 20)))
+        still_diff = float(loop.get("still_diff", 6.0))
+        grace = max(0.0, min(0.25, float(loop.get("settle_grace", 0.05))))
+        settle_th = threshold - grace
+        clock_retry_max = max(0, int(loop.get("enter_clock_retries", 3)))
+        poll_sec = max(0.2, float(loop.get("poll_sec", 1.0)))   # 轮询间隔：空闲/等战斗的空转节奏，可配，默认 1s
+        stpl = self.flags.get("settlement")
+
+        fights = 0                    # 已点「进入战斗」发起的场次（达 max_rounds 强制收尾）
+        stage_at = time.time()        # 当前阶段起点（开局=刚进副本）
+        stage_to = entry_to           # 当前阶段空闲超时
+        awaiting_enter = False        # 已点过小闹钟、处于寻路「等进入战斗」等待窗口
+        clock_cool_until = 0.0        # 小闹钟冷却截止：冷却期内小闹钟再次出现不再重复点
+        clock_retry = clock_retry_max  # 寻路等待超时后点小闹钟重新寻路的剩余次数
+        bl_warned = False             # battle_flag 未标定只告警一次
+        last_diag = 0.0
+        # 静止画面兜底状态（结算界面一闪而过/副本已结束的静止场景）
+        self._end_prev = None
+        self._end_still = 0.0
+        self._end_prev_t = 0.0
+
+        while not ctx.should_stop():
+            if fights >= max_rounds:
+                ctx.log(f"已发起 {fights} 场战斗，达最大场数上限({max_rounds})，进入收尾。", level="warn")
+                return True
+            rect = self._scene_rect(ctx, regions)
+            cur = win_mod.grab(rect) if rect else None
+            now = time.time()
+
+            # ① 静止画面兜底：结算界面一闪而过/副本已结束时回到的静止场景也判结束（战斗中画面在动不触发）
+            if cur is not None and still_sec > 0:
+                if self._end_prev is not None:
+                    dd = vision.frame_diff(self._end_prev, cur)
+                    dt = now - self._end_prev_t
+                    self._end_still = (self._end_still + dt) if dd < still_diff else 0.0
+                    if self._end_still >= still_sec:
+                        ctx.log(f"画面已静止 {still_sec:.0f}s（结算界面一闪而过/副本已结束），判定结束。",
+                                level="hit")
+                        return True
+                self._end_prev = cur
+                self._end_prev_t = now
+
+            # ② 结算界面（优先级最高；识别到即判副本结束、进收尾）
+            if cur is not None and stpl is not None:
+                sm = vision.match(cur, stpl, settle_th)
+                if sm is not None:
+                    ctx.log(f"识别到结算界面（{sm[2]:.3f}，阈值{settle_th:.2f}），副本结束。", level="hit")
+                    return True
+
+            # ③ 战斗标识：战斗中不做任何动作，等下次轮询。
+            #    未点过「进入战斗」就开战（自动开战副本）时切到战斗阶段，让 battle_timeout_sec 兜底；
+            #    点进入战斗进入的分支保持原战斗计时（不重开，战斗太久才触发超时收尾）。
+            if cur is not None and self.flags.get("battle_flag") is not None:
+                if ui_state.is_present(cur, self.flags, "battle_flag", threshold):
+                    if stage_to != battle_to:
+                        stage_at = now
+                        stage_to = battle_to
+                        awaiting_enter = False
+                    self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
+                    continue
+
+            # ④ 跳过剧情：点它（过剧情/上一场打完续战），随后等待窗口重开（可点小闹钟寻路）
+            hit = self._match_scene(cur, rect, "skip", threshold)
+            if hit is not None:
+                ctx.mouse.click(hit[0], hit[1])
+                ctx.log(f"点「跳过剧情」（{hit[2]:.3f}）。", level="hit")
+                stage_at = now
+                stage_to = step_to
+                awaiting_enter = False
+                clock_cool_until = 0.0
+                clock_retry = clock_retry_max
+                self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
+                continue
+
+            # ⑤ 进入战斗：点它发起本场，进入战斗等待（等打完由战斗标识/跳过/结算承接）。
+            #    检测先于小闹钟：寻路到位后「进入战斗」与「小闹钟」同帧并存时优先点它，不受小闹钟抢戏
+            hit = self._match_scene(cur, rect, "enter", threshold)
+            if hit is not None:
+                ctx.mouse.click(hit[0], hit[1])
+                fights += 1
+                ctx.log(f"第 {fights} 场：点「进入战斗」（{hit[2]:.3f}），等它打完…", level="hit")
+                stage_at = now
+                stage_to = battle_to
+                awaiting_enter = False
+                clock_cool_until = 0.0
+                self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
+                continue
+
+            # ⑥ 小闹钟：点它寻路（不在冷却期才点，防寻路动画期间画面里图标未消失被反复重寻路；
+            #    真没寻到位时由下方超时兜底点它重寻路）
+            hit = self._match_scene(cur, rect, "clock", threshold)
+            if hit is not None and now >= clock_cool_until and not awaiting_enter:
+                ctx.mouse.click(hit[0], hit[1])
+                ctx.log(f"点「小闹钟」寻路（{hit[2]:.3f}）。", level="hit")
+                stage_at = now
+                stage_to = step_to
+                awaiting_enter = True
+                clock_cool_until = now + step_to
+                clock_retry = clock_retry_max
+                self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
+                continue
+
+            # —— 阶段空闲超时兜底：长时间既无动作也无状态变化 → 副本可能卡住或已结束，进收尾 ——
+            if now < stage_at + stage_to:
+                if now - last_diag >= 15.0:
+                    ctx.log(f"等副本推进…（已空闲 {now - stage_at:.0f}/{stage_to:.0f}s）")
+                    last_diag = now
+                self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
+                continue
+
+            if awaiting_enter:
+                # 寻路等待超时：小闹钟仍在画面 → 点它重新寻路再等（最多 enter_clock_retries 次）；
+                # 小闹钟没了 → 副本可能已结束；重试耗尽 → 无法推进。
+                if clock_retry > 0:
+                    ch = self._match_scene(cur, rect, "clock", threshold)
+                    if ch is not None:
+                        ctx.log(f"等「进入战斗」超时({stage_to:.0f}s)，小闹钟仍在，点它重新寻路（还剩 {clock_retry} 次）。",
+                                level="warn")
+                        ctx.mouse.click(ch[0], ch[1])
+                        clock_retry -= 1
+                        stage_at = now
+                        stage_to = step_to
+                        clock_cool_until = now + step_to
+                        self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
+                        continue
+                if clock_retry <= 0:
+                    ctx.log(f"等「进入战斗」超时({stage_to:.0f}s)，已重寻路多次小闹钟仍在，判定副本可能已结束。",
+                            level="warn")
+                else:
+                    ctx.log(f"等「进入战斗」超时({stage_to:.0f}s)且小闹钟已不在，判定副本可能已结束。", level="warn")
+                    if self.flags.get("battle_flag") is None and not bl_warned:
+                        bl_warned = True
+                        ctx.log("可能因战斗已开始而未现「进入战斗」按钮（自动开战副本）；若反复超时，请到 "
+                                "「通用」页「标定（公共区域）」补标『战斗标识』。", level="warn")
+                return True
+            if self.flags.get("battle_flag") is None and not bl_warned:
+                bl_warned = True
+                ctx.log("等副本推进超时且未标定共享 battle_flag（自动开战副本用它判战斗是否已开始）。",
+                        level="warn")
+            ctx.log(f"等副本推进超时({stage_to:.0f}s)（副本可能已结束或战斗卡住），进入收尾。", level="warn")
+            return True
+        return False
 
     # ---- 进副本：多命中点「进入」定位（当前副本=同标签区队列里的第几个）----
     def _click_enter_multi(self, ctx, loop, regions, threshold, timeout):
@@ -728,139 +871,6 @@ class DungeonBaseTask(Task):
         cx, cy = rect[0] + rect[2] // 2, rect[1] + rect[3] // 2
         ctx.mouse.click(cx, cy)
         ctx.log("再点一下屏幕（推进收尾）。")
-
-    def _click_enter_or_dialog(self, ctx, regions, threshold, timeout, clock_retry=3):
-        """等并点「进入战斗」发起本场。寻路到位后偶尔会先弹 NPC 对话（不点过会儿自动继续）、
-        或寻路没到位导致按钮迟迟不出现——故等 timeout（step_timeout_sec）秒仍没点到「进入战斗」时改判：
-        「小闹钟」还在画面里 → 点它重新寻路，重置计时再继续等「进入战斗」（最多 clock_retry 次）；
-        「小闹钟」也不在了 → 判定副本可能已结束，返回 False（由调用方进收尾）。
-
-        有部分副本点「小闹钟」寻路到位后【自动进入战斗】，根本不出「进入战斗」按钮——等待期间除
-        找按钮外还要盯「战斗标识」（共享 battle_flag，未标定则跳过此项退回原逻辑）：已开战就视为本场
-        已发起直接返回 True，别干等超时后误判副本结束。"""
-        deadline = time.time() + timeout
-        last_diag = 0.0
-        bl_warned = False
-        while not ctx.should_stop():
-            scene_rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(scene_rect) if scene_rect else None
-            hit = self._match_scene(cur, scene_rect, "enter", threshold)
-            if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
-                ctx.log(f"点「进入战斗」（{hit[2]:.3f}）。", level="hit")
-                self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
-                return True
-            # 自动开战的副本：没有「进入战斗」按钮，识别到战斗已开始即视为本场已发起
-            if cur is not None:
-                if ui_state.is_present(cur, self.flags, "battle_flag", threshold):
-                    ctx.log("未出现「进入战斗」按钮，但已识别到战斗（寻路后自动开战），视为本场已发起。",
-                            level="hit")
-                    return True
-                if (self.flags.get("battle_flag") is None and not bl_warned
-                        and time.time() >= deadline - timeout + 2.0):
-                    bl_warned = True
-                    ctx.log("等「进入战斗」超时且未标定共享 battle_flag，无法得知是否已自动开战；请到 "
-                            "「通用」页「标定（公共区域）」补标『战斗标识』（自动开战副本需要它）。", level="warn")
-            now = time.time()
-            if now <= deadline:
-                if now - last_diag >= 15.0:
-                    ctx.log(f"等「进入战斗」…（已 {now - (deadline - timeout):.0f}/{timeout:.0f}s）")
-                    last_diag = now
-                self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
-                continue
-            # 超时：先查「小闹钟」是否还在画面里——还在=>寻路目标没到位，点它重新寻路再等；
-            #          没了=>副本可能已结束（返回 False 由调用方收尾）。
-            clock_hit = self._match_scene(cur, scene_rect, "clock", threshold) if cur is not None else None
-            if clock_hit is None:
-                ctx.log(f"等「进入战斗」超时({timeout:.0f}s)且小闹钟已不在，判定副本可能已结束。", level="warn")
-                return False
-            if clock_retry <= 0:
-                ctx.log(f"等「进入战斗」超时({timeout:.0f}s)，已重寻路多次小闹钟仍在，判定副本可能已结束。", level="warn")
-                return False
-            ctx.mouse.click(clock_hit[0], clock_hit[1])
-            ctx.log(f"等「进入战斗」超时({timeout:.0f}s)，小闹钟仍在，点击重新寻路（还剩 {clock_retry} 次）。", level="warn")
-            self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
-            clock_retry -= 1
-            deadline = time.time() + timeout
-            last_diag = 0.0
-        return False
-
-    def _wait_round_end(self, ctx, regions, threshold, timeout, round_no, loop=None):
-        """等上一场战斗打完：每帧先主动查「结算界面」（副本结束信号），识别到即返回 "settled"；
-        否则等并点「跳过剧情」续战（= 上一场已打完可开下一场），返回 "skip"。
-        超时仍未出现两者 → 返回 None（由调用方判副本结束收尾）。
-
-        结算识别的阈值比统一阈值放宽 settle_grace（默认 0.05，config.dungeon.loop.settle_grace）：
-        结算画面只在一场结束时短暂出现，框样可能与标定图有细微差异，放宽能显著提高召回。
-        关键时序：结算画面在【点完跳过剧情后】才弹出，故点跳过剧情后驻留 post_skip_sec（默认 3）秒专盯结算。
-        停滞画面兜底：still_end_sec（默认 20，0=关）秒画面连续静止即判副本结束——
-        结算界面一闪而过抓不住时，它关闭后回到的静止场景就是结束信号。"""
-        deadline = time.time() + timeout
-        last_diag = 0.0
-        grace = max(0.0, min(0.25, float((loop or {}).get("settle_grace", 0.05))))
-        settle_th = threshold - grace
-        still_sec = max(0, int((loop or {}).get("still_end_sec", 20)))
-        still_diff = float((loop or {}).get("still_diff", 6.0))
-        post_skip_sec = max(0.0, float((loop or {}).get("post_skip_sec", 3.0)))
-        stpl = self.flags.get("settlement")
-        self._end_prev = None
-        self._end_still = 0.0
-        self._end_prev_t = 0.0
-        while not ctx.should_stop():
-            scene_rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(scene_rect) if scene_rect else None
-            now_t = time.time()
-            if cur is not None:
-                # 兜底：画面连续静止 still_sec 秒 → 判副本已结束。
-                # 结算界面一闪而过（会自动关闭）抓不住时，它关闭后回到的静止场景就是结束信号，
-                # 不再干等超时。战斗中画面一直在动，不会误判。
-                if self._end_prev is not None and still_sec > 0:
-                    dd = vision.frame_diff(self._end_prev, cur)
-                    dt = now_t - self._end_prev_t
-                    if dd < still_diff:
-                        self._end_still += dt
-                    else:
-                        self._end_still = 0.0
-                    if self._end_still >= still_sec:
-                        ctx.log(f"画面已静止 {still_sec:.0f}s（结算界面一闪而过/副本已结束），判定结束。",
-                                level="hit")
-                        return "settled"
-                self._end_prev = cur
-                self._end_prev_t = now_t
-            if cur is not None and stpl is not None:
-                sm = vision.match(cur, stpl, settle_th)
-                if sm is not None:
-                    ctx.log(f"识别到结算界面（{sm[2]:.3f}，阈值{settle_th:.2f}），副本结束。", level="hit")
-                    return "settled"
-            tj = self._match_scene(cur, scene_rect, "skip", threshold) if cur is not None else None
-            if tj is not None:
-                ctx.mouse.click(tj[0], tj[1])
-                ctx.log(f"点「跳过剧情」({round_no})（{tj[2]:.3f}）。", level="hit")
-                self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
-                # 结算画面是【点完跳过剧情后】才弹的（最后一场：点跳过剧情=触发结算）。
-                # 点完立刻驻留 post_skip_sec 秒专盯结算，命中即副本结束；错过也到期返回，
-                # 不再多等，免得非最后一场时把下一场剧情卡住。
-                look_end = time.time() + post_skip_sec
-                while not ctx.should_stop() and time.time() < look_end:
-                    sr2 = self._scene_rect(ctx, regions)
-                    cur2 = win_mod.grab(sr2) if sr2 else None
-                    if cur2 is not None and stpl is not None:
-                        sm2 = vision.match(cur2, stpl, settle_th)
-                        mdiag = vision.best_score(cur2, stpl)
-                        sc2 = (mdiag[0] if mdiag and mdiag[1] else 0.0)
-                        if sm2 is not None:
-                            ctx.log(f"点跳过剧情后识别到结算界面（{sm2[2]:.3f}），副本结束。", level="hit")
-                            return "settled"
-                        ctx.log(f"结算候检未命中：最佳分 {sc2:.2f} / 阈值 {settle_th:.2f}", level="debug")
-                    self._interruptible_sleep(ctx, self._jitter(0.25, ctx))
-                return "skip"
-            if not ctx.should_stop() and now_t > deadline:
-                return None
-            if now_t - last_diag >= 15.0:
-                ctx.log(f"等本场打完…（已 {now_t - (deadline - timeout):.0f}/{timeout:.0f}s）")
-                last_diag = now_t
-            self._interruptible_sleep(ctx, self._jitter(0.25, ctx))   # 0.25s 轮询：结算界面一闪而过也要抓得住
-        return None
 
     def _dry_run_selfcheck(self, ctx, assignments, regions, threshold):
         cap_keys = [(k, label) for (k, label, _d, *_x) in DUNGEON_CALIBRATION["templates"]]
