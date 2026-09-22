@@ -21,6 +21,10 @@ from .pages import (DailyPage, WeeklyPage, SinglePage, MultiPage, ToolsPage,
                     GeneralPage, SettingsPage, AboutPage)
 
 
+# 日志级别 -> 中文简称（筛选开关上显示；与 theme.LEVEL_COLOR 的键一致）
+LOG_LEVEL_LABELS = {"info": "信息", "hit": "命中", "warn": "警告", "error": "错误"}
+
+
 # ----------------------------------------------------------------------
 # 主窗口
 # ----------------------------------------------------------------------
@@ -126,69 +130,225 @@ class App(ctk.CTk):
                                                              padx=22, pady=18)
 
     # ---------------- 全局日志面板（常驻右侧，所有功能共用一处）----------------
+    LOG_LEVEL_ORDER = ("info", "hit", "warn", "error")
+    LOG_CAP = 2000          # 内存缓冲上限：超过就裁掉最旧一批（保留 LOG_TRIM_KEEP 行）
+    LOG_TRIM_KEEP = 1800    # 裁行滞后阈值：保最后 1800 行，避免每行都触发整体重绘
+
     def _build_log_panel(self):
-        """右侧常驻日志列：各页面/任务的日志统一汇到这里，按来源（秒装备/组队/整理背包…）打标签。
+        """右侧常驻日志列：各页面/任务的日志统一汇到这里，按来源（秒装备/组队/整理背包…）打标签，
+        并支持【关键字/级别/来源】三种筛选——筛选即时作用于历史与新进日志。
         以前每个页面各有一个日志框，功能一多就散乱；现在收敛成这一处，谁产生的日志靠行首来源标签区分。"""
+        # 筛选状态：日志先进内存缓冲（约 2000 行封顶），筛选变化时用缓冲整体重绘
+        self._log_entries = []                      # [(ts, source, level, msg), ...]
+        self._log_shown = 0                         # 当前显示行数（供计数角标）
+        self._log_sources_seen = []                 # 本次会话见过的来源（去重，喂来源下拉）
+        self._log_filter_text = ""                  # 关键字（小写，同时匹配正文与来源名）
+        self._log_filter_levels = set(self.LOG_LEVEL_ORDER)   # 启用的级别，默认全开
+        self._log_filter_source = None              # None = 全部来源
+        self._log_level_btns = {}
+
         panel = ctk.CTkFrame(self, fg_color=T.SIDEBAR, corner_radius=0, width=340)
         panel.grid(row=0, column=2, sticky="nsew")
         panel.grid_propagate(False)
         panel.grid_columnconfigure(0, weight=1)
-        panel.grid_rowconfigure(1, weight=1)
+        panel.grid_rowconfigure(4, weight=1)   # 日志正文占满剩余高度
 
         head = ctk.CTkFrame(panel, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(16, 8))
+        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(16, 6))
         head.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(head, text="运行日志", font=self.fonts["h2"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w")
+        self.log_count_lbl = ctk.CTkLabel(head, text="", font=self.fonts["small"],
+                                          text_color=T.TEXT_DIM)
+        self.log_count_lbl.grid(row=0, column=1, sticky="e", padx=(0, 8))
         ctk.CTkButton(head, text="清空", font=self.fonts["small"], height=26, width=56,
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
-                      command=self.clear_log).grid(row=0, column=1, sticky="e")
+                      command=self.clear_log).grid(row=0, column=2, sticky="e")
+
+        # ① 关键字筛选
+        self.log_search = ctk.CTkEntry(panel, height=28, font=self.fonts["small"],
+                                       placeholder_text="筛选日志：关键字 / 来源…",
+                                       fg_color=T.SURFACE_2, border_color=T.BORDER, text_color=T.TEXT)
+        self.log_search.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 6))
+        self.log_search.bind("<KeyRelease>", lambda _e: self._on_log_filter_change())
+
+        # ② 级别筛选：四个小开关，默认全亮=全部显示；关掉某档即只看其余档
+        chips = ctk.CTkFrame(panel, fg_color="transparent")
+        chips.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 6))
+        for i, lvl in enumerate(self.LOG_LEVEL_ORDER):
+            b = ctk.CTkButton(chips, text=LOG_LEVEL_LABELS[lvl], font=self.fonts["small"],
+                              height=26, width=64, corner_radius=T.RADIUS_SM, border_width=1,
+                              command=lambda l=lvl: self._toggle_log_level(l))
+            b.grid(row=0, column=i, padx=(0, 6) if i < len(self.LOG_LEVEL_ORDER) - 1 else 0, sticky="w")
+            self._log_level_btns[lvl] = b
+        self._render_log_level_chips()
+
+        # ③ 来源筛选：动态收集本次会话出现的来源
+        self.log_src_menu = ctk.CTkOptionMenu(panel, values=["全部来源"], height=28,
+                                              font=self.fonts["small"],
+                                              fg_color=T.SURFACE_2, button_color=T.BTN,
+                                              button_hover_color=T.BTN_HOVER,
+                                              dropdown_fg_color=T.SURFACE,
+                                              dropdown_hover_color=T.BTN_HOVER,
+                                              text_color=T.TEXT,
+                                              command=self._on_log_source_filter)
+        self.log_src_menu.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 8))
 
         self.log = ctk.CTkTextbox(panel, font=self.fonts["mono"], fg_color=T.SURFACE_2,
                                   text_color=T.TEXT, corner_radius=T.RADIUS_SM, wrap="word")
-        self.log.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 14))
+        self.log.grid(row=4, column=0, sticky="nsew", padx=12, pady=(0, 14))
         T.apply_log_tags(self.log._textbox)
         self.log.configure(state="disabled")
         self.log_line("界面就绪。各功能的日志都会汇总到这里。", "info")
 
     def log_line(self, msg, level="info", source=None):
         """统一日志出口（所有页面/任务都调它）。source 非空时在行首加暗色来源标签，如「秒装备 ›」。
-        超过约 2000 行就裁掉最旧的，避免长时间运行把内存吃满。
-        debug 级别日志只在全局「调试日志」开关（config.debug_log，设置页可勾）打开时才显示。"""
+        日志先写入内存缓冲（约 2000 行封顶），再按当前筛选决定是否上屏；筛选变动时用缓冲整体重绘，
+        历史与新进日志都被同套筛选过滤。debug 级别只在全局「调试日志」开关（config.debug_log，
+        设置页可勾）打开时才进入缓冲。"""
         if level == "debug" and not getattr(self, "cfg", {}).get("debug_log", False):
             return
+        if getattr(self, "log", None) is None:
+            return
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        entry = (ts, source, level, msg)
+        # 首次见到某来源时加进来源下拉（只是补选项，不影响当前选择）
+        if source and source not in self._log_sources_seen:
+            self._log_sources_seen.append(source)
+            try:
+                self.log_src_menu.configure(values=["全部来源"] + self._log_sources_seen)
+            except Exception:
+                pass
+        self._log_entries.append(entry)
+        # 超过上限：裁掉最旧一批（滞后 200 行再触发一次整体重绘，避免每行都重绘）
+        if len(self._log_entries) > self.LOG_CAP:
+            del self._log_entries[:-self.LOG_TRIM_KEEP]
+            self._refresh_log_view()
+            return
+        if self._log_passes(entry):
+            self._append_log_entry(entry)
+
+    def _log_passes(self, entry):
+        """单条日志是否通过当前筛选：级别(开关组) → 来源(下拉) → 关键字(搜索框)。"""
+        _ts, source, level, msg = entry
+        if level in self.LOG_LEVEL_ORDER:
+            if level not in self._log_filter_levels:
+                return False
+        else:
+            # 未列成开关的级别（如 debug 调试日志）只在「没收紧级别筛选」时才显示
+            if len(self._log_filter_levels) != len(self.LOG_LEVEL_ORDER):
+                return False
+        if self._log_filter_source is not None and (source or "") != self._log_filter_source:
+            return False
+        kw = self._log_filter_text
+        if kw and kw not in f"{source or ''} {msg}".lower():
+            return False
+        return True
+
+    def _append_log_entry(self, entry, force_scroll=False):
+        """把一条新日志增量插进文本框（只在通过筛选时走这里）；阅读时不在底部就不抢滚动。"""
+        log = self.log
+        ts, source, level, msg = entry
+        scroll = force_scroll
+        try:
+            scroll = force_scroll or log.yview()[1] >= 0.999
+        except Exception:
+            scroll = True
+        log.configure(state="normal")
+        try:
+            log._textbox.insert("end", f"[{ts}] ")
+            if source:
+                log._textbox.insert("end", f"{source} › ", "src")
+            log._textbox.insert("end", f"{msg}\n", level)
+        except Exception:
+            prefix = f"{source} › " if source else ""
+            try:
+                log.insert("end", f"[{ts}] {prefix}{msg}\n")
+            except Exception:
+                pass
+        log.configure(state="disabled")
+        self._log_shown += 1
+        self._update_log_count()
+        if scroll:
+            try:
+                log.see("end")
+            except Exception:
+                pass
+
+    def _refresh_log_view(self):
+        """按当前筛选用内存缓冲整体重绘文本框（筛选变化 / 裁行时调用）。"""
         log = getattr(self, "log", None)
         if log is None:
             return
-        ts = datetime.datetime.now().strftime("%H:%M:%S")
         log.configure(state="normal")
+        shown = 0
         try:
-            tb = log._textbox
-            tb.insert("end", f"[{ts}] ")
-            if source:
-                tb.insert("end", f"{source} › ", "src")
-            tb.insert("end", f"{msg}\n", level)
-            # 行数封顶：删掉最旧的若干行（int(index) 是行号，含末尾空行）
-            try:
-                nlines = int(tb.index("end-1c").split(".")[0])
-                if nlines > 2000:
-                    tb.delete("1.0", f"{nlines - 1800}.0")
-            except Exception:
-                pass
+            log._textbox.delete("1.0", "end")
+            for entry in self._log_entries:
+                if self._log_passes(entry):
+                    log._textbox.insert("end", f"[{entry[0]}] ")
+                    if entry[1]:
+                        log._textbox.insert("end", f"{entry[1]} › ", "src")
+                    log._textbox.insert("end", f"{entry[3]}\n", entry[2])
+                    shown += 1
         except Exception:
-            prefix = f"{source} › " if source else ""
-            log.insert("end", f"[{ts}] {prefix}{msg}\n")
-        log.see("end")
+            pass
         log.configure(state="disabled")
+        self._log_shown = shown
+        self._update_log_count()
+        try:
+            log.see("end")
+        except Exception:
+            pass
 
     def clear_log(self):
         log = getattr(self, "log", None)
-        if log is None:
+        self._log_entries.clear()
+        self._log_shown = 0
+        if log is not None:
+            log.configure(state="normal")
+            log.delete("1.0", "end")
+            log.configure(state="disabled")
+        self._update_log_count()
+
+    # ---- 日志筛选控件回调 ----
+    def _on_log_filter_change(self):
+        """搜索框内容变化：关键字即时刷新（同时匹配正文与来源名，不区分大小写）。"""
+        self._log_filter_text = self.log_search.get().strip().lower()
+        self._refresh_log_view()
+
+    def _toggle_log_level(self, level):
+        """级别开关翻转：点亮=显示该级别；四个全亮=不筛级别（含调试日志）。"""
+        if level in self._log_filter_levels:
+            self._log_filter_levels.discard(level)
+        else:
+            self._log_filter_levels.add(level)
+        self._render_log_level_chips()
+        self._refresh_log_view()
+
+    def _render_log_level_chips(self):
+        """按启用状态刷新级别开关外观：点亮=主色底白字，熄灭=透明底灰字带描边。"""
+        for lvl, b in self._log_level_btns.items():
+            on = lvl in self._log_filter_levels
+            b.configure(fg_color=T.ACCENT if on else "transparent",
+                        text_color=T.ON_ACCENT if on else T.TEXT_DIM,
+                        border_color=T.ACCENT if on else T.BORDER,
+                        hover_color=T.ACCENT_HOVER if on else T.BTN_HOVER)
+
+    def _on_log_source_filter(self, choice):
+        """来源下拉：选「全部来源」或某个具体来源。"""
+        self._log_filter_source = None if choice == "全部来源" else choice
+        self._refresh_log_view()
+
+    def _update_log_count(self):
+        """头部计数角标：筛选生效时「显示/总数 条」，未筛选只显示总数，空日志不显示。"""
+        m = len(self._log_entries)
+        n = self._log_shown
+        lbl = getattr(self, "log_count_lbl", None)
+        if lbl is None:
             return
-        log.configure(state="normal")
-        log.delete("1.0", "end")
-        log.configure(state="disabled")
+        lbl.configure(text=f"{n}/{m} 条" if n != m else (f"{m} 条" if m else ""))
 
     # 各顶层面（对应 NAV 每一项）对应的类。懒加载：启动只建默认页，其余等第一次切到才建——
     # 一次性建全部页面会瞬间绘制几百个 CTk 画布控件，正是启动「一块块慢慢刷出来」的根因。

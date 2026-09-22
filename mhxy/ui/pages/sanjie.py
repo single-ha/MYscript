@@ -36,7 +36,7 @@ class SanjiePage(ctk.CTkFrame):
         bar.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(bar, text="三界奇缘", font=self.fonts["title"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w")
-        sub = ctk.CTkLabel(bar, text="开活动→参加→直接进答题→任意点选项（自动进下一题）→识别到完成字样即停（支持多开逐号轮转）",
+        sub = ctk.CTkLabel(bar, text="开活动→参加→直接进答题→任意点选项（自动进下一题）→识别到完成字样即停（多开逐号顺序跑）",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
         sub.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         bind_wraplength(sub)

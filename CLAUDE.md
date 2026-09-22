@@ -167,6 +167,9 @@ mhxy/
   界面「⇅ 两区互换」整段对调、组内保留）。**整组开关 `tasks.daily.group_enabled`**（{single,multi}→bool，缺省
   全开）：区头开关整组停用/启用，引擎 `_enabled_steps` 过滤时跳过整组（行级 enabled 独立保留，重开整组即恢复）。**进个人组的前提**是任务有 `CHAINS_PER_WINDOW=True` +
   `make_chain_driver(wctx)`（每窗口 record + 单步推进，非阻塞；帮派签到/活跃度已是轮转状态机）。
+  **三界奇缘/趣味鉴赏 置 `CHAIN_SEQUENTIAL=True`（user 拍板 2026-09-22）**：一条龙多开时**逐号顺序执行**——
+  主循环指定唯一持有者、`_drive_chain_until_yield(blocking=True)` 把它从头做完整再放行，排队的号跳过等待
+  （不做跨号轮转）；窗口失效的号不占持有权（不会饿死别号）。任务单独跑（独立页/多开轮转）不受影响。
   多人步只走集体 `_run_collective`，不建独立链。
 - **组队是共享能力、单独可一键触发**：握手在 `core/teaming.TeamFormation`；通用页有「选队长 + 一键组队」
   （跑 `DungeonTask`），角色参数存共享 `tasks.teaming`。任何副本跑之前都先自动组队。

@@ -56,6 +56,11 @@ class Task:
     #   「每窗口一份 record + 单步推进函数」，与本任务自己的 run()/轮转共用同一套状态机。
     #   需跨窗口协作的任务（如组队副本）保持 False，由一条龙当「集体屏障」处理。
     CHAINS_PER_WINDOW = False
+    # True=在「日常一条龙·多开」里该任务按【逐号顺序执行】：一个号把它从头到尾做完
+    # （record done）才轮到下一个号做，不做跨号轮转——配合 daily 的 _drive_chain_until_yield(blocking=True)。
+    #   适合「短而快、频繁切号反而低效/凌乱」的任务（三界奇缘/趣味鉴赏）；
+    #   只影响日常一条龙的链推进，任务自己单独跑的行为不变（见各任务 _run）。
+    CHAIN_SEQUENTIAL = False
     # True=开跑前先把目标窗口带回主界面（run() 入口统一做；找不到主界面只打日志不拦任务）。
     #   特殊任务（如拓印「演练」需拓印弹窗已在前台）覆盖为 False，启动时绝不 ESC 关它。
     ENSURE_MAIN_ON_START = True
@@ -326,6 +331,33 @@ class Task:
             overall_timeout=(time_limit * 60 if time_limit > 0 else 0),
             timeout_msg=(f"已达时间上限 {time_limit} 分钟，停止。" if time_limit > 0 else None),
             jitter_ratio=ctx.cfg.get("humanize", {}).get("interval_jitter", 0.4))
+
+    def _run_rotation_sequential(self, ctx, records, step_fn, multi, switch_delay, tick, time_limit=0):
+        """多号【顺序执行】版轮转：一个号完整跑完（done）再切下一个号，不做跨号并行轮转。
+
+        三界奇缘 / 趣味鉴赏这类「从头到尾一口气做一个号、再轮下个号」的任务走这套
+        （用户拍板：多号轮询时一个号完成之后再继续下一个号）。单开（records 只有一个）
+        行为与并行版完全一致。参数含义同 _make_rotation；time_limit 仍按整个多号过程的
+        总上限计算，顺次跑时把剩余预算转给后面的号（到点自停 + 各任务文案）。"""
+        start = time.time()
+        for i, rec in enumerate(records):
+            if ctx.should_stop():
+                break
+            if time_limit > 0:
+                remain = time_limit * 60 - (time.time() - start)
+                if remain <= 0:
+                    ctx.log("已达总时间上限，停止。", level="warn")
+                    break
+                remain_min = max(0.001, remain / 60.0)
+            else:
+                remain_min = 0
+            if i > 0:
+                cur = getattr(rec["ctx"], "label", None) or f"号{i + 1}"
+                ctx.log(f"── 上一个号已完成，轮到 {cur} ──", level="hit")
+            rotation.run_rotation(self._make_rotation(
+                ctx, [rec], step_fn, multi, switch_delay, tick, remain_min))
+            if ctx.should_stop():
+                break
 
     @staticmethod
     def _frame_diff(a, b):

@@ -223,6 +223,11 @@ def _mk_weekly():
     }
 
 
+SINGLE_TASK_ORDER = ["treasure_map", "secret_realm", "appreciation", "sanjie",
+                     "escort", "guild_checkin", "activity_reward"]
+# 单人任务页签顺序 = 日常一条龙「单人任务组」默认任务顺序（两处必须一致，改这里两者同步）：
+#   ui/pages/single.py 的页签按此顺序创建；config 的 daily.steps 个人组默认顺序 = 它。
+
 DEFAULT_CONFIG = {
     # ---- 跨任务共享 ----
     "window_title": "梦幻西游",          # 游戏窗口标题关键字（模糊匹配）
@@ -524,6 +529,7 @@ DEFAULT_CONFIG = {
                 "match_threshold": 0.85,     # 标志模板匹配阈值
                 "target_clicks": 5,          # 点击心形图案的目标次数，点满即停
                 "heart_timeout_sec": 120,    # 鉴赏环节超时（秒）：这么久没点满也收尾该号
+                "post_click_sec": 1.0,       # 每点中心形图案后的间隔（秒，带抖动），用户拍板：每次点击延迟 1s
                 "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
                 "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
                 "scroll_wait_sec": 0.8,      # 当前屏没匹配到心形图案后，等这么久才开始滚动（防刚点完画面未落定就滚）
@@ -766,22 +772,15 @@ DEFAULT_CONFIG = {
         # ---- 日常一条龙（只做串联：把下面 steps 里勾选的任务按顺序依次跑完）----
         #   完全沿用各子任务自身的流程/标定/演练实战/多开单开设置，本块只存「跑哪些、按什么顺序」。
         #   steps 是【有序】列表，每项 {task, enabled}；界面分「个人/多人」两区、可勾选 + 区内调序；
-        #   两区分组固定：多人组（集体屏障：刷副本/抓鬼）在前、个人组（每窗口独立链：宝图/运镖/秘境/
-        #   三界奇缘/帮派签到/活跃度奖励）在后，不提供两区互换。group_order 仅供兼容旧配置，引擎不再读它。
+        #   两区分组固定：多人组（集体屏障：刷副本/抓鬼）在前、个人组（每窗口独立链）在后，不提供两区互换。
+        #   个人组默认顺序 = 单人任务页签顺序（SINGLE_TASK_ORDER，改页签就改它，两处保持一致）。
         #   单人任务组在本趟流程中 → 多人步跑完转入单人步前【强制解散】队伍（界面开关随之强制打开）；
         #   只有多人步时按 tasks.teaming.auto_disband（开关）决定是否收尾解散。
         #   秒装备不在候选内（无限抢货、不会自己跑完，会卡死整条龙）。
         "daily": {
-            "steps": [
-                {"task": "treasure_map", "enabled": True},
-                {"task": "escort", "enabled": True},
-                {"task": "secret_realm", "enabled": True},
-                {"task": "sanjie", "enabled": True},
-                {"task": "guild_checkin", "enabled": True},
-                {"task": "activity_reward", "enabled": True},
-                {"task": "dungeon", "enabled": True},
-                {"task": "zhuagui", "enabled": True}
-            ],
+            "steps": ([{"task": n, "enabled": True} for n in SINGLE_TASK_ORDER]
+                      + [{"task": "dungeon", "enabled": True},
+                         {"task": "zhuagui", "enabled": True}]),
             "group_order": ["multi", "single"],
             "loop": {
                 "time_limit_min": 0,          # 整条龙的时间上限(分钟)安全网，0=不限；正常按各子任务自身条件跑完

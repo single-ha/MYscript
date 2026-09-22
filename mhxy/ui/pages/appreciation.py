@@ -36,7 +36,7 @@ class AppreciationPage(ctk.CTkFrame):
         bar.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(bar, text="趣味鉴赏", font=self.fonts["title"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w")
-        sub = ctk.CTkLabel(bar, text="开活动→参加→匹配并点击心形图案，点满设定次数或超时自动结束",
+        sub = ctk.CTkLabel(bar, text="开活动→参加→匹配并点击心形图案，点满设定次数或超时自动结束（多开逐号顺序跑）",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
         sub.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         bind_wraplength(sub)

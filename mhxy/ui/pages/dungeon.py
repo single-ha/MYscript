@@ -9,7 +9,6 @@
     某副本 preflight 不过/异常 → 记日志、跳过，继续下一个（「失败跳过」）；
   · 「停止」置 _abort，当前副本停后不再接下一个、清空队列。"""
 
-import re
 import threading
 
 import customtkinter as ctk
@@ -23,6 +22,7 @@ from ...tasks.base import dungeon_tasks
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
 from ..common import Card, bind_wraplength, teaming_ns, teaming_ready, required_regions, required_templates
+from ..dungeon_picker import DungeonPicker
 
 
 class DungeonPage(ctk.CTkFrame):
@@ -43,30 +43,9 @@ class DungeonPage(ctk.CTkFrame):
         self._cal_dialog = None        # 副本自身「标定」的去重槽
         self._win_count = 0
         # 已收录的副本（按注册顺序）。title 显示、name 作配置命名空间键。
+        # 展示/勾选顺序、勾选同步都由共享组件 DungeonPicker 负责（见 _build_body 的别名赋值）。
         self._dungeons = dungeon_tasks()
         self._dtitles = [c.title for c in self._dungeons]
-        self._checkboxes = {}                 # name -> (CB, var)
-
-        # 副本展示/运行顺序：第一行侠士本、第二行普通本，每行内按等级低→高。
-        # 与刷副本列无关——这里只决定「显示/勾选顺序」，运行也按此顺序（所见即所刷）。
-        def _sort_key(name):
-            m = re.match(r"dt_(\d+)_([a-z]+?)(\d*)$", name)
-            if not m:
-                return (0, 0)
-            # 等级低→高；同等级里按子序号小→大（60普通1 在 60普通2 前）
-            return (int(m.group(1)), int(m.group(3) or 0))
-        self._cat_order = ["xiashi", "common"]                     # 第1行侠士本、第2行普通本
-        self._cat_label = {"xiashi": "侠士本", "common": "普通本"}
-        self._layout = {cat: [] for cat in self._cat_order}
-        for c in self._dungeons:
-            cat = getattr(c, "cat", "common")
-            if cat not in self._layout:
-                self._layout[cat] = []
-            self._layout[cat].append(c.name)
-        for names in self._layout.values():
-            names.sort(key=_sort_key)
-        self._display_names = [n for cat in self._cat_order for n in self._layout[cat]]
-        self._selected = list(self._display_names)   # 勾选的副本名列表（按 _display_names 顺序）
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
@@ -143,26 +122,16 @@ class DungeonPage(ctk.CTkFrame):
         sel.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(sel, text="选择要刷的副本（可多选，按顺序一个个刷）",
                      font=self.fonts["body"], text_color=T.TEXT).grid(row=0, column=0, sticky="w")
-        self._cks = ctk.CTkFrame(sel, fg_color="transparent")
-        self._cks.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        for row, cat in enumerate(self._cat_order):
-            rowbox = ctk.CTkFrame(self._cks, fg_color="transparent")
-            rowbox.grid(row=row, column=0, sticky="ew", pady=(0, 6))
-            ctk.CTkLabel(rowbox, text=self._cat_label[cat] + "（等级低→高）",
-                         font=self.fonts["small"], text_color=T.TEXT_DIM).pack(anchor="w", pady=(0, 2))
-            cs = ctk.CTkFrame(rowbox, fg_color="transparent")
-            cs.pack(anchor="w")
-            for col, name in enumerate(self._layout[cat]):
-                c = next((cc for cc in self._dungeons if cc.name == name), None)
-                if c is None:
-                    continue
-                var = ctk.BooleanVar(value=(name in self._selected))
-                cb = ctk.CTkCheckBox(cs, text=c.title, variable=var, font=self.fonts["body"],
-                                     text_color=T.TEXT, fg_color=T.SURFACE_2,
-                                     hover_color=T.BORDER, checkmark_color=T.ON_ACCENT,
-                                     border_color=T.BORDER, command=lambda n=name: self._on_toggle(n))
-                cb.grid(row=0, column=col, sticky="w", padx=(0, 18), pady=3)
-                self._checkboxes[name] = (cb, var)
+        # 勾选区统一走共享组件（与「日常一条龙」页同一份 tasks.dungeon.selected，两处同步）。
+        self.picker = DungeonPicker(sel, app=self.app, fonts=self.fonts, on_change=self._on_pick_change)
+        self.picker.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        # 别名（本页 _selected_names/_write_enter_target 等继续用原来的属性名）
+        self._dungeons = self.picker._dungeons
+        self._cat_order = self.picker.cat_order
+        self._cat_label = self.picker.cat_label
+        self._layout = self.picker.layout
+        self._display_names = self.picker.display_names
+        self._selected = self.picker.sync()
 
         # 组队设置（队长/已组队/跑完解散）统一在「通用/多人任务」页共用一份，存共享 tasks.teaming
         hint = ctk.CTkLabel(left, text="按勾选顺序一个个刷，失败自动跳过下一个。\n"
@@ -181,19 +150,9 @@ class DungeonPage(ctk.CTkFrame):
     # ---- 刷新 / 状态 ----
     def refresh(self):
         self.app.cfg = cfg_mod.load_config()
-        hub = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
-        sel = hub.get("selected")
-        if isinstance(sel, str):
-            sel = [sel]
-        if isinstance(sel, list):
-            sel = [n for n in self._display_names if n in sel]
-        else:
-            sel = []
-        if not sel:
-            sel = list(self._display_names[:1])
-        self._selected = sel
-        for name, (cb, var) in self._checkboxes.items():
-            var.set(name in self._selected)
+        # 勾选状态由共享组件从 tasks.dungeon.selected 重读（任何页面改过都同步到这里）
+        if getattr(self, "picker", None) is not None:
+            self._selected = self.picker.sync()
         # 组队设置（已组队/解散）统一在「多人任务」页共用一份，存共享 tasks.teaming
         self._render_team_status()
         self._kick_count_windows()
@@ -300,29 +259,12 @@ class DungeonPage(ctk.CTkFrame):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _on_toggle(self, name):
-        """勾选/取消勾选副本：写进中枢命名空间 tasks.dungeon.selected（保存勾选顺序）。"""
-        _, var = self._checkboxes[name]
-        cfg = cfg_mod.load_config()
-        hub = cfg_mod.task_config(cfg, self.TASK_NAME)
-        sel = hub.get("selected")
-        if isinstance(sel, str):
-            sel = [sel]
-        if not isinstance(sel, list):
-            sel = []
-        sel = [n for n in self._display_names if n in sel]
-        if var.get():
-            if name not in sel:
-                sel.append(name)
-        else:
-            sel = [n for n in sel if n != name]
-        hub["selected"] = sel
-        cfg_mod.set_task_config(cfg, self.TASK_NAME, hub)
-        cfg_mod.save_config(cfg)
-        self.app.cfg = cfg
+    def _on_pick_change(self, name, checked, sel):
+        """共享组件勾选回调：config 已由组件写进 tasks.dungeon.selected，这里只刷新本页状态与日志。
+        与「日常一条龙」页的点选共用同一份配置，两页看到的是同一批勾选。"""
         self._selected = sel
         self._render_team_status()
-        if var.get():
+        if checked:
             self._log_line(f"已勾选副本：{name}（当前共 {len(sel)} 个）", "info")
         else:
             self._log_line(f"已取消副本：{name}", "info")

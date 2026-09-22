@@ -7,11 +7,12 @@
   开「活动」(快捷键 Alt+C) → 在活动列表里找到「趣味鉴赏」那张卡片 → 点该行【右侧的「参加」按钮】
   → 进入鉴赏界面：画面里有待取/待鉴赏的「图文列表区域」，目标是认出【心形图案】并点击它；
      当前屏没匹配到心形图案 → 就在【图文列表区域】里滚动（滚轮）再匹配，循环找；
-  → 结束条件：点击心形图案累计达到设定的次数（默认 5 次） 或 该号在鉴赏环节超时（默认 120s）→ 收尾。
+  → 结束条件：点击心形图案累计达到设定的次数（默认 5 次） 或 该号在鉴赏环节超时（默认 120s）
+     → 收尾：逐层 Esc 关面板【返回主界面】（用户拍板 2026-09-22：点完 5 个心形后返回主界面）。
 
-★ 多开轮转（用户要求「多号之间每一步都轮转」）：与三界奇缘同套方案——
-  每号各持一份状态(record)，主循环对每个号【各推进一小步】(非阻塞)，
-  操作某号前先 activate() 切前台。单开=列表只有一个号、同走这套轮转。
+★ 多开执行（用户拍板 2026-09-22：一个号完成之后再继续下一个号）：多个号【逐个顺序跑】——
+  先让一个号从头到尾做完（点满次数/done）再切下一个号，不做跨号并行轮转；
+  操作某号前先 activate() 切前台。单开=列表只有一个号、同一套执行。
 
 导航靠 ctx.send_hotkey(动作名)（键位在 config.hotkeys，用户可按游戏「系统设置-快捷键」核对）。
 滑动用鼠标滚轮（滚动只发生在标定的「图文列表区域」内，不滚出该区）。
@@ -25,14 +26,14 @@ import time
 from ..core import vision
 from ..core import window as win_mod
 from ..core import scan
-from ..core.rotation import run_rotation
+from ..ui import ui_state
 from .base import Task, register
 
 # 每个号的状态机状态（非阻塞：每访问一次只推进一步）
 S_OPEN_ACTIVITY = "OPEN_ACTIVITY"   # 发活动快捷键
 S_FIND_CARD = "FIND_CARD"           # 活动列表里滚轮找「趣味鉴赏」卡片 → 点「参加」
 S_HEART = "HEART"                   # 鉴赏界面：匹配心形图案→点它；没匹配到在图文列表区域滚动再匹配
-S_DONE = "DONE"                     # 收尾 → 本轮结束
+S_DONE = "DONE"                     # 收尾：返回主界面 → 本轮结束
 
 # 模板键（用 appr_ 前缀=鉴赏，避免与运镖/宝图/三界奇缘同名模板在磁盘互相覆盖——存盘按 templates/tm_<key>.png）。
 _FLAG_KEYS = ["appr_entry", "appr_join", "appr_heart"]
@@ -44,8 +45,9 @@ _REQUIRED_FLAGS = ["appr_entry", "appr_join", "appr_heart"]
 class AppreciationTask(Task):
     name = "appreciation"
     title = "趣味鉴赏"
-    description = "自动开活动→参加→匹配并点击心形图案，点满设定次数或超时即停（支持多开轮转）"
+    description = "自动开活动→参加→匹配并点击心形图案，点满设定次数或超时即停（多开逐号顺序跑：一个号完成再下一个号）"
     CHAINS_PER_WINDOW = True   # 可做「日常一条龙·每窗口独立链」
+    CHAIN_SEQUENTIAL = True    # 一条龙多开时也逐号顺序跑：一个号点满再轮下一个号（用户拍板）
 
     CALIBRATION = {
         "regions": [
@@ -130,16 +132,16 @@ class AppreciationTask(Task):
             self._dry_run_selfcheck(ctx, contexts, multi, regions, threshold, switch_delay, deadline)
             return
 
-        ctx.log(f"★ 实战模式：{('多开轮转 ' + str(len(contexts)) + ' 个号' if multi else '单号')}，"
-                f"每号点满 {self.target_clicks} 次心形图案或鉴赏超时即停，号与号之间逐步轮转 ★", level="warn")
+        ctx.log(f"★ 实战模式：{('多开逐号 ' + str(len(contexts)) + ' 个号' if multi else '单号')}，"
+                f"每号点满 {self.target_clicks} 次心形图案或鉴赏超时即停，一个号完成后再继续下一个号 ★", level="warn")
         if time_limit > 0:
             ctx.log(f"时间上限 {time_limit} 分钟（到点自停）。")
 
         records = [self._new_record(c) for c in contexts]
-        run_rotation(self._make_rotation(
+        self._run_rotation_sequential(
             ctx, records,
             lambda rec: self._step_once(rec["ctx"], rec, loop, regions, threshold),
-            multi, switch_delay, tick, time_limit))
+            multi, switch_delay, tick, time_limit)
 
         if all(r["done"] for r in records):
             ctx.log("所有号都已结束。")
@@ -152,7 +154,9 @@ class AppreciationTask(Task):
     def make_chain_driver(self, wctx):
         """给定单窗口上下文，返回 (record, step_fn)。step_fn() 推进该窗口本任务状态机一步
         （沿用 run() 同款 _step_once），record["done"]=本任务在该窗口完成。
-        与 run() 共用 _new_record/_step_once，不自跑轮转、不切前台（由一条龙总轮转统一切）。"""
+        与 run() 共用 _new_record/_step_once，不自跑轮转、不切前台（由一条龙总轮转统一切）。
+        本任务 CHAIN_SEQUENTIAL=True：一条龙多开时主循环只让一个号持有它、一口气做到 done
+        才放行下一个号（不跨号轮转）；step_fn 内部无等待让出依赖，可被阻塞式连推。"""
         tc = wctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]
@@ -302,7 +306,7 @@ class AppreciationTask(Task):
             rec["not_found_since"] = None
             rec["scrolls"] = 0
             ctx.log(f"点中心形图案（{hit[2]:.3f}），累计 {rec['clicks']}/{self.target_clicks}。", level="hit")
-            self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
+            self._interruptible_sleep(ctx, self._jitter(float(loop.get("post_click_sec", 1.0)), ctx))
             return
 
         # 当前屏没匹配到心形图案 → 在图文列表区域滚动再匹配
@@ -324,9 +328,18 @@ class AppreciationTask(Task):
             ctx.log(f"已在图文列表里滚了 {rec['scrolls']} 屏仍未找到心形图案，反向滚回重找…", level="warn")
             rec["not_found_since"] = time.time()
 
-    # ---- 收尾 → 本轮结束（点满次数或超时都走这）----
+    # ---- 收尾：点满次数/超时后逐层关面板回到主界面 → 本轮结束 ----
+    #   用户拍板 2026-09-22：点完 5 个心形图案之后返回主界面（遗留面板会挡乱下个任务/下个号）。
+    #   复用 ui_state.back_to_main_screen：按 Esc 或 Esc 弹不干净就多按几层，直到画面认出商城图标。
     def _do_done(self, ctx, rec, loop, regions, threshold):
-        ctx.log(f"该号鉴赏结束，共点击 {rec['clicks']} 个心形图案。")
+        st = ui_state.back_to_main_screen(ctx.cfg, ctx.window)
+        done_msg = f"该号鉴赏结束，共点击 {rec['clicks']} 个心形图案。"
+        if st is True:
+            ctx.log(f"已返回主界面。{done_msg}", level="hit")
+        elif st is None:
+            ctx.log(f"无法判定主界面（未标定商城图标），不盲按；{done_msg}", level="warn")
+        else:
+            ctx.log(f"连按 Esc 仍未回主界面（可能有弹窗卡住）；{done_msg}", level="warn")
         rec["done"] = True
 
     # ---- 卡死兜底（仅鉴赏前状态：关面板重新开活动）----

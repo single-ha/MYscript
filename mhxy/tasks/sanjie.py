@@ -11,9 +11,9 @@
   → 直到 识别到「完成」标志（今日已答完/次数用完等字样，qq_done） 或
      长时间找不到选项按钮（界面已关闭），判定「答题已结束」→ 收尾结束本轮。
 
-★ 多开轮转（用户要求「多号之间每一步都轮转」）：与秘境降妖同套方案——
-  每号各持一份状态(record)，主循环对每个号【各推进一小步】(非阻塞)，
-  操作某号前先 activate() 切前台。单开=列表只有一个号、同走这套轮转。
+★ 多开执行（用户拍板 2026-09-22：一个号完成之后再继续下一个号）：多个号【逐个顺序跑】——
+  先让一个号从头到尾做完（识别到完成字样/done）再切下一个号，不做跨号并行轮转；
+  操作某号前先 activate() 切前台。单开=列表只有一个号、同一套执行。
 
 导航靠 ctx.send_hotkey(动作名)（键位在 config.hotkeys，用户可按游戏「系统设置-快捷键」核对）。
 
@@ -26,7 +26,6 @@ import time
 from ..core import vision
 from ..core import window as win_mod
 from ..core import scan
-from ..core.rotation import run_rotation
 from .base import Task, register
 
 # 每个号的状态机状态（非阻塞：每访问一次只推进一步）
@@ -45,8 +44,9 @@ _REQUIRED_FLAGS = ["qq_entry", "qq_join"]
 class SanjieTask(Task):
     name = "sanjie"
     title = "三界奇缘"
-    description = "自动开活动→参加→进答题→任意点选项（自动进下一题）→识别到完成字样即停（支持多开轮转）"
+    description = "自动开活动→参加→进答题→任意点选项（自动进下一题）→识别到完成字样即停（多开逐号顺序跑：一个号完成再下一个号）"
     CHAINS_PER_WINDOW = True   # 可做「日常一条龙·每窗口独立链」
+    CHAIN_SEQUENTIAL = True    # 一条龙多开时也逐号顺序跑：一个号答完全套再轮下一个号（用户拍板）
 
     CALIBRATION = {
         "regions": [
@@ -137,16 +137,16 @@ class SanjieTask(Task):
             self._dry_run_selfcheck(ctx, contexts, multi, regions, threshold, switch_delay, deadline)
             return
 
-        ctx.log(f"★ 实战模式：{('多开轮转 ' + str(len(contexts)) + ' 个号' if multi else '单号')}，"
-                f"识别到完成字样(今日已答完/次数用完)即停，号与号之间逐步轮转 ★", level="warn")
+        ctx.log(f"★ 实战模式：{('多开逐号 ' + str(len(contexts)) + ' 个号' if multi else '单号')}，"
+                f"识别到完成字样(今日已答完/次数用完)即停，一个号完成后再继续下一个号 ★", level="warn")
         if time_limit > 0:
             ctx.log(f"时间上限 {time_limit} 分钟（到点自停）。")
 
         records = [self._new_record(c) for c in contexts]
-        run_rotation(self._make_rotation(
+        self._run_rotation_sequential(
             ctx, records,
             lambda rec: self._step_once(rec["ctx"], rec, loop, regions, threshold),
-            multi, switch_delay, tick, time_limit))
+            multi, switch_delay, tick, time_limit)
 
         if all(r["done"] for r in records):
             ctx.log("所有号都已识别到完成字样/结束。")
@@ -159,7 +159,9 @@ class SanjieTask(Task):
     def make_chain_driver(self, wctx):
         """给定单窗口上下文，返回 (record, step_fn)。step_fn() 推进该窗口本任务状态机一步
         （沿用 run() 同款 _step_once），record["done"]=本任务在该窗口完成。
-        与 run() 共用 _new_record/_step_once，不自跑轮转、不切前台（由一条龙总轮转统一切）。"""
+        与 run() 共用 _new_record/_step_once，不自跑轮转、不切前台（由一条龙总轮转统一切）。
+        本任务 CHAIN_SEQUENTIAL=True：一条龙多开时主循环只让一个号持有它、一口气做到 done
+        才放行下一个号（不跨号轮转）；step_fn 内部无等待让出依赖，可被阻塞式连推。"""
         tc = wctx.task_cfg(self.name)
         loop = tc["loop"]
         regions = tc["regions"]

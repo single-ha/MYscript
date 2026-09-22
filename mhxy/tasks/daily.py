@@ -6,6 +6,9 @@
   · 个人组（CHAINABLE_SINGLE）= 宝图 / 运镖 / 秘境降妖 / 三界奇缘 / 帮派签到 / 活跃度奖励
         —— 每窗口独立任务链，互不制约：号1 自己 运镖→宝图→… 一路跑，号2 独立同样跑，
         靠一只鼠标在号间轮转交错推进，谁也不等谁。
+        例外（用户拍板，2026-09-22）：三界奇缘 / 趣味鉴赏（CHAIN_SEQUENTIAL=True）不交错轮转，
+        而是【一个号把它从头做完整（record done）才轮到下一个号做】——主循环指定唯一持有者、
+        以 blocking 推进，排队的号跳过本号等待。
   · 多人组（MULTI_BARRIER）= 刷副本 / 抓鬼
         —— 本质跨窗口协作（必须先组队、且只有队长操作），做不成「每窗口独立」，
         故是【集体屏障】：各窗口在自己的链里走到这一步就【停靠等待】，直到所有未完成的号都汇合到
@@ -37,12 +40,13 @@ import time
 
 from .base import Task, register, get_task, dungeon_tasks
 from .dungeon_base import DUNGEON_NS
+from ..core.config import SINGLE_TASK_ORDER
 from ..core.teaming import TeamFormation
 
 # 可进一条龙的任务（这些都有明确「完成条件」、会自动结束）。秒装备 sniper 不在此列。
 # 个人组：每窗口独立链（各自都能经 make_chain_driver 逐窗口跑）。
-CHAINABLE_SINGLE = ["treasure_map", "secret_realm", "escort", "sanjie",
-                    "guild_checkin", "activity_reward", "appreciation"]
+# 默认顺序 = 单人任务页签顺序（与 config.SINGLE_TASK_ORDER 同源，改页签/默认序就改那一处）。
+CHAINABLE_SINGLE = list(SINGLE_TASK_ORDER)
 # 多人组：跨窗口协作，作为「集体屏障」——各号走到该步停靠，汇合齐才集体跑一次。
 # "dungeon" 是「刷副本」中枢步：跑时解析成 tasks.dungeon.selected 选中的那个副本（见 _resolve）。
 MULTI_BARRIER = ["dungeon", "zhuagui"]
@@ -109,6 +113,10 @@ class DailyTask(Task):
                     + " —— 各号走到它就汇合等待，组队后由队长统一跑，跑完一起放行。")
         if multi:
             ctx.log("各号独立推进单人任务链，谁先跑完谁先进下一个，互不等待。")
+        seq_steps = [n for n in steps if getattr(get_task(n), "CHAIN_SEQUENTIAL", False)]
+        if seq_steps and multi:
+            ctx.log("其中 " + "、".join(self._title_of(n, ctx) for n in seq_steps)
+                    + " 按逐号顺序执行：一个号完整跑完再轮下一个号，不做跨号轮转。")
         if time_limit > 0:
             ctx.log(f"整体时间上限 {time_limit:g} 分钟（仅安全网；正常按各任务自身条件跑完）。")
 
@@ -147,9 +155,19 @@ class DailyTask(Task):
 
             # —— 推进各「未停靠、未完成」窗口的独立链一段 ——
             drivable = [c for c in alive if not self._at_barrier(c, steps)]
+            # 顺序执行任务（三界奇缘/趣味鉴赏，CHAIN_SEQUENTIAL，用户拍板）：同一时刻只让
+            # 一个号持有它、从头做到完整（blocking 推进）；排队的号本轮跳过、不做跨号轮转。
+            seq_holder = None
             for c in drivable:
                 if ctx.should_stop():
                     break
+                is_seq = self._current_seq_chain(ctx, c, steps)
+                if is_seq and seq_holder is not None:
+                    if not c["seq_wait_logged"]:
+                        c["wctx"].log(f"「{self._title_of(steps[c['idx']], ctx)}」排队等待："
+                                      f"前一个号跑完才轮到本号。")
+                        c["seq_wait_logged"] = True
+                    continue
                 wctx = c["wctx"]
                 if wctx.window.rect() is None:
                     if not c["gone_warned"]:
@@ -164,12 +182,16 @@ class DailyTask(Task):
                         continue
                     if ctx.should_stop():
                         break
+                if is_seq:
+                    seq_holder = c     # 窗口可用才授予「顺序任务唯一推进者」持有权
                 c["gone_warned"] = c["fg_warned"] = False
                 try:
                     wctx.maybe_auto_organize()
                 except Exception as e:
                     wctx.log(f"自动整理背包检测异常（已忽略，继续）：{e}", level="warn")
-                self._drive_chain_until_yield(ctx, c, steps)
+                self._drive_chain_until_yield(ctx, c, steps, blocking=is_seq)
+                if seq_holder is c:
+                    seq_holder = None
                 if multi and len(drivable) > 1:
                     self._interruptible_sleep(ctx, self._jitter(switch_delay, ctx))
             self._interruptible_sleep(ctx, self._jitter(tick, ctx))
@@ -194,8 +216,10 @@ class DailyTask(Task):
     # ------------------------------------------------------------------
     @staticmethod
     def _new_chain(wctx):
-        """每窗口一条独立链记录。idx=当前在 steps 的位置；sub_rec/sub_step=当前子任务的状态机与单步函数。"""
+        """每窗口一条独立链记录。idx=当前在 steps 的位置；sub_rec/sub_step=当前子任务的状态机与单步函数。
+        sub_seq=当前子任务是否为「顺序执行」型（CHAIN_SEQUENTIAL，三界奇缘/趣味鉴赏），由 _begin_step 写入。"""
         return {"wctx": wctx, "idx": 0, "sub_rec": None, "sub_step": None,
+                "sub_seq": False, "seq_wait_logged": False,
                 "cur_title": None, "done": False,
                 "gone_warned": False, "fg_warned": False, "park_logged": False}
 
@@ -204,6 +228,16 @@ class DailyTask(Task):
         """该窗口当前停靠在「多人步」集体屏障上（未完成、未在跑子任务、当前步是多人组任务）。"""
         return (not c["done"] and c["sub_step"] is None
                 and c["idx"] < len(steps) and steps[c["idx"]] in MULTI_BARRIER)
+
+    def _current_seq_chain(self, ctx, c, steps):
+        """该窗口「当前所在步」是否是顺序执行任务（CHAIN_SEQUENTIAL，三界奇缘/趣味鉴赏）。
+        已开跑的看 _begin_step 记录的 sub_seq；还没开跑的按任务类判定（首次遇到也认得出）。"""
+        if c["sub_step"] is not None:
+            return bool(c.get("sub_seq"))
+        if c["idx"] < len(steps):
+            _eff, task_cls = self._resolve(steps[c["idx"]], ctx)
+            return bool(task_cls is not None and getattr(task_cls, "CHAIN_SEQUENTIAL", False))
+        return False
 
     @staticmethod
     def _advance(c, steps):
@@ -217,11 +251,18 @@ class DailyTask(Task):
     def _end_step(c):
         c["sub_rec"] = None
         c["sub_step"] = None
+        c["sub_seq"] = False
+        c["seq_wait_logged"] = False
 
-    def _drive_chain_until_yield(self, ctx, c, steps):
+    def _drive_chain_until_yield(self, ctx, c, steps, blocking=False):
         """切前台后连续推进本窗口的独立链：当前子任务能往下走就接着走、跑完就接下一个子任务，
         直到撞「等待点」(状态没变) / 撞多人屏障 / 整条链跑完 / 撞连续推进上限 才让出。
-        与 core/rotation._drive_until_yield 同一套判据，只是这里跨「子任务边界」也能连推。"""
+        与 core/rotation._drive_until_yield 同一套判据，只是这里跨「子任务边界」也能连推。
+
+        blocking=True：顺序执行任务（CHAIN_SEQUENTIAL，三界奇缘/趣味鉴赏）的持有者专用——
+        本窗口被主循环指定为「该任务的唯一推进者」时，忽略「状态没变就让出」与连续推进上限，
+        把一个号从头到尾做完整（step 内部自带拟人 sleep 与各自的超时兜底，不会死循环）；
+        做完整后：后续步骤仍是顺序型 → 继续持有连推；是普通任务/撞障碍/整条链跑完 → 让出交还轮转。"""
         cap, t0 = 0, time.time()
         while not ctx.should_stop():
             if c["sub_step"] is None:
@@ -233,6 +274,8 @@ class DailyTask(Task):
                 if self._begin_step(ctx, c, steps[c["idx"]]) != "ready":
                     c["idx"] += 1                       # 跳过该步（未就绪/演练/不支持），接着下一步
                     continue
+                if blocking and not c["sub_seq"]:
+                    return                              # 顺序步已做完、后续不是顺序型任务 → 交还轮转
             rec = c["sub_rec"]
             before = rec["state"]
             try:
@@ -248,9 +291,11 @@ class DailyTask(Task):
                 c["idx"] += 1
                 continue                                # 接着在本窗口推进下一步
             if rec["state"] == before:
+                if blocking:
+                    continue                            # 顺序执行：状态没变也继续做，做完才让出
                 return                                  # 等待点（监控盯屏/等响应）→ 让出
             cap += 1
-            if cap >= 12 or time.time() - t0 >= 4.0:
+            if not blocking and (cap >= 12 or time.time() - t0 >= 4.0):
                 return                                  # 连续推进上限，强制让出（同 rotation）
 
     def _begin_step(self, ctx, c, name):
@@ -267,6 +312,8 @@ class DailyTask(Task):
         if not getattr(task, "CHAINS_PER_WINDOW", False):
             wctx.log(f"「{title}」不支持每窗口独立链，跳过。", level="warn")
             return "skip"
+        # 顺序执行型任务（三界奇缘/趣味鉴赏）：让主循环「一个号从头做完整再轮下一个号」
+        c["sub_seq"] = bool(getattr(task, "CHAIN_SEQUENTIAL", False))
         ok, probs = task.preflight(ctx)
         if not ok:
             wctx.log(f"跳过「{title}」（未就绪）：" + "；".join(probs), level="warn")

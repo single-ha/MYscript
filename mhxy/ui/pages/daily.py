@@ -17,6 +17,7 @@ from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
 from ..common import (Card, Tooltip, bind_wraplength, required_regions, required_templates,
                       teaming_ns)
+from ..dungeon_picker import DungeonPicker
 
 # 分区集合。两区分组固定：多人组在前、个人组在后（不提供互换）；GROUP_OF 里出现过的区都保留（以后加新区自动跟上）。
 _GROUPS = ["multi"] + [g for g in dict.fromkeys(GROUP_OF.values()) if g != "multi"]
@@ -49,6 +50,7 @@ class DailyPage(ctk.CTkFrame):
         self._rows = {g: [] for g in _GROUPS}   # 各区的行控件 [{"frame","name","badge","group","idx","step"}]
         self._collapsed = {g: False for g in _GROUPS}   # 各区是否折叠
         self._flat = []           # 渲染顺序（区头/行交错），与 list_frame 的 grid 行对齐
+        self._dun_pick_open = True   # 「刷副本」卡内的副本勾选区是否展开（跨重建保留）
         self._lbl_count = {}      # group -> 计数标签
         self._lbl_chevron = {}    # group -> 折叠箭头标签
         self._drag = None         # 拖动中的状态 {"group": 区, "idx": 区内下标}
@@ -414,7 +416,7 @@ class DailyPage(ctk.CTkFrame):
 
         # 左：拖动手柄（按住左键上下拖动整行排序）。光标设成移动样式（失败不致命）。
         grip = ctk.CTkLabel(row, text="⠿", font=self.fonts["h2"], text_color=T.TEXT_DIM, width=22)
-        grip.grid(row=0, column=0, rowspan=2, sticky="ns", padx=(10, 2), pady=8)
+        grip.grid(row=0, column=0, rowspan=2, sticky="ns", padx=(10, 2), pady=5)
         try:
             grip.configure(cursor="fleur")
         except Exception:
@@ -426,21 +428,28 @@ class DailyPage(ctk.CTkFrame):
         # 左二：执行序号圆形徽标（启用=蓝底数字按全局先后编号；停用=灰底圆点，_renumber 里填）
         badge = ctk.CTkLabel(row, text="", font=self.fonts["body_b"], width=26, height=26,
                              corner_radius=13, text_color=T.ON_ACCENT, fg_color=T.ACCENT)
-        badge.grid(row=0, column=1, rowspan=2, padx=(2, 12), pady=8)
+        badge.grid(row=0, column=1, rowspan=2, padx=(2, 12), pady=5)
 
-        # 中：标题（可换行）+ 就绪提示，独占可伸展列
+        # 中：标题（可换行）+ 就绪提示同排一行（卡片更矮），独占可伸展列
         mid = ctk.CTkFrame(row, fg_color="transparent")
-        mid.grid(row=0, column=2, rowspan=2, sticky="ew", pady=8)
+        mid.grid(row=0, column=2, rowspan=2, sticky="ew", pady=5)
         mid.grid_columnconfigure(0, weight=1)
         title = ctk.CTkLabel(mid, text=self._task_title(name), font=self.fonts["body_b"],
                              text_color=T.TEXT, anchor="w")
         title.grid(row=0, column=0, sticky="ew")
         bind_wraplength(title)
 
-        ready = self._task_status(name)
-        ctk.CTkLabel(mid, text=("✓ 已就绪" if ready else "⚠ 还需标定"), font=self.fonts["small"],
-                     text_color=(T.SUCCESS if ready else T.WARN)).grid(
-            row=1, column=0, sticky="w", pady=(5, 0))
+        # 状态三态：先看标定（未标定=需标定，条件不变）；标定好了再看勾选——
+        # 未勾选=「未选中」，勾选了才显示「已就绪」（用户拍板 2026-09-22）。
+        if not self._task_status(name):
+            st_text, st_color = "⚠ 还需标定", T.WARN
+        elif not step["enabled"]:
+            st_text, st_color = "未选中", T.TEXT_DIM
+        else:
+            st_text, st_color = "✓ 已就绪", T.SUCCESS
+        ready_lbl = ctk.CTkLabel(mid, text=st_text, font=self.fonts["small"],
+                                 text_color=st_color)
+        ready_lbl.grid(row=0, column=1, sticky="e", padx=(10, 0))
 
         # 右：启用 / 停用开关（按任务名定位，拖动后下标会变，故 _toggle_step 用 name 不用 idx）。
         # 整组停用时行级开关仍保留（组重开后行勾选恢复），仅视觉置灰。
@@ -448,7 +457,10 @@ class DailyPage(ctk.CTkFrame):
         sw = ctk.CTkSwitch(row, text="", variable=var, width=44,
                            progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
                            command=lambda nm=name, v=var: self._toggle_step(nm, v))
-        sw.grid(row=0, column=3, rowspan=2, padx=(8, 14), pady=8)
+        sw.grid(row=0, column=3, rowspan=2, padx=(8, 14), pady=5)
+        # 「刷副本」步：卡片下内嵌副本勾选（共享组件，与「刷副本」页同一份 tasks.dungeon.selected）。
+        if name == "dungeon":
+            self._build_dungeon_picker(row)
         if not self._group_on.get(g, True):
             sw.configure(state="disabled")
             title.configure(text_color=T.TEXT_DIM)
@@ -457,6 +469,32 @@ class DailyPage(ctk.CTkFrame):
                     lbl.configure(text_color=T.TEXT_DIM)
 
         return {"frame": row, "name": name, "badge": badge, "group": g, "idx": len(self._rows[g]), "step": step}
+
+    def _build_dungeon_picker(self, row):
+        """「刷副本」行卡片下方内嵌副本勾选：用共享组件 DungeonPicker，读写与「刷副本」页同一份
+        tasks.dungeon.selected —— 一处点选、两页同步（杜绝双份设置分歧）。标题可点击折叠勾选区，
+        折叠状态存 self._dun_pick_open，整表重建后仍保持。"""
+        sep = ctk.CTkFrame(row, fg_color=T.BORDER, height=1)
+        sep.grid(row=2, column=0, columnspan=4, sticky="ew", padx=(14, 14), pady=(4, 6))
+        pick = DungeonPicker(row, app=self.app, fonts=self.fonts, on_change=self._on_dungeon_pick,
+                             caption="要刷的副本（与「刷副本」页同步）", collapsible=True,
+                             default_open=self._dun_pick_open, on_open_change=self._on_dun_pick_open)
+        pick.grid(row=3, column=0, columnspan=4, sticky="ew", padx=(18, 16), pady=(0, 10))
+        pick.sync()          # 从配置回填当前勾选，别让刚建的组件显示成全未勾
+        self._dungeon_picker = pick
+
+    def _on_dun_pick_open(self, open):
+        """副本勾选区折叠/展开状态（组件里点了标题）：存下，下次重建照着展开/收起。"""
+        self._dun_pick_open = bool(open)
+
+    def _on_dungeon_pick(self, name, checked, sel):
+        """副本勾选变化：config 已由组件写入；「刷副本」步就绪（至少要勾一个副本）可能翻转，
+        整表重绘一次刷新状态（重建的 picker 会从配置重新同步，勾选不丢）。"""
+        self._steps_sig = None
+        try:
+            self.app.after_idle(self._render_steps)
+        except Exception:
+            self._render_steps()
 
     def _grid_all(self):
         """按 _flat 顺序把区头与行落回 list_frame 的 grid 行位（不销毁控件），再刷新序号/计数。
@@ -470,7 +508,7 @@ class DailyPage(ctk.CTkFrame):
                 if self._collapsed.get(g, False):
                     f.grid_forget()
                 else:
-                    f.grid(row=pos, column=0, sticky="ew", pady=5, padx=4)
+                    f.grid(row=pos, column=0, sticky="ew", pady=3, padx=4)
         self._renumber()
 
     def _renumber(self):

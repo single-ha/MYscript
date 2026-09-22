@@ -10,6 +10,8 @@
      ⚠ 几个副本的「进入」按钮长得一模一样，只能靠【位置】区分——故只在 scene 的左下角比例框里匹配。
      「确定」只在【选了副本】后才弹（不选副本没有确认键）。
 → 点「确定」(选了副本才有)→ 点「继续挑战」
+   ⚠ 等「继续挑战」超时（默认 20s 还没出现）= 今日秘境已完成（次数用完/无后续关卡可战），
+     不再续跑，直接判定该号本任务完成、进入下个任务（一条龙里即切换下一步）。
    → 没有「挑战」按钮、也不会自动战斗：点右侧任务栏的秘境任务条目（sr_nav）
      → 角色自动寻路到 NPC → 自动战斗开始（点完继续挑战后画面右侧出现的是该任务栏条目）
    → 难度关卡不再自动：实时盯「进入战斗」按钮，一出现就点它续战。
@@ -347,13 +349,14 @@ class SecretRealmTask(Task):
             ctx.log("等「确定」超时，继续。", level="warn")
             self._goto(rec, S_CONTINUE)
 
-    # ---- 「继续挑战」（容错：超时则进「点任务栏寻路」）----
+    # ---- 「继续挑战」（超时=今日秘境已完成：判该号完成、不续跑，进下个任务）----
     def _do_continue(self, ctx, rec, loop, regions, threshold):
         if self._try_click(ctx, rec, regions, threshold, "sr_continue", "继续挑战", S_NAV):
             return
         if self._state_elapsed(rec) > loop.get("step_timeout_sec", 20):
-            ctx.log("等「继续挑战」超时，继续。", level="warn")
-            self._goto(rec, S_NAV)
+            ctx.log("等「继续挑战」超时 → 判定该号秘境已完成（今日次数用完/无后续关卡可战），"
+                    "不再续跑，进入下个任务。", level="warn")
+            rec["done"] = True
 
     # ---- 点右侧任务栏的秘境任务条目寻路到NPC → 自动战斗开始（没有「挑战」按钮；点条目触发寻路）----
     #   首击常被游戏当成「聚焦/选中」吞掉（和抓鬼 gg_nav 同款），需隔 nav_double_gap_sec 补点一次。
