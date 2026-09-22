@@ -58,9 +58,10 @@ from ..ui import ui_state
 DUNGEON_NS = "dungeon"                       # 共享配置命名空间（tasks.dungeon）
 
 # 共享模板键（绝大部分存 tasks.dungeon.templates；tuoying_title/upload 存 tasks.tuoying.templates，
-# 在「工具」页「拓印」里标定，见 TUOYING_TPL_KEYS；由 _load_flags 单独读入，只读 tasks.tuoying）。
-# 顺序按操作流程走，并作为标定向导里模板画廊的展示顺序：
-#   卡片(普通/侠士) → 参加 → 选择副本 → 侠士区标签页(侠士进副本前) → 进入 → 侠士确认(侠士) → 跳过/闹钟/进入战斗 → 结算界面。
+# 在「工具」页「拓印」里标定，见 TUOYING_TPL_KEYS；clock 存 tasks.shared.templates（「通用」页公共标定，
+# task_config 叠加注入本任务 templates）；battle_flag 同理存 shared。由 _load_flags 统一读入）。
+# 顺序按操作流程走，并作为标定向导里模板画廊的展示顺序（clock/battle_flag 已不在画廊，被 shared 取代）：
+#   卡片(普通/侠士) → 参加 → 选择副本 → 侠士区标签页(侠士进副本前) → 进入 → 侠士确认(侠士) → 跳过/进入战斗 → 结算界面。
 SHARED_TPL_KEYS = ["entry_common", "entry_xiashi", "join", "select",
                    "xiashi_tab", "enter_dungeon", "confirm", "skip", "clock", "enter",
                    "settlement", "tuoying_title", "tuoying_upload", "battle_flag"]
@@ -84,7 +85,6 @@ DUNGEON_CALIBRATION = {
         ("enter_dungeon", "「进入」按钮", "选择副本对话框里的「进入」按钮（普通/侠士两标签区共用）"),
         ("confirm", "侠士「确认」按钮", "侠士进副本后各号弹的「确认」按钮（仅侠士用）"),
         ("skip", "跳过剧情按钮", "副本内每轮先点的「跳过剧情」按钮（共用）"),
-        ("clock", "小闹钟寻路", "任务栏「小闹钟」，点它寻路到当前目标（共用）"),
         ("enter", "进入战斗按钮", "寻路到位后点它发起本场的「进入战斗」按钮（共用）"),
         ("settlement", "结算界面", "副本结束时的结算画面（识别到即判结束收尾，共用）"),
     ],
@@ -175,6 +175,11 @@ class DungeonBaseTask(Task):
             p = templates.get(k)
             if not p or vision.load_template(p) is None:
                 problems.append(f"副本共用模板『{label}』({k}) 缺失 —— 请在本页「标定」里框选裁图")
+        # 小闹钟(寻路)已迁「通用」页「标定（公共区域）」（tasks.shared，task_config 叠加进本任务 templates）：
+        # 副本内寻路 + 每轮收尾都点它，必标。
+        clock_path = templates.get("clock")
+        if not clock_path or vision.load_template(clock_path) is None:
+            problems.append("『小闹钟(寻路)』未标定 —— 请到「通用」页点「标定（公共区域）」框选（副本/抓鬼共用）")
         if self.cat == "xiashi":
             if not (templates.get("entry_common") or templates.get("entry_xiashi")):
                 problems.append("副本卡片模板缺失 —— 请至少标定『普通副本卡片』或『侠士副本卡片』之一")

@@ -397,6 +397,56 @@ def work_area():
             return [0, 0, 1920, 1080]
 
 
+def arrange_windows(cfg, app):
+    """把所选窗口（最多 5 个）调到基准尺寸并按 2列×2行 排布在屏幕上——
+    第一排（窗口1、2）上边贴屏幕/工作区顶、第二排（窗口3、4）下边贴任务栏，第 5 个窗口放屏幕正中；
+    最左列距左侧留 arrange_left_margin 像素空白（config 可改，默认 100）。
+    用 resolve_targets 保证和任务实操是同一批号；点数不足 5 就只排排到的。
+    返回调整成功数；不负责页面刷新（调用方自己 refresh）。"""
+    base = (cfg.get("targets") or {}).get("base_size")
+    if not base or len(base) < 2:
+        app.toast("请先设置基准尺寸（在窗口列表点「设为基准」）")
+        return 0
+    bw, bh = int(base[0]), int(base[1])
+    title = cfg.get("window_title", "梦幻西游")
+    offset = cfg.get("window_offset", [0, 0])
+    targets = cfg.get("targets", {})
+    try:
+        wins = resolve_targets(title, offset, targets)[:5]
+    except Exception:
+        wins = []
+    if not wins:
+        app.toast(f"没检测到游戏窗口（标题含「{title}」），请先打开游戏")
+        return 0
+    wa = work_area()
+    wx, wy, ww, wh = wa[0], wa[1], wa[2], wa[3]
+    margin = int(cfg.get("arrange_left_margin", 100))
+    col1 = wx + margin             # 最左列距左侧留 margin 空白（config.arrange_left_margin 可调）
+    col2 = wx + ww - bw            # 右列贴工作区右
+    row1y = wy                   # 第一排上边贴屏幕/工作区顶
+    row2y = wy + wh - bh         # 第二排（最后一行）下边贴任务栏(=工作区底)
+    cx = wx + ww // 2
+    cy = wy + wh // 2
+    slots = [
+        (col1, row1y),           # 号1 上左
+        (col2, row1y),           # 号2 上右
+        (col1, row2y),           # 号3 下左
+        (col2, row2y),           # 号4 下右
+        (cx - bw // 2, cy - bh // 2),   # 号5 屏幕正中
+    ]
+    ok = 0
+    for w, (x, y) in zip(wins, slots):
+        w.activate()
+        if w.resize_to(bw, bh, move_to=(x, y)):
+            ok += 1
+    app._game_connected = None     # 尺寸/位置变了，强制下次 tick 刷新药丸
+    extra = ", 第 5 个居中放屏幕正中" if len(wins) >= 5 else ""
+    tip = ("已调整 {}/{} 个窗口到基准尺寸 {}×{}，并按 2列×2行 排布（第1排贴顶、最后1排贴任务栏"
+           "{extra}）。分辨率锁档的号可能未移动。").format(ok, len(wins), bw, bh, extra=extra)
+    app.toast(tip)
+    return ok
+
+
 # ---- 截图 ----
 # mss 用 GDI，srcdc 等句柄存在「线程本地」里：在 A 线程建的实例不能在 B 线程用，
 # 否则报 'object has no attribute srcdc'。任务跑在后台线程，故每个线程各持一份。

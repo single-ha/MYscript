@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from .. import theme as T
 from ...core import config as cfg_mod
+from ...core import window as win_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
 from ...tasks.base import dungeon_tasks
@@ -90,10 +91,14 @@ class DailyPage(ctk.CTkFrame):
         self.btn_run.grid(row=0, column=0, sticky="w")
         tools = ctk.CTkFrame(top, fg_color="transparent")
         tools.grid(row=0, column=2, sticky="e")
+        ctk.CTkButton(tools, text="调整窗口", font=self.fonts["body"], height=36, width=104,
+                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
+                      border_width=1, border_color=T.BORDER,
+                      command=self._adjust_windows).pack(side="left")
         ctk.CTkButton(tools, text="刷新配置", font=self.fonts["body"], height=36, width=104,
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
-                      command=self.refresh).pack(side="left")
+                      command=self.refresh).pack(side="left", padx=(8, 0))
 
         ctk.CTkFrame(card, fg_color=T.BORDER, height=1).grid(
             row=1, column=0, sticky="ew", padx=16, pady=(0, 4))
@@ -199,6 +204,14 @@ class DailyPage(ctk.CTkFrame):
         T.tune_scroll_speed(self.list_frame)
 
         # 日志已统一到 App 右侧的全局日志面板，本页不再单独建日志框。
+
+    # ---- 工具按钮 ----
+    def _adjust_windows(self):
+        """「调整窗口」：把所选窗口（最多 5 个）调到基准尺寸并按 2列×2行 排布（原在通用页，随按钮迁到本页）。"""
+        cfg = cfg_mod.load_config()
+        self.app.cfg = cfg
+        win_mod.arrange_windows(cfg, self.app)
+        self.refresh()
 
     # ------------------------------------------------------------------
     # 刷新 / 渲染
@@ -320,7 +333,7 @@ class DailyPage(ctk.CTkFrame):
         sub = cfg_mod.task_config(self.app.cfg, "dungeon")
         spec = DUNGEON_CALIBRATION
         need_r = required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get("dungeon", ()))
-        need_t = required_templates(spec)
+        need_t = required_templates(spec) + list(cfg_mod.TASK_SHARED_TPL_REQ.get("dungeon", ()))
         regions, templates = sub.get("regions", {}), sub.get("templates", {})
         self_ok = all(regions.get(k) for k in need_r) and all(templates.get(k) for k in need_t)
         team = cfg_mod.task_config(self.app.cfg, "teaming")

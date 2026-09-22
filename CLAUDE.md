@@ -69,6 +69,10 @@ mhxy/
     appreciation.py AppreciationTask（趣味鉴赏）：开活动→参加→匹配并点击心形图案，点满 target_clicks 或鉴赏
                       超时即停；当前屏没匹配到就在「图文列表区域」滚动再找（滚动只在该区内，反向滚回防漏）
     secret_realm.py  SecretRealmTask（秘境降妖）：开活动→参加→挑战→盯「进入战斗」续战，可连跑 max_runs 轮
+    weekly_base.py   WeeklyBaseTask 周常基类（门派闯关/海底世界/迷魂塔共用）：多人先自动组队（tasks.teaming，
+                      只驱动队长窗口），两阶段循环「领任务(开活动→找卡片→参加→寻路→点自配 confirm)→做任务
+                      (轮询 战斗标识/进战/小闹钟，三样全无满 clean_need_sec=判完成)→再开新一轮」直到 中止/时间上限；
+                      中止(立即停)=翻完无卡/无参加/NPC超时/进不了场景；三任务薄子类只用 @register + name/title
     dungeon.py       DungeonTask（组队/一键组队）：把所选多开窗口组成一队即停（通用页「一键组队」跑它，
                       角色参数存共享 tasks.teaming）。name 仍叫 "dungeon" 仅为兼容；刷副本页跑的是选中副本而非它。
     disband.py       DisbandTask（解散队伍/一键解散）：让所选各号都退出当前队伍（每号同一套流程，不分队长队员），
@@ -170,8 +174,11 @@ mhxy/
   统一存共享命名空间 `tasks.shared.regions`，**只在「通用」页「标定（公共区域）」标定一次**（各任务 CALIBRATION 不再列出这两项）；
   `core/config.py task_config()` 读取时自动叠加进各任务 regions（运行时与就绪判定都吃到；新任务直接用 `tc["regions"]` 读即可，
   别各标一份）。共享键集合在 `core/config.SHARED_REGION_KEYS`；各任务「就绪判定」还要查的共享键在 `core/config.TASK_SHARED_REQ`。
-  **战斗标识 `battle_flag` 也统一在此标定**（存 `tasks.shared.templates`、进位 `core/config.SHARED_TPL_KEYS`，`task_config` 同时把它
-  叠加进各任务 templates、任务直接用 `tc["templates"]["battle_flag"]` 读，各任务不再自带战斗标定、preflight 缺它时提示去「通用」页框）。
+  **共享模板 `battle_flag` 战斗标识、`clock` 小闹钟(寻路) 也统一在此标定**（存 `tasks.shared.templates`、进位 `core/config.SHARED_TPL_KEYS`，
+  `task_config` 同时把它们叠加进各任务 templates、任务直接用 `tc["templates"]["battle_flag"]`/`["clock"]` 读，各任务不再自带这两项标定、
+  preflight 缺它时提示去「通用」页框）。必标关系在 `TASK_SHARED_TPL_REQ`：战斗标识=运镖/宝图，小闹钟=副本（跑到目标寻路/每轮收尾）与抓鬼
+  （点任务条目寻路）；`core/config` 里有一次性的 `_migrate_shared_clock`，把用户旧位置（`tasks.dungeon.templates.clock`/`tasks.zhuagui.templates.gg_nav`，
+  旧抓鬼侧另留 `gg_nav` 兼容读取兜底）搬到 shared、不用重标。
   再次强调运行时只读 shared 标注副本：标定对话框**写**共享键走原始 `tasks.shared`、**写本任务**时剥离叠加值（`_save` 内
   `EXCLUSIVE_SHARED_REGIONS` + `SHARED_TPL_KEYS`），两者读库均经 `task_config` 合并。
   **拓印临摹资产已不在共享里**：标定迁到「工具」页「拓印」（存 `tasks.tuoying`，见上「拓印」条），各任务不重复列出、不参与就绪。

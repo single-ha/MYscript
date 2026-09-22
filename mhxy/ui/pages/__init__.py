@@ -5,6 +5,7 @@ from .category import CategoryPage
 from .single import SinglePage
 from .multi import MultiPage
 from .tools import ToolsPage
+from .weekly import WeeklyPage
 from .treasure_map import TreasureMapPage
 from .escort import EscortPage
 from .dungeon import DungeonPage
@@ -15,10 +16,13 @@ from .general import GeneralPage
 from .daily import DailyPage
 from .organize_bag import OrganizeBagPage
 from .tuoying import TuoyingPage
+from .sect_gate import SectGatePage
+from .underwater import UnderwaterPage
+from .maze_tower import MazeTowerPage
 
 __all__ = [
-    "CategoryPage", "SinglePage", "MultiPage", "ToolsPage",
+    "CategoryPage", "SinglePage", "MultiPage", "ToolsPage", "WeeklyPage",
     "TreasureMapPage", "EscortPage", "DungeonPage", "SecretRealmPage",
     "SettingsPage", "AboutPage", "GeneralPage", "DailyPage", "OrganizeBagPage",
-    "TuoyingPage",
+    "TuoyingPage", "SectGatePage", "UnderwaterPage", "MazeTowerPage",
 ]

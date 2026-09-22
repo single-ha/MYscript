@@ -196,6 +196,7 @@
             },
             "templates": {
                 "battle_flag": "templates/tm_battle_flag.png",
+                "clock": "templates/tm_clock.png",
                 "shop_icon": "templates/tm_shop_icon.png",
                 "activity_icon": "templates/tm_activity_icon.png"
             }

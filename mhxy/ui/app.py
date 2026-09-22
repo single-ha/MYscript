@@ -13,11 +13,11 @@ import customtkinter as ctk
 from . import theme as T
 from ..core import config as cfg_mod
 from ..core import window as win_mod
-from ..core.runner import TaskRunner
+from ..core.runner import TaskRunner, set_run_rejected_hook
 from ..core.input import get_cursor
 from .common import (DEFAULT_STOP_HOTKEY, DEFAULT_FAILSAFE, FAILSAFE_CORNERS,
                      _in_failsafe_corner, _parse_stop_hotkey, _vk_down)
-from .pages import (DailyPage, SinglePage, MultiPage, ToolsPage,
+from .pages import (DailyPage, WeeklyPage, SinglePage, MultiPage, ToolsPage,
                     GeneralPage, SettingsPage, AboutPage)
 
 
@@ -26,6 +26,7 @@ from .pages import (DailyPage, SinglePage, MultiPage, ToolsPage,
 # ----------------------------------------------------------------------
 class App(ctk.CTk):
     NAV = [("daily", "🐉  日常一条龙"),
+           ("weekly", "🗓  周常"),       # 内嵌 门派闯关/海底世界/迷魂塔（多人·自动组队·队长跑循环）
            ("general", "🧰  通用"),
            ("single", "👤  单人任务"),   # 内嵌 宝图/运镖/秘境降妖
            ("multi", "👥  多人任务"),    # 内嵌 刷副本枢纽
@@ -33,9 +34,9 @@ class App(ctk.CTk):
             ("settings", "⚙  设置"), ("about", "ⓘ  关于")]
     # 可运行任务页（有 runner/pump），App 的定时器/热键/关闭钩子按此遍历。
     # general 也在内：它的「一键组队」会跑后台任务，需要 pump 抽日志、关闭时停 runner。
-    # single/multi/tools 是分类页，App 下标只是顶层项；其内嵌任务页靠分类页的
+    # weekly/single/multi/tools 是分类页，App 下标只是顶层项；其内嵌任务页靠分类页的
     # pump() 下钻转发（见 pages/category.py）。
-    RUNNABLE_KEYS = ("general", "daily", "single", "multi", "tools")
+    RUNNABLE_KEYS = ("general", "weekly", "daily", "single", "multi", "tools")
 
     def __init__(self):
         super().__init__()
@@ -72,9 +73,11 @@ class App(ctk.CTk):
         self.after(60, self._poll_hotkey)
         # 界面显示后趁空闲把其余页面逐个预建好，首次切过去即秒开（每个间隔开，单帧不卡）。
         self.after(800, self._prebuild_idle)
+        # 全局唯一运行锁：某页「开始」被已有任务挡住时，这里弹醒目红 toast 提醒。
+        set_run_rejected_hook(self._toast_task_rejected)
 
     def _build_sidebar(self):
-        bar = ctk.CTkFrame(self, fg_color=T.SIDEBAR, corner_radius=0, width=210)
+        bar = ctk.CTkFrame(self, fg_color=T.SIDEBAR, corner_radius=0, width=180)
         bar.grid(row=0, column=0, sticky="nsew")
         bar.grid_propagate(False)
         bar.grid_rowconfigure(99, weight=1)
@@ -84,13 +87,20 @@ class App(ctk.CTk):
         ctk.CTkLabel(bar, text="辅助助手", font=self.fonts["small"], text_color=T.TEXT_DIM).grid(
             row=1, column=0, sticky="w", padx=22, pady=(0, 22))
 
+        # 运行状态：无任务=「空闲」；有任务=「正在执行[xxx]任务」，跟随 _tick 实时刷新
+        self.lbl_run_status = ctk.CTkLabel(
+            bar, text="空闲", font=self.fonts["small"], text_color=T.SUCCESS,
+            fg_color=T.PILL_OK_BG, corner_radius=T.RADIUS_SM, padx=10, pady=2)
+        self.lbl_run_status.grid(row=2, column=0, sticky="w", padx=12, pady=(0, 8))
+        self._last_run_status = ""
+
         self.nav_buttons = {}
         for i, (key, label) in enumerate(self.NAV):
             b = ctk.CTkButton(bar, text=label, font=self.fonts["nav"], anchor="w",
                               height=42, corner_radius=T.RADIUS_SM,
                               fg_color="transparent", hover_color=T.SURFACE,
                               text_color=T.TEXT_DIM, command=lambda k=key: self._show(k))
-            b.grid(row=2 + i, column=0, sticky="ew", padx=12, pady=3)
+            b.grid(row=3 + i, column=0, sticky="ew", padx=12, pady=3)
             self.nav_buttons[key] = b
 
         # 明暗切换按钮（置于风险提示之上，随侧栏底部对齐）
@@ -186,6 +196,7 @@ class App(ctk.CTk):
     # 由分类页内部懒建（见 pages/category.py），这里只登记顶层导航页。
     PAGE_CLASSES = {
         "daily": DailyPage,
+        "weekly": WeeklyPage,
         "general": GeneralPage,
         "single": SinglePage,
         "multi": MultiPage,
@@ -338,12 +349,28 @@ class App(ctk.CTk):
             except Exception:
                 pass
 
-    def toast(self, msg):
-        """简单的右下角浮层提示。"""
-        lbl = ctk.CTkLabel(self, text=msg, font=self.fonts["body"], fg_color=T.ACCENT,
+    def toast(self, msg, color=None):
+        """右下角浮层提示；color 指定背景色（默认主色），传 T.DANGER 显红。"""
+        fg = color or T.ACCENT
+        lbl = ctk.CTkLabel(self, text=msg, font=self.fonts["body"], fg_color=fg,
                            text_color=T.ON_ACCENT, corner_radius=T.RADIUS_SM, padx=16, pady=8)
         lbl.place(relx=0.99, rely=0.97, anchor="se")
         self.after(1600, lbl.destroy)
+
+    def _toast_task_rejected(self, msg):
+        """全局唯一运行锁拒绝启动的醒目提示：红色浮层 + 更久停留。"""
+        self.toast(msg, T.DANGER)
+
+    def _refresh_run_status(self):
+        """按当前活跃任务刷新侧边栏运行状态药丸：空闲=绿底「空闲」，运行中=蓝底「正在执行[xxx]任务」。"""
+        titles = TaskRunner.active_titles()
+        status = "空闲" if not titles else f"正在执行[{titles[0]}]任务"
+        if status != self._last_run_status:
+            self._last_run_status = status
+            self.lbl_run_status.configure(
+                text=status,
+                fg_color=T.PILL_OK_BG if not titles else T.ACCENT,
+                text_color=T.SUCCESS if not titles else T.ON_ACCENT)
 
     def _tick(self):
         # 抽日志：所有可运行任务页
@@ -351,6 +378,7 @@ class App(ctk.CTk):
             p = self.pages.get(k)
             if p:
                 p.pump()
+        self._refresh_run_status()
         # 每约 1.2s 检测一次游戏窗口（放后台线程，避免阻塞 UI 造成滑动卡顿）
         self._tick_count += 1
         if self._tick_count % 8 == 0:

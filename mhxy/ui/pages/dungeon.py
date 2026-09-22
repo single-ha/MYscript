@@ -210,7 +210,10 @@ class DungeonPage(ctk.CTkFrame):
         # 副本的公共区域（活动列表）不在 spec 里，按 TASK_SHARED_REQ 补查（统一在「通用」页标定）
         need_r = required_regions(spec)
         need_r += [k for k in cfg_mod.TASK_SHARED_REQ.get(self.TASK_NAME, ()) if k not in need_r]
+        # 共享模板同理：小闹钟(寻路)已迁「通用」页「标定（公共区域）」，按 TASK_SHARED_TPL_REQ 补查，
+        # task_config 已把 shared 模板叠加进 tasks.dungeon templates，直接 templates.get(k) 即得。
         need_t = required_templates(spec)
+        need_t += [k for k in cfg_mod.TASK_SHARED_TPL_REQ.get(self.TASK_NAME, ()) if k not in need_t]
         rdone = sum(1 for k in need_r if regions.get(k))
         tdone = sum(1 for k in need_t if templates.get(k))
         ok = (rdone == len(need_r) and tdone == len(need_t))
@@ -379,7 +382,7 @@ class DungeonPage(ctk.CTkFrame):
                                hover_color=T.ACCENT_HOVER, state="normal")
         self._current_name = None
         self.runner = None
-        self._log_line("全部副本刷完（可点左上角「停止」再开始新一轮）。", "warn")
+        self._log_line("全部副本刷完,结束任务", "warn")
 
     def _on_runner_finished(self):
         """当前副本已结束（正常/超时/异常都算）。若未停止则接下一个副本。"""

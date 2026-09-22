@@ -13,7 +13,7 @@ from ...core import window as win_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_CALIB_TPL_KEYS
-from ...core.config import (SHARED_REGION_KEYS, MAIN_ICON_TPL_KEYS, BATTLE_FLAG_TPL_KEY)
+from ...core.config import (SHARED_REGION_KEYS, MAIN_ICON_TPL_KEYS, BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)
 from ..common import Card, load_thumb, bind_wraplength
 
 
@@ -111,57 +111,6 @@ class GeneralPage(ctk.CTkFrame):
             self.app.toast(f"已把 {ok} 个号还原到基准尺寸 {bw}×{bh}")
         self.refresh()
 
-    def _arrange_windows(self):
-        """点「调整窗口」时触发：把所选窗口（最多 5 个）调到基准尺寸并按 2列×2行 排布在屏幕上——
-        第一排（窗口1、2）上边贴屏幕/工作区顶、第二排（窗口3、4）下边贴任务栏，第 5 个窗口放屏幕正中；
-        最左列距左侧留 arrange_left_margin 像素空白（config 可改，默认 100）。
-        用 resolve_targets 保证和任务实操是同一批号；点数不足 5 就只排排到的。"""
-        cfg = cfg_mod.load_config()
-        self.cfg = cfg
-        self.app.cfg = cfg
-        base = (cfg.get("targets") or {}).get("base_size")
-        if not base or len(base) < 2:
-            self.app.toast("请先设置基准尺寸（在窗口列表点「设为基准」）")
-            return
-        bw, bh = int(base[0]), int(base[1])
-        title = cfg.get("window_title", "梦幻西游")
-        offset = cfg.get("window_offset", [0, 0])
-        targets = cfg.get("targets", {})
-        try:
-            wins = win_mod.resolve_targets(title, offset, targets)[:5]
-        except Exception:
-            wins = []
-        if not wins:
-            self.app.toast(f"没检测到游戏窗口（标题含「{title}」），请先打开游戏")
-            return
-        wa = win_mod.work_area()
-        wx, wy, ww, wh = wa[0], wa[1], wa[2], wa[3]
-        margin = int(cfg.get("arrange_left_margin", 100))
-        col1 = wx + margin             # 最左列距左侧留 margin 空白（config.arrange_left_margin 可调）
-        col2 = wx + ww - bw            # 右列贴工作区右
-        row1y = wy                   # 第一排上边贴屏幕/工作区顶
-        row2y = wy + wh - bh         # 第二排（最后一行）下边贴任务栏(=工作区底)
-        cx = wx + ww // 2
-        cy = wy + wh // 2
-        slots = [
-            (col1, row1y),           # 号1 上左
-            (col2, row1y),           # 号2 上右
-            (col1, row2y),           # 号3 下左
-            (col2, row2y),           # 号4 下右
-            (cx - bw // 2, cy - bh // 2),   # 号5 屏幕正中
-        ]
-        ok = 0
-        for w, (x, y) in zip(wins, slots):
-            w.activate()
-            if w.resize_to(bw, bh, move_to=(x, y)):
-                ok += 1
-        self.app._game_connected = None   # 尺寸/位置变了，强制下次 tick 刷新药丸
-        extra = ", 第 5 个居中放屏幕正中" if len(wins) >= 5 else ""
-        tip = ("已调整 {}/{} 个窗口到基准尺寸 {}×{}，并按 2列×2行 排布（第1排贴顶、最后1排贴任务栏"
-               "{extra}）。分辨率锁档的号可能未移动。").format(ok, len(wins), bw, bh, extra=extra)
-        self.app.toast(tip)
-        self.refresh()
-
     def _build_window_card(self, base):
         """窗口尺寸归一化卡片（排在本页最上：基准尺寸/调整窗口先于其它功能）。"""
         c2 = self._card()
@@ -174,19 +123,16 @@ class GeneralPage(ctk.CTkFrame):
         base_txt = f"{int(base[0])}×{int(base[1])}" if base and len(base) >= 2 else "未设置"
         ctk.CTkLabel(txt2, text=f"当前基准尺寸：{base_txt}", font=self.fonts["body"],
                      text_color=T.TEXT if base else T.WARN).pack(anchor="w", pady=(4, 0))
-        sub2 = ctk.CTkLabel(txt2, text="「还原尺寸」把所有窗口拉回基准尺寸；「调整窗口」把所选窗口（最多5个）"
-                                       "按基准尺寸排成 2列×2行 —— 第1排贴屏幕顶、最后1排贴任务栏、最左列距左侧留"
-                                       "空白（config.arrange_left_margin，默认100像素）、第5个居中。"
-                                       "脚本点位按此基准尺寸标定。在下面窗口列表点「设为基准」来设定基准尺寸。",
+        sub2 = ctk.CTkLabel(txt2, text="「还原尺寸」把所有窗口拉回基准尺寸；「调整窗口」（在「日常一条龙」页"
+                                       "点开始左侧）把所选窗口（最多5个）按基准尺寸排成 2列×2行 —— 第1排贴屏幕顶、"
+                                       "最后1排贴任务栏、最左列距左侧留空白（config.arrange_left_margin，默认100像素）、"
+                                       "第5个居中。脚本点位按此基准尺寸标定。在下面窗口列表点「设为基准」来设定基准尺寸。",
                             font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub2.pack(fill="x", pady=(2, 0))
         bind_wraplength(sub2)
         btns2 = ctk.CTkFrame(head2, fg_color="transparent")
         btns2.grid(row=0, column=1, padx=(12, 0))
-        ctk.CTkButton(btns2, text="调整窗口", font=self.fonts["body"], height=36, width=100,
-                      corner_radius=T.RADIUS_SM, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, text_color=T.ON_ACCENT,
-                      command=self._arrange_windows).pack(pady=(0, 6))
-        ctk.CTkButton(btns2, text="还原尺寸", font=self.fonts["body"], height=32, width=100,
+        ctk.CTkButton(btns2, text="还原尺寸", font=self.fonts["body"], height=36, width=100,
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
                       command=self._normalize_now).pack(pady=(0, 6))
@@ -231,7 +177,8 @@ class GeneralPage(ctk.CTkFrame):
         txt_s = ctk.CTkFrame(head_s, fg_color="transparent")
         txt_s.grid(row=0, column=0, sticky="ew")
         ctk.CTkLabel(txt_s, text="公共区域（全局共享）", font=self.fonts["h2"], text_color=T.TEXT).pack(anchor="w")
-        # 区域：活动列表 / 背包列表（必标）。战斗标识（运镖/宝图必标）；商城/活动图标（可选）只计数展示、不拖累「已就绪」。
+        # 区域：活动列表 / 背包列表（必标）。战斗标识（运镖/宝图必标）、小闹钟（副本/抓鬼必标）；
+        # 商城/活动图标（可选）只计数展示、不拖累「已就绪」。
         # 拓印临摹资产已迁到「工具」页「拓印」（tasks.tuoying），不在这里标。
         shared_tc = cfg_mod.task_config(cfg, "shared")
         sreg = shared_tc.get("regions", {})
@@ -239,20 +186,22 @@ class GeneralPage(ctk.CTkFrame):
         sdone = sum(1 for k in shared_region_keys if sreg.get(k))
         sready = sdone == len(shared_region_keys)
         stpl = shared_tc.get("templates", {})
-        shared_tpl_keys = (BATTLE_FLAG_TPL_KEY,) + MAIN_ICON_TPL_KEYS
+        shared_tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY) + MAIN_ICON_TPL_KEYS
         tdone = sum(1 for k in shared_tpl_keys if stpl.get(k))
         # 商城/活动图标（主界面判定用）是可选项：只计数展示，不拖累「已就绪」（不标=无法做主界面判定，任务照常跑）。
-        # 战斗标识运镖/宝图必标（各任务 preflight 也会拦），缺了这里不显示「已就绪」。
-        already = sready and bool(stpl.get(BATTLE_FLAG_TPL_KEY))
+        # 战斗标识运镖/宝图必标、小闹钟副本/抓鬼必标（各任务 preflight 也会拦），缺了这里不显示「已就绪」。
+        already = (sready and bool(stpl.get(BATTLE_FLAG_TPL_KEY))
+                   and bool(stpl.get(CLOCK_TPL_KEY)))
         ctk.CTkLabel(txt_s, text=f"区域：{sdone}/{len(shared_region_keys)}　标志模板：{tdone}/{len(shared_tpl_keys)}"
                                  + ("　✓ 已就绪" if already else "　（还需标定）"),
                      font=self.fonts["body"],
                      text_color=T.SUCCESS if already else T.WARN).pack(anchor="w", pady=(4, 0))
         sub_s = ctk.CTkLabel(txt_s, text="「活动」界面那一片卡片列表、打开背包后那一片物品列表，几乎所有任务的画面都一样——"
                                         "在这里框一次，宝图 / 运镖 / 秘境降妖 / 三界奇缘 / 抓鬼 / 刷副本 / 整理背包自动通用，"
-                                        "不用每个任务各标一遍。各任务页里的同名两项也会自动显示共用。"
-                                        "「战斗界面标志」是进战斗后的画面元素（运镖/宝图必标，否则一进战斗就误判结束；秘境仅日志用）。"
-                                        "「商城/活动图标」用来判断是否回到主界面：把主界面顶部的商城、活动按钮各框一次即可。"
+"不用每个任务各标一遍。各任务页里的同名两项也会自动显示共用。"
+                                         "「战斗界面标志」是进战斗后的画面元素（运镖/宝图必标，否则一进战斗就误判结束；秘境仅日志用）。"
+                                         "「小闹钟」是任务栏那个寻路图标（刷副本/抓鬼必标：副本内寻路、每轮收尾和抓鬼点任务条目寻路都靠它）。"
+                                         "「商城/活动图标」用来判断是否回到主界面：把主界面顶部的商城、活动按钮各框一次即可。"
                                         "「拓印」临摹（刷副本偶发的描图案校验）的标题/上传/绘制区已移到「工具」页「拓印」里标。",
                              font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub_s.pack(fill="x", pady=(2, 0))

@@ -262,12 +262,12 @@ def shared_region_hint(regions, task_name):
 
 def shared_template_hint(templates, task_name):
     """返回公共共享模板未标齐的提示文本（templates 应为已叠加 tasks.shared 模板的 task_config）。
-    战斗标识已统一移到「通用」页「标定（公共区域）」，运镖/宝图必标。已标齐返回 ""。"""
+    战斗标识/小闹钟等已统一移到「通用」页「标定（公共区域）」标定（见 TASK_SHARED_TPL_REQ）。已标齐返回 ""。"""
     missing = [k for k in cfg_mod.TASK_SHARED_TPL_REQ.get(task_name, ()) if not templates.get(k)]
     if not missing:
         return ""
-    label = "战斗界面标志" if missing == [cfg_mod.BATTLE_FLAG_TPL_KEY] else "、".join(missing)
-    return f"；公共模板「{label}」未标定 —— 请到「通用」页点「标定（公共区域）」框选（运镖/宝图必标，全任务共用）"
+    label = "、".join(cfg_mod.SHARED_TPL_LABELS.get(k, k) for k in missing)
+    return f"；公共模板「{label}」未标定 —— 请到「通用」页点「标定（公共区域）」框选（全任务共用）"
 
 
 def calib_status(*, regions, templates, task_name,

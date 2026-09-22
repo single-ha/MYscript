@@ -44,9 +44,15 @@ MAIN_ICON_TPL_KEYS = ("shop_icon", "activity_icon")
 # 各任务进战斗后的画面元素相同。运镖/宝图用它在战斗期暂停「运镖结束/静止」判定（必标），秘境仅日志诊断（可选）。
 # task_config 会把它叠加进各任务的 templates（见 SHARED_TPL_KEYS），任务用 tc["templates"]["battle_flag"] 直接读。
 BATTLE_FLAG_TPL_KEY = "battle_flag"
-# 需要把共享模板叠加进任务 templates 的键（目前只有战斗标识；shop/activity 由 ui_state 直接读 shared，不叠加，
-# 避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
-SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY,)
+# 小闹钟寻路（存 tasks.shared.templates.clock，在「通用」页「标定（公共区域）」里标定）：
+# 任务栏那个「小闹钟」图标，点它寻路到当前目标。刷副本（副本内寻路/每轮收尾）与抓鬼（点任务条目寻路）必标；
+# 原在「刷副本」「抓鬼」各自标定里分别标（副本的 clock / 抓鬼的 gg_nav 其实是同一个图标），已统一移到公共标定，标一次全通用。
+CLOCK_TPL_KEY = "clock"
+# 共享模板的友好中文名（就绪/标定提示用的展示名，见 ui/common.shared_template_hint）。
+SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)"}
+# 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟；shop/activity 由 ui_state 直接读 shared，
+# 不叠加，避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
+SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)
 
 # 各任务「就绪判定」还要查的共享区域键（这些键已从任务自身 CALIBRATION 移走、只在
 # 通用页「标定（公共区域）」里标定一次）。key 与任务名一致；dungeon 指共享 tasks.dungeon。
@@ -58,13 +64,22 @@ TASK_SHARED_REQ = {
     "treasure_map": ("activity_list", "bag_list"),
     "appreciation": ("activity_list",),
     "dungeon": ("activity_list",),
+    "sect_gate": ("activity_list",),
+    "underwater": ("activity_list",),
+    "maze_tower": ("activity_list",),
 }
 
 # 各任务「就绪判定」还要查的共享模板键（tasks.shared.templates，同 TASK_SHARED_REQ 的语义，只是模板）。
-# 战斗标识已从各任务自身 CALIBRATION 移走、移到「通用」页「标定（公共区域）」，运镖/宝图是真实使用方（必标）。
+# 战斗标识（运镖/宝图必标）与小闹钟（刷副本/抓鬼必标）都已从各任务自身 CALIBRATION 移走、
+# 移到「通用」页「标定（公共区域）」统一标定。dungeon 指共享 tasks.dungeon 命名空间。
 TASK_SHARED_TPL_REQ = {
     "escort": (BATTLE_FLAG_TPL_KEY,),
     "treasure_map": (BATTLE_FLAG_TPL_KEY,),
+    "dungeon": (CLOCK_TPL_KEY,),
+    "zhuagui": (CLOCK_TPL_KEY,),
+    "sect_gate": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY),
+    "underwater": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY),
+    "maze_tower": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY),
 }
 
 # 所有只存 tasks.shared.regions 的区域键（calibrate_dialog 写入路由 / _save 剥离用）：
@@ -141,7 +156,8 @@ def _mk_dungeon_shared():
             "join": None,            # 卡片右侧的「参加」按钮
             "select": None,          # 对话框「选择副本」按钮
             "skip": None,            # 「跳过剧情」按钮（每轮先点它，也用来判上一场打完）
-            "clock": None,           # 任务栏「小闹钟」按钮（点它寻路到当前目标）
+            "clock": None,           # 任务栏「小闹钟」按钮（点它寻路到当前目标；旧标定位，现已迁「通用」页
+                                     #   公共标定 = tasks.shared.templates.clock，task_config 叠加注入，此键仅兼容旧配置读取）
             "enter": None,           # 副本内「进入战斗」按钮（寻路到位后点它发起本场）
             "enter_dungeon": None,   # 选择副本对话框里的「进入」按钮（普通/侠士共用）
             "xiashi_tab": None,      # 侠士进副本前先点的「侠士区」标签页（仅侠士用）
@@ -151,6 +167,59 @@ def _mk_dungeon_shared():
         "selected": ["dt_70_common", "dt_60_common1", "dt_60_common2",
                      "dt_70_xiashi", "dt_60_xiashi"],
         "enter_target": {"cat": "common", "pos": 0},
+    }
+
+
+def _mk_weekly():
+    """周常三任务（门派闯关/海底世界/迷魂塔）的默认配置块（三个结构完全一致，各存 tasks.<name>）。
+
+    流程（user 2026-09-22 拍板）分两阶段：
+      领任务  打开活动列表 → 找到活动卡片 → 点「参加」→ 自动寻路到活动 NPC → 点「参加活动」按钮
+              （三个任务的「参加活动」按钮图样文案不同 → 各自在命名空间标定自己的 confirm 模板）
+      做任务  轮询「战斗中标识 / 进入战斗 / 任务栏小闹钟」：战斗中=等；进战按钮=点它开战；小闹钟=点它寻路；
+              三样全无累计满 clean_need_sec = 本轮完成 → 回主界面再开新一轮。
+    多人任务：先自动组队（复用共享 tasks.teaming，勾「已组队」跳过），组好后只驱动队长窗口。
+    中止（立即停）：活动列表整段翻完无卡片 / 认出卡片连确认多次都没「参加」/ NPC「参加活动」按钮超时 /
+    点完确认后 enter_wait_sec 内出不了任务迹象。总时限 time_limit_min（默认60，0=不限）兜底。
+    模板：card/join/confirm/enter 在本任务命名空间标定；battle_flag/clock/活动列表区 走「通用」页公共标定。"""
+    return {
+        "loop": {
+            "match_threshold": 0.85,       # 标志模板匹配阈值
+            "card_match_threshold": 0.9,   # 找活动卡片的专属阈值：卡片模板若框到多卡公共UI，镜像卡常拿 0.9x 分；
+                                           # 真卡(标定原帧)≈0.99 稳过、镜像被挡，此处阈值作运行时兜底
+            "npc_dialog_sec": 60,          # 点「参加」后等角色寻路到活动 NPC、弹出「参加活动」按钮的超时
+            "enter_wait_sec": 30,          # 点完「参加活动」后等「任务迹象」(战斗中/进入战斗/小闹钟任一)出现的超时
+            "step_to": 30,                 # 小闹钟点击冷却(秒)：点完寻路后在冷却期内不再重寻（防反复重寻路）
+            "clean_need_sec": 12,          # 做任务阶段三种轮询标识全无持续这么久 = 本轮完成，回主界面再开新一轮
+            "poll_sec": 1.0,               # 做任务阶段轮询间隔（等战斗打/等判完成）
+            "time_limit_min": 60,          # 时间上限(分钟)安全网，0=不限；判完成自动再开新一轮直到到点/中止/停止
+            "scroll_step": -3,             # 活动列表每次滚轮格数（负=向下翻）
+            "scroll_max_tries": 8,         # 找活动卡片最多翻几屏
+            "scroll_settle_sec": 0.35,     # 每滚一屏后等画面落定再重找的间隔（带抖动）
+            "scroll_reset_top": True,      # 翻找前先把列表滚到顶，保证向下扫一遍能覆盖整段(不漏上半截)
+            "scroll_end_diff": 2.0,        # 滚一屏后该区域帧差<此值=列表滚不动了(到顶/到底)，据此判「整段翻完」
+            "scroll_reset_max": 20,        # 「滚到顶」最多上滚几屏的防死循环上限
+            "activity_columns": 2,         # 活动列表每排几张卡片：找「参加」只在条目所属那一列内，
+                                           #   避免两张卡片一排时扫到右邻卡片、点错右边的「参加」
+            "join_same_row_px": 55,        # 认出卡片后找「参加」：行容差(像素)，卡上行没匹配就微滚重找（继承镖车/卡片逻辑）
+            "join_confirm_tries": 3,       # 认出卡片后连确认几次「参加」都找不到才判「活动不可参加」中止
+            "nudge_max": 4,               # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
+            "nudge_step": 3,               # 微滚的格数（朝让被裁那半滚进画面里的方向）
+            "tick_interval_sec": 0.6,     # 多开轮转节拍（保留默认，未被本流程使用）
+            "max_stuck_recover": 3        # 连续卡死多少次就主动停（保留默认，未被本流程使用）
+        },
+        "regions": {                     # 相对游戏窗口 [x,y,w,h]，标定向导写入
+            "scene": None,               # 主识别区（整窗或大半屏，所有 flag 都在这里找）
+            "activity_list": None        # 活动列表区域（滚轮在此找活动卡片；共享标定注入，键存在即代表已标）
+        },
+        "templates": {                   # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
+            "card": None,                # 活动列表里本任务那张「活动卡片」（框图标+文字、要独特）
+            "join": None,                # 该卡片右侧的「参加」按钮（按行匹配点它）
+            "confirm": None,             # 寻路到活动 NPC 后对话框里的「参加活动」按钮（每个活动图样文案不同）
+            "enter": None,               # 做任务场景里的「进入战斗」按钮（点它发起本场）
+            "battle_flag": None,         # 战斗中标识（共享标定注入，此键仅兼容旧配置读取）
+            "clock": None                # 任务栏小闹钟(寻路)（共享标定注入，此键仅兼容旧配置读取）
+        }
     }
 
 
@@ -487,6 +556,11 @@ DEFAULT_CONFIG = {
             "loop": {
                 "match_threshold": 0.85,     # 标志模板匹配阈值
                 "max_rounds": 2,             # 抓鬼轮数 = 领任务次数，跑满即停（默认 2）
+                "finish_cancel_rounds": None,  # 完成多少轮后改点「是否继续」弹窗的「取消」结束任务：None/空=跑满
+                                             #   max_rounds 后点；正整数=提前到这轮结束后点（该轮战斗打完不发「继续」）；
+                                             #   0=不点取消（保持旧行为：跑满直接结束）
+                "finish_cancel_confirm_sec": 1.0,  # 点完收尾「取消」后确认弹窗已关闭的观察窗：持续这么久「取消」不再
+                                             #   出现才算确认关掉了（没确认到也不纠结，已发过点击）
                 "npc_dialog_sec": 60,        # 参加后等「领取抓鬼任务」对话框出现的超时
                 "step_timeout_sec": 30,      # 领下一轮 等按钮出现的超时
                 "nav_double_gap_sec": 0.3,   # 点任务条目需连点两次：两次点击的间隔（首击会被当聚焦吞掉）
@@ -511,11 +585,20 @@ DEFAULT_CONFIG = {
                 "gg_entry": None,            # 活动列表里「抓鬼」那张卡片
                 "gg_join": None,             # 那张卡片右侧的「参加」按钮（按行匹配点它）
                 "gg_claim": None,            # 寻路到任务 NPC 后「领取抓鬼任务」按钮（每轮点它领当前轮）
-                "gg_nav": None,              # 任务条目标签（领取后点它触发自动寻路到鬼的位置）
+                "clock": None,              # 小闹钟(寻路)：任务栏那个图标，点任务条目等价点它寻路；现由「通用」页
+                                            #   公共标定注入（tasks.shared，见 SHARED_TPL_KEYS），此键仅兼容旧配置读取
                 "gg_cancel": None,           # 点「领取抓鬼任务」后可能弹出的提醒弹窗里的取消按钮（可选；没标=弹窗时不处理）
-                "gg_next": None             # 「是否继续」弹窗里的「继续」按钮（战斗打完弹出，点它寻路回 NPC 领下一轮）
+                "gg_next": None,             # 「是否继续」弹窗里的「继续」按钮（战斗打完且还没跑满时，点它寻路回 NPC 领下一轮）
+                "gg_finish_cancel": None     # 「是否继续」弹窗里的「取消」按钮（战斗打完且已到收尾轮时，点它结束抓鬼任务）
             }
         },
+
+        # ---- 周常三任务（门派闯关 / 海底世界 / 迷魂塔）：多人·自动组队·队长跑两阶段循环 ----
+        #   三个流程骨架相同（见 _mk_weekly docstring），各自命名空间标定 card/join/confirm/enter；
+        #   battle_flag / clock / 活动列表区 走「通用」页公共标定（tasks.shared 叠加注入）。
+        "sect_gate": _mk_weekly(),
+        "underwater": _mk_weekly(),
+        "maze_tower": _mk_weekly(),
 
         # ---- 公共区域（全局共享）：活动列表区 / 背包列表区 ----
         #   运镖/宝图/秘境降妖/三界奇缘/抓鬼/刷副本都要在「活动」界面那片卡片列表里翻找入口，
@@ -525,6 +608,12 @@ DEFAULT_CONFIG = {
             "regions": {
                 "activity_list": None,   # 「活动」界面里那一片卡片列表（滚轮翻找副本/运镖/宝图等入口）
                 "bag_list": None,        # 「背包」打开后那一片物品列表（滚轮翻找藏宝图/待整理物品）
+            },
+            "templates": {               # 跨任务共享模板，统一在「通用」页「标定（公共区域）」标定一次：
+                "battle_flag": None,     #   战斗界面标志（运镖/宝图必标，秘境仅日志诊断）
+                "clock": None,           #   小闹钟(寻路)（刷副本/抓鬼必标，点它寻路到当前目标）
+                "shop_icon": None,       #   商城图标（可选，主界面判定用）
+                "activity_icon": None,   #   活动图标（可选，供后续界面判定复用）
             },
         },
 
@@ -724,7 +813,36 @@ def load_config():
             user_cfg = json.load(f)
     except (json.JSONDecodeError, OSError):
         return copy.deepcopy(DEFAULT_CONFIG)
-    return _deep_merge(DEFAULT_CONFIG, user_cfg)
+    cfg = _deep_merge(DEFAULT_CONFIG, user_cfg)
+    if _migrate_shared_clock(cfg):
+        save_config(cfg)
+    return cfg
+
+
+def _migrate_shared_clock(cfg):
+    """小闹钟(寻路)标定迁「通用」页公共标定（tasks.shared）的一次性迁移（2026-09-22）：
+    把用户旧位置 tasks.dungeon.templates.clock 或 tasks.zhuagui.templates.gg_nav（两者是同一图标）
+    搬到 tasks.shared.templates.clock，搬完顺手清掉旧位置的指针键（图片文件 tm_clock.png 等仍在盘上，
+    由 shared 继续指着）。返回是否改动（改动由 load_config 存盘）。"""
+    tasks = cfg.get("tasks") or {}
+    shared = tasks.get("shared") or {}
+    st = shared.get("templates") or {}
+    dg = (tasks.get("dungeon", {}) or {}).get("templates") or {}
+    zg = (tasks.get("zhuagui", {}) or {}).get("templates") or {}
+    changed = False
+    if not st.get("clock"):
+        cand = dg.get("clock") or zg.get("gg_nav")
+        if cand:
+            st["clock"] = cand
+            shared["templates"] = st
+            changed = True
+    if "clock" in dg:
+        dg.pop("clock", None)
+        changed = True
+    if "gg_nav" in zg:
+        zg.pop("gg_nav", None)
+        changed = True
+    return changed
 
 
 def save_config(cfg):
@@ -754,7 +872,8 @@ def task_config(cfg, task_name):
                     changed = True
             if changed:
                 tc["regions"] = reg
-        # 共享模板同样叠加（目前只有战斗标识 battle_flag）：任务用 tc["templates"]["battle_flag"] 直接读。
+        # 共享模板同样叠加（战斗标识 battle_flag / 小闹钟 clock，见 SHARED_TPL_KEYS）：
+        # 任务在「通用」页公共标定里标一次，task_config 注入后直接 tc["templates"]["battle_flag"]/["clock"] 读。
         # 只注入 SHARED_TPL_KEYS 里的键、且任务本身有 templates 才注入，避免污染无模板任务。
         shared_block = (cfg.get("tasks", {}) or {}).get("shared", {}) or {}
         shared_t = shared_block.get("templates") or {}
