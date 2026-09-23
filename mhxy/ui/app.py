@@ -400,10 +400,17 @@ class App(ctk.CTk):
 
     def build_all_pages(self, on_step=None):
         """一次性把所有页面都建好（建完再亮窗口，杜绝「出现后才逐页卡」）。
-        每建好一页回调一次 on_step——用它驱动遮罩上的进度条转动，让构建期也有动画。"""
+        每建好一页回调一次 on_step——用它驱动遮罩上的进度条转动，让构建期也有动画。
+        单个页面构建失败不中止整批（记录日志、跳过继续）——否则遮罩会一直挂着让界面「卡在准备中」。"""
         for key in self.PAGE_CLASSES:
             if key not in self.pages:
-                self._ensure_page(key)
+                try:
+                    self._ensure_page(key)
+                except Exception as e:
+                    try:
+                        self.log_line(f"页面「{key}」初始化失败，已跳过：{e}", "warn")
+                    except Exception:
+                        pass
                 if callable(on_step):
                     try:
                         on_step()

@@ -38,7 +38,7 @@
 import subprocess
 import time
 
-from .base import Task, register, get_task, dungeon_tasks
+from .base import Task, register, get_task, dungeon_tasks, enter_target_for
 from .dungeon_base import DUNGEON_NS
 from ..core.config import SINGLE_TASK_ORDER
 from ..core.teaming import TeamFormation
@@ -377,6 +377,12 @@ class DailyTask(Task):
                 continue
             ctx.log(f"─── 所有号已汇合，集体刷副本 {i}/{total}「{title}」（组队 → 队长跑）───", level="hit")
             try:
+                # 进本要点的「进入」序号：写进内存 cfg 的 tasks.dungeon.enter_target（运行时字段，
+                # 不入盘）。同标签区几个「进入」长得一样，dungeon_base 按「该副本在标签区展示顺序里的
+                # 第几个」来点——此前这字段随旧刷副本运行页删除后没人再写，导致全部副本都点第 1 个。
+                et = enter_target_for(dname)
+                if et:
+                    (ctx.cfg.setdefault("tasks", {}).setdefault(DUNGEON_NS, {}))["enter_target"] = et
                 self._any_real_run = True
                 task.run(ctx)
             except Exception as e:

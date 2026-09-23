@@ -9,6 +9,7 @@ import customtkinter as ctk
 
 from .. import theme as T
 from ...core import config as cfg_mod
+from ...core import window as win_mod
 from ...tasks import get_task
 from ..common import (Card, bind_wraplength, open_calibrate,
                       teaming_ns, teaming_ready, _row_optional)
@@ -105,24 +106,30 @@ class DungeonConfig(ctk.CTkFrame):
         self.lbl_ready.configure(text=line, text_color=T.SUCCESS if ready else T.WARN)
 
     def _kick_count_windows(self, quiet=False):
-        """后台线程枚举已选窗口数（共用 game_win 的定位逻辑），供状态行显示。quiet: 刷新页签时静默。"""
+        """后台线程按 targets 选窗并统计已选中号数（枚举走 core.window，不占主线程），供状态行显示。quiet: 刷新页签时静默。"""
         if self._windows_pending:
             return
         targets = self.app.cfg.get("targets", {})
         if not targets.get("multi"):
             self._set_wins_line(1 if targets else 0, quiet)
             return
+        title = self.app.cfg.get("window_title", "梦幻西游")
+        offset = self.app.cfg.get("window_offset", [0, 0])
         self._windows_tokens += 1
         token = self._windows_tokens
         self._windows_pending = True
 
-        def work(w):
+        def work():
             try:
-                if not w.locate():
-                    return None
-                return w
+                wins = win_mod.resolve_targets(title, offset, targets)
+                out = []
+                for w in wins:
+                    w._multi_target = True
+                    if w.locate():
+                        out.append(w)
+                return out
             except Exception:
-                return None
+                return []
 
         def done(results):
             if token != self._windows_tokens:
@@ -135,11 +142,7 @@ class DungeonConfig(ctk.CTkFrame):
                 pass
             self._set_wins_line(len(wins), quiet)
 
-        wins = [self.app.game_win.new_for_target(t) for t in targets.get("multi_indices", [])]
-        wins = [w for w in wins if w is not None]
-        for w in wins:
-            w._multi_target = True
-        threading.Thread(target=lambda: done([work(w) for w in wins]), daemon=True).start()
+        threading.Thread(target=lambda: done(work()), daemon=True).start()
 
     def _set_wins_line(self, n, quiet):
         try:

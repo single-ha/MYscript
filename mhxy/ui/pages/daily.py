@@ -992,11 +992,20 @@ class DailyPage(ctk.CTkFrame):
     def _single_build_cfg(cfg, name, dungeon_only=None):
         """单跑用运行配置：只改内存深拷贝，绝不触盘。steps=只含这一个任务（整步语义；
         刷副本=当前勾选全部副本）；group_enabled 全开（绕过组级停用）；
-        副本级单跑额外把 tasks.dungeon.selected 覆盖成 [那一个]。"""
+        副本级单跑额外把 tasks.dungeon.selected 覆盖成 [那一个]。
+        同时忽略「日常」页的整链设置（用户拍板）：单跑只按这个任务自己的流程走——
+        不套整体时间上限、绝不跑完关机、不做定时等待、不按「跑完解散」收尾解散、
+        不触发「自动整理背包」；「已组队」是当前会话的组队条件、属于共享组队设置，不动。"""
         run_cfg = copy.deepcopy(cfg)
         daily = run_cfg.setdefault("tasks", {}).setdefault("daily", {})
         daily["steps"] = [{"task": name, "enabled": True}]
         daily["group_enabled"] = {"single": True, "multi": True}
+        loop = daily.setdefault("loop", {})
+        loop["time_limit_min"] = 0          # 不套整条龙的整体时间上限
+        loop["shutdown_after"] = False      # 单跑绝对不触发「跑完关机」
+        loop.pop("schedule", None)          # 不做定时等待
+        run_cfg.setdefault("tasks", {}).setdefault("teaming", {})["auto_disband"] = False
+        run_cfg.setdefault("tasks", {}).setdefault("organize_bag", {})["auto_organize"] = False
         if dungeon_only:
             run_cfg.setdefault("tasks", {}).setdefault("dungeon", {})["selected"] = [dungeon_only]
         return run_cfg

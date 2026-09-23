@@ -8,14 +8,12 @@
   组件本身不写日志（日志归属各宿主按其 LOG_SOURCE 打）。
 """
 
-import re
-
 import customtkinter as ctk
 
 from . import theme as T
 from .common import Tooltip
 from ..core import config as cfg_mod
-from ..tasks.base import dungeon_tasks
+from ..tasks.base import dungeon_tasks, dungeon_cats, dungeon_display_layout
 
 
 class DungeonPicker(ctk.CTkFrame):
@@ -41,22 +39,10 @@ class DungeonPicker(ctk.CTkFrame):
         self._dungeons = dungeon_tasks()
 
         # 展示/勾选顺序：第一行侠士本、第二行普通本，每行内按等级低→高。取自各 Task.cat。
-        def _sort_key(name):
-            m = re.match(r"dt_(\d+)_([a-z]+?)(\d*)$", name)
-            if not m:
-                return (0, 0)                          # 非法名垫底
-            return (int(m.group(1)), int(m.group(3) or 0))
-
-        self.cat_order = ["xiashi", "common"]
+        # 与进副本点「进入」的序号共用同一基准（tasks.base.dungeon_display_layout）——两处不一致会进错本。
+        self.cat_order = dungeon_cats() + [c for c in dungeon_display_layout() if c not in dungeon_cats()]
         self.cat_label = {"xiashi": "侠士本", "common": "普通本"}
-        self.layout = {c: [] for c in self.cat_order}
-        for c in self._dungeons:
-            cat = getattr(c, "cat", "common")
-            if cat not in self.layout:
-                self.layout[cat] = []
-            self.layout[cat].append(c.name)
-        for names in self.layout.values():
-            names.sort(key=_sort_key)
+        self.layout = dungeon_display_layout()
         self.display_names = [n for cat in self.cat_order for n in self.layout[cat]]
 
         self._vars = {}                # name -> (CB, var)

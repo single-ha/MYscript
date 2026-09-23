@@ -14,6 +14,7 @@ import time
 import ctypes
 import datetime
 import random
+import re
 
 import numpy as np
 
@@ -45,6 +46,43 @@ def dungeon_tasks():
     刷副本页据此自动列出可选副本——新增副本只需在任务类上标 is_dungeon=True 即自动出现，
     GUI 不用改。以后做「连续刷多个副本」时也以此为候选清单。"""
     return [c for c in _REGISTRY.values() if getattr(c, "is_dungeon", False)]
+
+
+_DUN_RE = re.compile(r"dt_(\d+)_([a-z]+?)(\d*)$")
+
+
+def _dun_sort_key(name):
+    """副本名解析成 (等级, 序号)：60 普通1 < 60 普通2 < 70 普通1；解析失败垫底。"""
+    m = _DUN_RE.match(name)
+    if not m:
+        return (0, 0)
+    return (int(m.group(1)), int(m.group(3) or 0))
+
+
+def dungeon_cats():
+    """副本标签区顺序（侠士本 → 普通本），与游戏画面分区一致。"""
+    return ["xiashi", "common"]
+
+
+def dungeon_display_layout():
+    """副本统一展示基准：按类别分组的名字列表（类内等级低→高）。
+    GUI 勾选区、进副本点「进入」的序号都以它为唯一基准——勾选顺序/游戏内多个「进入」
+    长得一样，必须靠「该副本在其标签区展示顺序里的第几个」来定位，两处不一致就会进错本。"""
+    layout = {}
+    for t in dungeon_tasks():
+        layout.setdefault(getattr(t, "cat", "common"), []).append(t.name)
+    for names in layout.values():
+        names.sort(key=_dun_sort_key)
+    return layout
+
+
+def enter_target_for(name):
+    """某副本进本时应点的「同标签区第几个」进入 → {cat, pos}；未收录返回 None。
+    由日常/单跑引擎在开跑某副本前写入 tasks.dungeon.enter_target，dungeon_base._click_enter_multi 读取。"""
+    for cat, names in dungeon_display_layout().items():
+        if name in names:
+            return {"cat": cat, "pos": names.index(name)}
+    return None
 
 
 class Task:
