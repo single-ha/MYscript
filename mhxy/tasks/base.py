@@ -52,14 +52,14 @@ class Task:
     title = "基础任务"      # 界面显示名
     description = ""        # 一句话说明
     is_dungeon = False      # True=可在「刷副本」页被当作一个副本选中运行（见 dungeon_tasks）
-    # True=支持「日常一条龙·多开每窗口独立链」：实现 make_chain_driver(wctx) 暴露
+    # True=支持「日常·多开每窗口独立链」：实现 make_chain_driver(wctx) 暴露
     #   「每窗口一份 record + 单步推进函数」，与本任务自己的 run()/轮转共用同一套状态机。
-    #   需跨窗口协作的任务（如组队副本）保持 False，由一条龙当「集体屏障」处理。
+    #   需跨窗口协作的任务（如组队副本）保持 False，由日常当「集体屏障」处理。
     CHAINS_PER_WINDOW = False
-    # True=在「日常一条龙·多开」里该任务按【逐号顺序执行】：一个号把它从头到尾做完
+    # True=在「日常·多开」里该任务按【逐号顺序执行】：一个号把它从头到尾做完
     # （record done）才轮到下一个号做，不做跨号轮转——配合 daily 的 _drive_chain_until_yield(blocking=True)。
     #   适合「短而快、频繁切号反而低效/凌乱」的任务（三界奇缘/趣味鉴赏）；
-    #   只影响日常一条龙的链推进，任务自己单独跑的行为不变（见各任务 _run）。
+    #   只影响日常的链推进，任务自己单独跑的行为不变（见各任务 _run）。
     CHAIN_SEQUENTIAL = False
     # True=开跑前先把目标窗口带回主界面（run() 入口统一做；找不到主界面只打日志不拦任务）。
     #   特殊任务（如拓印「演练」需拓印弹窗已在前台）覆盖为 False，启动时绝不 ESC 关它。

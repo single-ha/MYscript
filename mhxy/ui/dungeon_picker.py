@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-副本勾选组件（多页共用、单源配置 tasks.dungeon.selected）：
-  刷副本页（DungeonPage）与「日常一条龙」页共用这一组件、读写同一份 tasks.dungeon.selected ——
-  两页永远同步，杜绝多页各自设置的分歧（对齐项目「组队设置只放一份」的先例）。
+副本勾选组件（单源配置 tasks.dungeon.selected）：
+  唯一入口在「日常」页「刷副本」步（「任务配置」页只做副本共用标定，不含勾选）。
   组件自管布局（侠士本/普通本两行、每行等级低→高）与选中同步；宿主传 on_change(name, checked, sel)
-  刷新自己的就绪状态。组件本身不写日志（日志归属各宿主按其 LOG_SOURCE 打）。
+  刷新自己的就绪状态。on_run(name) 可选：提供了则每个副本的勾选框改成【无文字勾选框 + 副本名即按钮】，
+  勾选框只管勾选、点副本名=单跑那一本。
+  组件本身不写日志（日志归属各宿主按其 LOG_SOURCE 打）。
 """
 
 import re
@@ -12,6 +13,7 @@ import re
 import customtkinter as ctk
 
 from . import theme as T
+from .common import Tooltip
 from ..core import config as cfg_mod
 from ..tasks.base import dungeon_tasks
 
@@ -25,7 +27,7 @@ class DungeonPicker(ctk.CTkFrame):
     TASK_NAME = "dungeon"
 
     def __init__(self, master, app, fonts, on_change=None, caption=None,
-                 collapsible=False, default_open=True, on_open_change=None):
+                 collapsible=False, default_open=True, on_open_change=None, on_run=None):
         super().__init__(master, fg_color="transparent")
         self.app = app
         self.fonts = fonts
@@ -33,6 +35,7 @@ class DungeonPicker(ctk.CTkFrame):
         self._collapsible = bool(collapsible)
         self._open = bool(default_open)
         self._on_open_change = on_open_change
+        self._on_run = on_run           # 「单跑」回调：提供了就把每个副本名渲染成可点的单跑按钮
         self._cat_rows = []            # [(rowidx, frame)] 供折叠 grid_remove/grid 恢复
         self.chevron = None
         self._dungeons = dungeon_tasks()
@@ -101,12 +104,32 @@ class DungeonPicker(ctk.CTkFrame):
                 if c is None:
                     continue
                 var = ctk.BooleanVar(value=False)
-                cb = ctk.CTkCheckBox(cs, text=c.title, variable=var, font=self.fonts["body"],
+                cell = ctk.CTkFrame(cs, fg_color="transparent")
+                cell.grid(row=0, column=col, sticky="w", padx=(0, 14), pady=2)
+                cb = ctk.CTkCheckBox(cell, text=("" if self._on_run else c.title),
+                                     variable=var, font=self.fonts["body"],
+                                     width=(26 if self._on_run else 120),
                                      text_color=T.TEXT, fg_color=T.SURFACE_2,
                                      hover_color=T.BORDER, checkmark_color=T.ON_ACCENT,
                                      border_color=T.BORDER, command=lambda n=name: self._on_toggle(n))
-                cb.grid(row=0, column=col, sticky="w", padx=(0, 18), pady=2)
+                cb.pack(side="left")
                 self._vars[name] = (cb, var)
+                if self._on_run:
+                    # 副本名做成按钮胶囊（勾选框只管勾选；点胶囊=只刷那一个副本）
+                    chip = ctk.CTkFrame(cell, fg_color=T.BTN, corner_radius=T.RADIUS_SM)
+                    name_lbl = ctk.CTkLabel(chip, text=c.title, font=self.fonts["body"],
+                                            text_color=T.TEXT, cursor="hand2", anchor="w")
+                    name_lbl.grid(row=0, column=0, padx=8, pady=2)
+                    chip.pack(side="left", padx=(4, 0))
+                    name_lbl.bind("<Button-1>", lambda e, n=name: self._on_run(n))
+                    name_lbl.bind("<Enter>", lambda e, ch=chip, l=name_lbl:
+                                  (ch.configure(fg_color=T.ACCENT),
+                                   l.configure(text_color=T.ON_ACCENT)))
+                    name_lbl.bind("<Leave>", lambda e, ch=chip, l=name_lbl:
+                                  (ch.configure(fg_color=T.BTN),
+                                   l.configure(text_color=T.TEXT)))
+                    Tooltip(name_lbl, f"「{c.title}」· 点它=只刷这一个副本"
+                                      "（一次性、不落盘）。", self.fonts)
         if self._collapsible and not self._open:
             self._apply_open(notify=False)
 

@@ -12,7 +12,7 @@
 组队的标定（模板/区域）以及本动作的角色参数（captain_index / dry_run）都放共享命名空间
 tasks.teaming——组队是跨任务共享能力，参数也随它走，与具体副本解耦。
 （注意：任务名仍是 "dungeon" 只为兼容历史 get_task("dungeon")；「刷副本」页本身改成副本中枢，
-不再运行本任务，而是运行被选中的副本，见 gui/app.py DungeonPage。）
+不再运行本任务，而是运行被选中的副本，见 ui/app.py ConfigPage（任务配置页）。）
 """
 
 from ..core import vision

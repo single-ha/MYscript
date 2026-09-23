@@ -48,7 +48,7 @@ class GeneralPage(ctk.CTkFrame):
         head = ctk.CTkFrame(self, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         ctk.CTkLabel(head, text="通用", font=self.fonts["title"], text_color=T.TEXT).pack(anchor="w")
-        sub = ctk.CTkLabel(head, text="跨任务的通用功能：公共区域标定（活动/背包列表 + 拓印临摹模板，全任务共用）+ 组队标定 + 一键组队 / 一键解散 / 还原窗口尺寸。各任务专属的标定与「选择窗口」仍在对应任务页。",
+        sub = ctk.CTkLabel(head, text="跨任务的通用功能：公共区域标定（活动/背包列表 + 组队标定，全任务共用）+ 一键组队 / 一键解散 / 还原窗口尺寸。各任务专属的标定与参数在「任务配置」页（运行唯一入口在「日常」页）。",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
         sub.pack(fill="x", anchor="w", pady=(4, 0))
         bind_wraplength(sub)
@@ -123,7 +123,7 @@ class GeneralPage(ctk.CTkFrame):
         base_txt = f"{int(base[0])}×{int(base[1])}" if base and len(base) >= 2 else "未设置"
         ctk.CTkLabel(txt2, text=f"当前基准尺寸：{base_txt}", font=self.fonts["body"],
                      text_color=T.TEXT if base else T.WARN).pack(anchor="w", pady=(4, 0))
-        sub2 = ctk.CTkLabel(txt2, text="「还原尺寸」把所有窗口拉回基准尺寸；「调整窗口」（在「日常一条龙」页"
+        sub2 = ctk.CTkLabel(txt2, text="「还原尺寸」把所有窗口拉回基准尺寸；「调整窗口」（在「日常」页"
                                        "点开始左侧）把所选窗口（最多5个）按基准尺寸排成 2列×2行 —— 第1排贴屏幕顶、"
                                        "最后1排贴任务栏、最左列距左侧留空白（config.arrange_left_margin，默认100像素）、"
                                        "第5个居中。脚本点位按此基准尺寸标定。在下面窗口列表点「设为基准」来设定基准尺寸。",
@@ -198,7 +198,7 @@ class GeneralPage(ctk.CTkFrame):
                      text_color=T.SUCCESS if already else T.WARN).pack(anchor="w", pady=(4, 0))
         sub_s = ctk.CTkLabel(txt_s, text="「活动」界面那一片卡片列表、打开背包后那一片物品列表，几乎所有任务的画面都一样——"
                                         "在这里框一次，宝图 / 运镖 / 秘境降妖 / 三界奇缘 / 抓鬼 / 刷副本 / 整理背包自动通用，"
-"不用每个任务各标一遍。各任务页里的同名两项也会自动显示共用。"
+"不用每个任务各标一遍。「任务配置」页里的同名两项也会自动显示共用。"
                                          "「战斗界面标志」是进战斗后的画面元素（运镖/宝图必标，否则一进战斗就误判结束；秘境仅日志用）。"
                                          "「小闹钟」是任务栏那个寻路图标（刷副本/抓鬼必标：副本内寻路、每轮收尾和抓鬼点任务条目寻路都靠它）。"
                                          "「商城/活动图标」用来判断是否回到主界面：把主界面顶部的商城、活动按钮各框一次即可。"

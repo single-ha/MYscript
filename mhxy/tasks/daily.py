@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-日常一条龙：把已有任务按用户勾选、分「单人任务/多人任务」两组串起来跑完。
+日常：把已有任务按用户勾选、分「单人任务/多人任务」两组串起来跑完。
 
 分组（用户拍板，2026-09-07 重做，与「单人任务/多人任务」两个页面对齐；两区分组固定，不提供互换）：
   · 个人组（CHAINABLE_SINGLE）= 宝图 / 运镖 / 秘境降妖 / 三界奇缘 / 帮派签到 / 活跃度奖励
@@ -15,7 +15,7 @@
         这一步，才集体跑一次（组队→队长线性跑完），跑完一起放行。
         多人组固定排在单人组前面（用户拍板去掉两区排序），steps 全局有序=执行顺序。
   · 单人任务组在本趟流程中 → 多人步跑完转入单人步前【强制解散】队伍（单人步=每窗口独立链，
-    残留队伍会干扰视角/点名；「日常一条龙」页的「跑完多人任务后解散队伍」开关随之强制打开并锁定）。
+    残留队伍会干扰视角/点名；「日常」页的「跑完多人任务后解散队伍」开关随之强制打开并锁定）。
     整条链只有多人步、后面没有单人步时，才按该开关决定是否收尾解散。
 
 「刷副本」步指向**副本中枢当前勾选的全部副本**（tasks.dungeon.selected，is_dungeon 列表，按勾选顺序），
@@ -31,7 +31,7 @@
   · 全程勤查 should_stop（停止/热键/鼠标甩角都能整条龙叫停）；整体时间上限只是安全网。
 
 为什么不含「秒装备」：它是【无限盯市场抢货】、不会自己跑完，串进来会一直卡住，后面的任务永远轮不到，
-不属于一条龙这种「跑通即进入下一个」的流程（用户拍板排除）。
+不属于日常这种「跑通即进入下一个」的流程（用户拍板排除）。
 单开模式：只有一个窗口，自然就是顺序跑完一条链（同一套引擎，窗口数=1）。
 """
 
@@ -43,7 +43,7 @@ from .dungeon_base import DUNGEON_NS
 from ..core.config import SINGLE_TASK_ORDER
 from ..core.teaming import TeamFormation
 
-# 可进一条龙的任务（这些都有明确「完成条件」、会自动结束）。秒装备 sniper 不在此列。
+# 可进日常的任务（这些都有明确「完成条件」、会自动结束）。秒装备 sniper 不在此列。
 # 个人组：每窗口独立链（各自都能经 make_chain_driver 逐窗口跑）。
 # 默认顺序 = 单人任务页签顺序（与 config.SINGLE_TASK_ORDER 同源，改页签/默认序就改那一处）。
 CHAINABLE_SINGLE = list(SINGLE_TASK_ORDER)
@@ -55,14 +55,14 @@ GROUP_OF = {n: "single" for n in CHAINABLE_SINGLE}
 GROUP_OF.update({n: "multi" for n in MULTI_BARRIER})
 GROUP_ORDER_DEFAULT = ["multi", "single"]   # 两区分组固定（多人在前、单人在后），保留作配置默认值
 GROUP_TITLES = {"single": "单人任务", "multi": "多人任务"}
-# 以后要加新分区：这里补 GROUP_OF 的映射 + GROUP_TITLES 标题即可；一条龙页的 _GROUPS、
+# 以后要加新分区：这里补 GROUP_OF 的映射 + GROUP_TITLES 标题即可；日常页的 _GROUPS、
 # 引擎的 steps 分段、config 的 group_order 都会自动跟进，无需改别处。
 
 
 @register
 class DailyTask(Task):
     name = "daily"
-    title = "日常一条龙"
+    title = "日常"
     description = "勾选已有任务按顺序跑完；单人任务每窗口独立跑、多人任务（刷副本/抓鬼）集体汇合后跑"
 
     # 本任务没有自己的标定（全部沿用各子任务）；calibrate_dialog 据此不渲染任何标定项。
@@ -72,7 +72,7 @@ class DailyTask(Task):
     def preflight(self, ctx):
         problems = []
         if not self._enabled_steps(ctx):
-            problems.append("还没勾选任何任务 —— 请在「日常一条龙」页勾选要串起来跑的任务")
+            problems.append("还没勾选任何任务 —— 请在「日常」页勾选要串起来跑的任务")
         if not ctx.select_windows():
             problems.append(f"没找到/没选中目标窗口（标题含「{ctx.window.title_substr}」），"
                             "请先打开游戏并在「选择窗口」里选好")
@@ -106,7 +106,7 @@ class DailyTask(Task):
 
         titles = " → ".join(self._title_of(n, ctx) for n in steps)
         mode = f"多开 {len(wctxs)} 个号·每窗口独立任务链轮转" if multi else "单号"
-        ctx.log(f"★ 日常一条龙启动（{mode}）：{titles} ★", level="warn")
+        ctx.log(f"★ 日常启动（{mode}）：{titles} ★", level="warn")
         barriers = [n for n in steps if n in MULTI_BARRIER]
         if barriers:
             ctx.log("多人步=集体屏障：" + "、".join(self._title_of(n, ctx) for n in barriers)
@@ -198,7 +198,7 @@ class DailyTask(Task):
 
         # —— 汇总 ——
         done_n = sum(1 for c in chains if c["done"])
-        ctx.log(f"日常一条龙结束：{done_n}/{len(chains)} 个号跑完整条链，"
+        ctx.log(f"日常结束：{done_n}/{len(chains)} 个号跑完整条链，"
                 f"用时 {(time.time() - start_ts) / 60:.1f} 分钟。")
         unfinished = [c for c in chains if not c["done"]]
         if unfinished and not ctx.should_stop():
@@ -505,7 +505,7 @@ class DailyTask(Task):
     def _enabled_steps(self, ctx):
         """返回【按存储顺序】、已勾选且可串联的任务名列表。
         组级开关（tasks.daily.group_enabled，{single: bool, multi: bool}，缺省 True）也参与过滤：
-        整个组被关掉时，该组全部任务不进一条龙（组内行级 enabled 独立保留，重开整组即恢复）。"""
+        整个组被关掉时，该组全部任务不进日常（组内行级 enabled 独立保留，重开整组即恢复）。"""
         tc = ctx.task_cfg(self.name)
         ge = tc.get("group_enabled") or {}
         def group_on(name):

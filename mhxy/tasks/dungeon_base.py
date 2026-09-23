@@ -161,7 +161,7 @@ class DungeonBaseTask(Task):
                 if not p or vision.load_template(p) is None:
                     problems.append(f"组队模板『{tk}』缺失 —— 请在「通用」页点「标定（组队）」裁图")
 
-        # 跑完解散已迁至「日常一条龙」页集中控制（tasks.teaming.auto_disband），副本自身不再解散。
+        # 跑完解散已迁至「日常」页集中控制（tasks.teaming.auto_disband），副本自身不再解散。
 
         regions = tc.get("regions", {})
         if not regions.get("activity_list"):
@@ -263,7 +263,7 @@ class DungeonBaseTask(Task):
         # —— 队长跑副本流程（侠士进副本后还要轮询各号点确认）——
         self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
         self._run_dungeon(cap_child, assignments, loop, regions, threshold)
-        # 跑完解散已迁至「日常一条龙」页集中控制（见 _disband_after_multi），副本跑完不再自动解散。
+        # 跑完解散已迁至「日常」页集中控制（见 _disband_after_multi），副本跑完不再自动解散。
 
     # ==================================================================
     # 副本流程（普通=蹈海去线性；侠士进副本后多一段确认轮询）

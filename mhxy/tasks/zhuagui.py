@@ -96,7 +96,7 @@ class ZhuaguiTask(Task):
                 if not p or vision.load_template(p) is None:
                     problems.append(f"组队模板『{tk}』缺失 —— 请在「通用」页点「标定（组队）」裁图")
 
-        # 跑完解散已迁至「日常一条龙」页集中控制（tasks.teaming.auto_disband），抓鬼自身不再解散。
+        # 跑完解散已迁至「日常」页集中控制（tasks.teaming.auto_disband），抓鬼自身不再解散。
 
         regions = tc.get("regions", {})
         if not regions.get("activity_list"):
@@ -188,7 +188,7 @@ class ZhuaguiTask(Task):
         # —— 第二步：队长跑抓鬼循环（N 轮）——
         self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
         self._run_rounds(cap_child, loop, regions, threshold)
-        # 跑完解散已迁至「日常一条龙」页集中控制（见 daily._disband_after_multi），抓鬼跑完不再自动解散。
+        # 跑完解散已迁至「日常」页集中控制（见 daily._disband_after_multi），抓鬼跑完不再自动解散。
 
     # ------------------------------------------------------------------
     # 队长抓鬼循环（线性、阻塞式；每轮= 领任务 → 战斗 → 领下一轮/收尾）

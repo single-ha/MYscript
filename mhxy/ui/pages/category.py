@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """分类页基类。把若干任务页嵌进一个侧边栏导航项下，顶部用 segment 子导航切换。
-例如「单人任务」分类页内嵌宝图/运镖/秘境降妖三页。成员页仍沿用 (master, app) 构造、
+例如「工具」分类页内嵌秒装备/整理背包/拓印、「周常」内嵌三周常页。成员页仍沿用 (master, app) 构造、
 在 body 上按 row=0,col=0 + tkraise() 叠层（与 App 管理顶层页同一套约定）。
 
 对外（供 App 下钻）：
@@ -50,7 +50,7 @@ class CategoryPage(ctk.CTkFrame):
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.grid(row=0, column=0, sticky="ew", padx=4, pady=(2, 14))
         bar.grid_columnconfigure(0, weight=1)
-        self.top_bar = bar   # 供子类（如 MultiPage）重排：把子导航挪到共用设置卡之下
+        self.top_bar = bar   # 供子类（如 WeeklyPage）重排：把子导航挪到共用设置卡之下
         if title:
             ctk.CTkLabel(bar, text=title, font=self.fonts["title"], text_color=T.TEXT).grid(
                 row=0, column=0, sticky="w")

@@ -30,6 +30,7 @@ SUCCESS = ("#1f9d6b", "#3ecf8e")      # 成功 / 演练 / 已连接 / 命中(hit
 SUCCESS_HOVER = ("#1a8a5d", "#34b87c")  # 成功色悬停（绿色按钮 hover）
 WARN = ("#c98a16", "#f2b34b")         # 警告 / 风险提示
 WARN_HOVER = ("#b57b12", "#d99c2f")   # 警告色悬停（等待/提醒按钮 hover）
+WARN_ON = ("#3a2a00", "#3a2a00")      # 黄/橙底上的深琥珀字（「还需标定」胶囊：黄底深字，比白字对比强）
 DANGER = ("#e23b3b", "#ff5f5f")       # 危险 / 实战 / 停止按钮 / 错误
 DANGER_HOVER = ("#cf3030", "#ec4b4b") # 危险悬停
 PILL_OK_BG = ("#dff3e8", "#15301f")   # 药丸底：已连接 / 演练（配 SUCCESS 文字）

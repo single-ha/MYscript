@@ -90,14 +90,22 @@ mhxy/
     calibrate.py 旧的命令行标定（已不被 GUI 调用，仅留作 CLI 备用）
   ui/
     theme.py            配色/字体/圆角令牌（改这里整体换肤）+ bind_wraplength 换行助手（见约束 8）
-    app.py              主窗口：侧边导航（日常一条龙置顶/默认）+ 通用页/各任务Page/SettingsPage/AboutPage
+    app.py              主窗口：侧边导航（日常置顶/默认）+ 通用页/任务配置页(ConfigPage)/工具页/SettingsPage/AboutPage
     roi_overlay.py      全屏框选组件（纯 tk，冻结截图上拖框，返回屏幕绝对 ROI）
     calibrate_dialog.py GUI 内标定对话框（区域 + 模板缩略图画廊 + 加装备），按任务 CALIBRATION spec 驱动
     leader_gallery.py   队长ID 库画廊（见下「队长ID 库」约束）
     inventory_items_dialog.py 整理背包「物品清单」管理弹窗（缩略图+名字+动作下拉+框选添加，写 tasks.organize_bag.items）
     pages/organize_bag.py  OrganizeBagPage：整理背包独立页（工具分类页「整理背包」tab）——一键整理/标定/管理物品；
                           原在通用页卡片，迁到工具页；共享命名空间 tasks.organize_bag。「自动整理背包」开关
-                          已迁到「日常一条龙」页控制区（影响一条龙运行中自动清背包）
+                          已迁到「日常」页控制区（影响日常运行中自动清背包）
+    pages/config_page.py  ConfigPage：任务配置页（导航「🎛 任务配置」，2026-09-23 起取代原 single/multi 两页）——
+                          单人/多人全部任务的 参数+标定 收拢成一个可滚动界面，无任何运行入口；单人7卡
+                          (按 config.SINGLE_TASK_ORDER) + 多人2卡(刷副本/抓鬼；组队开关已不在本页，
+                          见下「已组队」条)。
+                          各任务页文件（treasure_map/secret_realm/appreciation/sanjie/escort/guild_checkin/
+                          activity_reward/dungeon/zhuagui）均改为无 run 的配置卡类 *Config，参数「改动即保存」
+                          （common.param_entry 失焦/回车写回 config）；副本勾选唯一入口仍留在「日常」页
+                          （DungeonPicker，共享 tasks.dungeon.selected），本页刷副本卡只做共用标定+就绪，不含勾选。
     pages/tuoying.py       TuoyingPage：拓印独立页（工具分类页「拓印」tab）——标定/就绪状态/一键拓印演练；
                           共享命名空间 tasks.tuoying（原在通用页公共标定，迁到这里）
     pages/tools.py      工具分类页（Tab: 秒装备 / 整理背包 / 拓印）
@@ -126,11 +134,15 @@ mhxy/
   **所有副本共用一套标定**（只按普通/侠士区分）：模板/区域/loop 全存共享 `tasks.dungeon` 命名空间，一次标定覆盖全部副本。
   **组队设置（队长 captain_index / 已组队 skip_team / 跑完解散
   auto_disband）统一存共享 `tasks.teaming`**，各多人任务（蹈海去/抓鬼等）的 preflight/run 都读这份共享配置；
-  **UI 上只在「多人任务」页顶层放一份「组队设置」（`common.TeamSettingsCard`，已组队/跑完解散开关）供该页所有
-  多人任务共用；队长/队长ID 在「通用」页「选择窗口/队长」里选。任务子页（刷副本/抓鬼）不再放组队控件**，
-  杜绝多页各自设置的分歧。
+  **「跑完解散」开关在「日常」页设置区（`DailyPage.var_disband`）；「已组队」开关（`skip_team`）2026-09-23
+  起在「日常」页设置区也新增一份（`DailyPage.var_skip_team`）**，与「跑完解散」并排、写同一份共享配置；
+  队长/队长ID 在「通用」页「选择窗口/队长」里选。⚠ **拍板脉络**：2026-09-23「已组队」先迁出「任务配置」页
+  （该页顶部组队卡已删），同日落定「不涉及周常/工具页」——周常页的 `common.TeamSettingsCard`（含已组队开关）
+  原样保留作第二入口，任务子页（刷副本/抓鬼）仍不放组队控件。
   - **「已组队」开关（skip_team）**：勾上=已自行组好队，副本跳过组队握手、直接由队长开刷；preflight 随之放宽
-    （不要求多开≥2、不查组队资产，只需队长那个号能定位）。
+    （不要求多开≥2、不查组队资产，只需队长那个号能定位）。入口在「日常」页设置区（`DailyPage.var_skip_team`，
+    与「跑完解散」并排）＋ 周常页 `TeamSettingsCard`；「任务配置」页已移除。各多人任务（副本/抓鬼/周常）的
+    UI 就绪判定都读同一份。
   - **副本通用实现 + 多命中点「进入」定位（`tasks/dungeon_base.py`）**：副本逻辑统一抽成 `DungeonBaseTask`
     子类只写 `name/title/cat(侠士 xiashi / 普通 common)`；PREF 已废弃。
     「进入」按钮**普通/侠士共用**一张（`templates.enter_dungeon`）；`xiashi_tab` 为侠士区标签页——
@@ -160,14 +172,14 @@ mhxy/
     **None（调用方自行兜底，别当非主界面）**。任何任务要判断「是否已回到主界面」都用它。
     同文件还有**标志判定 `ui_state.is_present(scene, flags, flag_key, threshold)`**（通用 `_present`：场景里找到该标志模板=True，
     缺失/没找到=False 不抛错）——战斗标识 `battle_flag` 判定即走它（运镖/宝图/秘境），各任务不再各自复制 `_present`。
-- **日常一条龙分「个人/多人」两区（user 拍板，2026-09-07）**：`tasks/daily.py` 里
+- **日常分「个人/多人」两区（user 拍板，2026-09-07）**：`tasks/daily.py` 里
   `CHAINABLE_SINGLE`=个人组（宝图/运镖/秘境/三界奇缘/帮派签到/活跃度奖励/趣味鉴赏，每窗口独立链）、
   `MULTI_BARRIER`=多人组（刷副本/抓鬼，集体屏障：所有活跃号停靠同一步等齐→组队→队长跑→放行）。
   `group_of(name)` 由任务名判定分组；**steps 全局有序=执行顺序**（按 `tasks.daily.group_order` 两段拼接，
   界面「⇅ 两区互换」整段对调、组内保留）。**整组开关 `tasks.daily.group_enabled`**（{single,multi}→bool，缺省
   全开）：区头开关整组停用/启用，引擎 `_enabled_steps` 过滤时跳过整组（行级 enabled 独立保留，重开整组即恢复）。**进个人组的前提**是任务有 `CHAINS_PER_WINDOW=True` +
   `make_chain_driver(wctx)`（每窗口 record + 单步推进，非阻塞；帮派签到/活跃度已是轮转状态机）。
-  **三界奇缘/趣味鉴赏 置 `CHAIN_SEQUENTIAL=True`（user 拍板 2026-09-22）**：一条龙多开时**逐号顺序执行**——
+  **三界奇缘/趣味鉴赏 置 `CHAIN_SEQUENTIAL=True`（user 拍板 2026-09-22）**：日常多开时**逐号顺序执行**——
   主循环指定唯一持有者、`_drive_chain_until_yield(blocking=True)` 把它从头做完整再放行，排队的号跳过等待
   （不做跨号轮转）；窗口失效的号不占持有权（不会饿死别号）。任务单独跑（独立页/多开轮转）不受影响。
   多人步只走集体 `_run_collective`，不建独立链。

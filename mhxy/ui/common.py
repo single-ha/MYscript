@@ -247,6 +247,70 @@ def load_thumb(template_rel, thumbs_list, max_h=40):
         return None
 
 
+def param_entry(parent, fonts, label, initial, on_change, width=70, tooltip=None):
+    """「标签 + 输入框」参数行：失焦/回车时把当前值交给 on_change（改动即保存，无「运行」按钮页用）。
+
+    parent 用 pack 布局；返回 (StringVar, entry)。tooltip 同时挂到标签与输入框上。"""
+    row = ctk.CTkFrame(parent, fg_color="transparent")
+    row.pack(fill="x", anchor="w", padx=16)
+    row.grid_columnconfigure(0, weight=0)
+    row.grid_columnconfigure(1, weight=1)
+    lbl = ctk.CTkLabel(row, text=label, font=fonts["body"], text_color=T.TEXT)
+    lbl.grid(row=0, column=0, sticky="w", pady=(10, 0))
+    var = ctk.StringVar(value=initial)
+    ent = ctk.CTkEntry(row, textvariable=var, width=width, font=fonts["body"],
+                       fg_color=T.SURFACE_2, border_color=T.BORDER, justify="right")
+    ent.grid(row=0, column=1, sticky="w", padx=(10, 0), pady=(10, 0))
+    def _commit(_e=None):
+        try:
+            on_change(var.get())
+        except Exception:
+            pass
+    ent.bind("<FocusOut>", _commit)
+    ent.bind("<Return>", _commit)
+    if tooltip:
+        tt = Tooltip(lbl, tooltip, fonts)
+        Tooltip(ent, tooltip, fonts)
+        # 保持引用避免 GC（一控件一个实例，正常销毁即可）
+        ent._param_entry_tooltip = tt
+    return var, ent
+
+
+def open_calibrate(app, task_name, on_done=None, owner=None, slot="_cal_dialog"):
+    """统一打开任务的标定向导窗口（按 owner.slot 属性去重：已开则置顶，不重复弹）。
+
+    on_done 在窗口关闭时于主线程回调（常用于刷新标定状态）。
+    owner/slot 可空：不传则每次都新建（如工具页一次性标定）。"""
+    if owner is not None:
+        existing = getattr(owner, slot, None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift()
+                    existing.focus_force()
+                    return
+            except Exception:
+                pass
+            setattr(owner, slot, None)
+    from .calibrate_dialog import CalibrateDialog  # 延迟导入避免循环引用
+    def _done():
+        if owner is not None:
+            setattr(owner, slot, None)
+        if callable(on_done):
+            try:
+                on_done()
+            except Exception:
+                pass
+    try:
+        dlg = CalibrateDialog(app, task_name=task_name, on_done=_done)
+        if owner is not None:
+            setattr(owner, slot, dlg)
+    except Exception as e:
+        if owner is not None:
+            setattr(owner, slot, None)
+        app.toast(f"打开标定向导失败：{e}")
+
+
 # ----------------------------------------------------------------------
 # 公共区域（全任务共用标定）：任务页做就绪提示时，若公共区域没标齐，指路到「通用」页
 # ----------------------------------------------------------------------
@@ -372,7 +436,7 @@ def teaming_summary(team_tc):
 
 class TeamSettingsCard(ctk.CTkFrame):
     """多人任务共用的「组队设置」卡片：「已组队」开关（队长/队长ID 统一在通用页选）。
-    「跑完解散队伍」开关已迁到「日常一条龙」页（见 DailyPage.var_disband，存共享 tasks.teaming.auto_disband）。
+    「跑完解散队伍」开关已迁到「日常」页（见 DailyPage.var_disband，存共享 tasks.teaming.auto_disband）。
     控件读写共享 tasks.teaming 命名空间，故各多人任务页只需嵌这一张卡、零重复；
     on_change 回调让宿主页刷新自己的标定状态。"""
 

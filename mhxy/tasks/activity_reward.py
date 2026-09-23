@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-领取每日活跃度奖励（共享能力封装，可单独一键跑，也可进「日常一条龙·个人组」每窗口独立链）。
+领取每日活跃度奖励（共享能力封装，可单独一键跑，也可进「日常·个人组」每窗口独立链）。
 
 流程（每个所选窗口各跑一遍即完成当日活跃度奖励领取）：
   发「打开活动」快捷键（open_activity，默认 Alt+C）→ 依次点 20/40/60/80/100 五档活跃度奖励的「领取」按钮
@@ -9,7 +9,7 @@
 
 实现：非阻塞轮转状态机（每号一份 record，_step_once 只推一小步，随时让出）。
 run() 逐号把状态机一直推到 done（一气呵成）；make_chain_driver() 把同一套状态机交给
-「日常一条龙·多开每窗口独立链」逐次推进。任务始终实跑（无演练模式），点到即生效。
+「日常·多开每窗口独立链」逐次推进。任务始终实跑（无演练模式），点到即生效。
 配置/标定放共享命名空间 tasks.activity_reward（scene 留空=整窗检测；模板=五个档位各自的领取按钮）。
 """
 
@@ -41,8 +41,8 @@ S_CLOSE = "CLOSE"        # Esc 关界面 → 本轮完成
 class ActivityRewardTask(Task):
     name = _NS
     title = "活跃度奖励"
-    description = "对每个所选窗口：打开活动界面 → 依次点 20/40/60/80/100 五档活跃度「领取」，逐号完成当日奖励（可跑日常一条龙）"
-    CHAINS_PER_WINDOW = True   # 可做「日常一条龙·每窗口独立链」
+    description = "对每个所选窗口：打开活动界面 → 依次点 20/40/60/80/100 五档活跃度「领取」，逐号完成当日奖励（可跑日常）"
+    CHAINS_PER_WINDOW = True   # 可做「日常·每窗口独立链」
 
     CALIBRATION = {
         "regions": [
@@ -124,7 +124,7 @@ class ActivityRewardTask(Task):
         rec["t_state"] = time.time()
 
     def _step_once(self, ctx, rec):
-        """推进一个很小的动作后返回（非阻塞，好轮转到下一个号/交回一条龙驱动）。"""
+        """推进一个很小的动作后返回（非阻塞，好轮转到下一个号/交回日常驱动）。"""
         st = rec["state"]
         if st == S_DRY:
             self._do_dry(ctx, rec)
@@ -190,11 +190,11 @@ class ActivityRewardTask(Task):
         rec["done"] = True
 
     # ------------------------------------------------------------------
-    # 日常一条龙·每窗口独立链：暴露「单窗口一份 record + 单步推进函数」
+    # 日常·每窗口独立链：暴露「单窗口一份 record + 单步推进函数」
     # ------------------------------------------------------------------
     def make_chain_driver(self, wctx):
         """给定单窗口上下文，返回 (record, step_fn)。step_fn() 推进该窗口状态机一步。
-        与 run() 共用 _new_record/_step_once；不切前台（由一条龙总轮转统一切）。"""
+        与 run() 共用 _new_record/_step_once；不切前台（由日常总轮转统一切）。"""
         tc = wctx.task_cfg(_NS)
         loop = tc.get("loop", {}) or {}
         regions = tc.get("regions", {}) or {}

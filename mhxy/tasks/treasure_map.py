@@ -73,8 +73,8 @@ _REQUIRED_FLAGS = ["flag_treasure_entry", "flag_join", "flag_tingting",
 class TreasureMapTask(Task):
     name = "treasure_map"
     title = "宝图"
-    description = "自动开活动→收藏宝图→挖宝→领奖，一条龙（战斗交给游戏自动，支持多开轮转）"
-    CHAINS_PER_WINDOW = True   # 可做「日常一条龙·每窗口独立链」
+    description = "自动开活动→收藏宝图→挖宝→领奖，日常（战斗交给游戏自动，支持多开轮转）"
+    CHAINS_PER_WINDOW = True   # 可做「日常·每窗口独立链」
 
     CALIBRATION = {
         "regions": [
@@ -190,12 +190,12 @@ class TreasureMapTask(Task):
                     "或调大 dialog_timeout_sec。", level="warn")
 
     # ------------------------------------------------------------------
-    # 日常一条龙·每窗口独立链：暴露「单窗口一份 record + 单步推进函数」
+    # 日常·每窗口独立链：暴露「单窗口一份 record + 单步推进函数」
     # ------------------------------------------------------------------
     def make_chain_driver(self, wctx):
         """给定单窗口上下文，返回 (record, step_fn)。step_fn() 推进该窗口本任务状态机一步
         （沿用 run() 同款 _step_once），record["done"]=本任务在该窗口完成。
-        与 run() 共用 _new_record/_step_once，不自跑 rotation、不切前台（由一条龙总轮转统一切）。
+        与 run() 共用 _new_record/_step_once，不自跑 rotation、不切前台（由日常总轮转统一切）。
         注意：_new_record 依赖 self._start_state，须先在此设好（同 run() 开头）。"""
         tc = wctx.task_cfg(self.name)
         loop = tc["loop"]

@@ -46,8 +46,8 @@ class AppreciationTask(Task):
     name = "appreciation"
     title = "趣味鉴赏"
     description = "自动开活动→参加→匹配并点击心形图案，点满设定次数或超时即停（多开逐号顺序跑：一个号完成再下一个号）"
-    CHAINS_PER_WINDOW = True   # 可做「日常一条龙·每窗口独立链」
-    CHAIN_SEQUENTIAL = True    # 一条龙多开时也逐号顺序跑：一个号点满再轮下一个号（用户拍板）
+    CHAINS_PER_WINDOW = True   # 可做「日常·每窗口独立链」
+    CHAIN_SEQUENTIAL = True    # 日常多开时也逐号顺序跑：一个号点满再轮下一个号（用户拍板）
 
     CALIBRATION = {
         "regions": [
@@ -149,13 +149,13 @@ class AppreciationTask(Task):
         ctx.log(f"已停止。共点击 {total} 个心形图案，用时 {(time.time() - start_ts) / 60:.1f} 分钟。")
 
     # ------------------------------------------------------------------
-    # 日常一条龙·每窗口独立链：暴露「单窗口一份 record + 单步推进函数」
+    # 日常·每窗口独立链：暴露「单窗口一份 record + 单步推进函数」
     # ------------------------------------------------------------------
     def make_chain_driver(self, wctx):
         """给定单窗口上下文，返回 (record, step_fn)。step_fn() 推进该窗口本任务状态机一步
         （沿用 run() 同款 _step_once），record["done"]=本任务在该窗口完成。
-        与 run() 共用 _new_record/_step_once，不自跑轮转、不切前台（由一条龙总轮转统一切）。
-        本任务 CHAIN_SEQUENTIAL=True：一条龙多开时主循环只让一个号持有它、一口气做到 done
+        与 run() 共用 _new_record/_step_once，不自跑轮转、不切前台（由日常总轮转统一切）。
+        本任务 CHAIN_SEQUENTIAL=True：日常多开时主循环只让一个号持有它、一口气做到 done
         才放行下一个号（不跨号轮转）；step_fn 内部无等待让出依赖，可被阻塞式连推。"""
         tc = wctx.task_cfg(self.name)
         loop = tc["loop"]

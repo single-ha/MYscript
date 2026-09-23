@@ -17,7 +17,7 @@ from ..core.runner import TaskRunner, set_run_rejected_hook
 from ..core.input import get_cursor
 from .common import (DEFAULT_STOP_HOTKEY, DEFAULT_FAILSAFE, FAILSAFE_CORNERS,
                      _in_failsafe_corner, _parse_stop_hotkey, _vk_down)
-from .pages import (DailyPage, WeeklyPage, SinglePage, MultiPage, ToolsPage,
+from .pages import (DailyPage, WeeklyPage, ConfigPage, ToolsPage,
                     GeneralPage, SettingsPage, AboutPage)
 
 
@@ -29,18 +29,17 @@ LOG_LEVEL_LABELS = {"info": "信息", "hit": "命中", "warn": "警告", "error"
 # 主窗口
 # ----------------------------------------------------------------------
 class App(ctk.CTk):
-    NAV = [("daily", "🐉  日常一条龙"),
+    NAV = [("daily", "🐉  日常"),
            ("weekly", "🗓  周常"),       # 内嵌 门派闯关/海底世界/迷魂塔（多人·自动组队·队长跑循环）
            ("general", "🧰  通用"),
-           ("single", "👤  单人任务"),   # 内嵌 宝图/运镖/秘境降妖
-           ("multi", "👥  多人任务"),    # 内嵌 刷副本枢纽
-           ("tools", "🧰  工具"),        # 内嵌 秒装备（后续工具汇总于此）
+           ("config", "🎛  任务配置"),   # 内嵌 单人/多人任务的全部 参数+标定（运行唯一入口在「日常」）
+           ("tools", "🧰  工具"),        # 内嵌 秒装备/整理背包/拓印
             ("settings", "⚙  设置"), ("about", "ⓘ  关于")]
     # 可运行任务页（有 runner/pump），App 的定时器/热键/关闭钩子按此遍历。
     # general 也在内：它的「一键组队」会跑后台任务，需要 pump 抽日志、关闭时停 runner。
-    # weekly/single/multi/tools 是分类页，App 下标只是顶层项；其内嵌任务页靠分类页的
-    # pump() 下钻转发（见 pages/category.py）。
-    RUNNABLE_KEYS = ("general", "weekly", "daily", "single", "multi", "tools")
+    # weekly/tools 是分类页，App 下标只是顶层项；其内嵌任务页靠分类页的
+    # pump() 下钻转发（见 pages/category.py）。config 是纯配置页，无 runner，不进此列。
+    RUNNABLE_KEYS = ("general", "weekly", "daily", "tools")
 
     def __init__(self):
         super().__init__()
@@ -352,14 +351,13 @@ class App(ctk.CTk):
 
     # 各顶层面（对应 NAV 每一项）对应的类。懒加载：启动只建默认页，其余等第一次切到才建——
     # 一次性建全部页面会瞬间绘制几百个 CTk 画布控件，正是启动「一块块慢慢刷出来」的根因。
-    # 任务页（宝图/运镖/秘境降妖/刷副本/秒装备）已分别嵌进 single/multi/tools 三个分类页，
-    # 由分类页内部懒建（见 pages/category.py），这里只登记顶层导航页。
+    # 任务配置页（config）内嵌各任务的「配置/标定」卡，由 ConfigPage 直接组装（见 pages/config_page.py）；
+    # 工具/周常等分类页内部懒建子页（见 pages/category.py），这里只登记顶层导航页。
     PAGE_CLASSES = {
         "daily": DailyPage,
         "weekly": WeeklyPage,
         "general": GeneralPage,
-        "single": SinglePage,
-        "multi": MultiPage,
+        "config": ConfigPage,
         "tools": ToolsPage,
         "settings": SettingsPage,
         "about": AboutPage,
@@ -692,7 +690,7 @@ class App(ctk.CTk):
 
     def stop_all_tasks(self):
         """停掉所有页面上任意正在运行的 TaskRunner（runner / runner_ob 等都覆盖到；含分类页内嵌子页）。
-        返回停了几个。顺带取消各页「未启动的待办」（如日常一条龙的定时等待——急停也要让它停得住）。"""
+        返回停了几个。顺带取消各页「未启动的待办」（如日常的定时等待——急停也要让它停得住）。"""
         n = 0
         for page in self._iter_pages():
             if hasattr(page, "stop_pending") and callable(page.stop_pending):
