@@ -43,11 +43,11 @@ class WeeklyPage(CategoryPage):
 
         card = Card(self)
         card.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 10))
-        card.grid_columnconfigure(1, weight=1)
+        card.grid_columnconfigure(0, weight=1)
         lbl = ctk.CTkLabel(card, text="组队设置（与「日常」页设置区同一处，存共享 tasks.teaming）· "
-                               "队长/队长ID 在「通用」页「选择窗口」里选",
-                           font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
-        lbl.grid(row=0, column=0, sticky="w", padx=16, pady=(10, 4))
+                                "队长/队长ID 在「通用」页「选择窗口」里选",
+                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
+        lbl.grid(row=0, column=0, sticky="ew", padx=16, pady=(10, 4))
         bind_wraplength(lbl)
         self.team_settings = TeamSettingsCard(card, self.app, self.fonts, on_change=self._on_settings_changed)
         self.team_settings.grid(row=1, column=0, sticky="w", padx=16, pady=(0, 10))

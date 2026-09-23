@@ -16,7 +16,10 @@
         "multi_indices": [],
         "max_windows": 5,
         "switch_delay_sec": 0.15,
-        "base_size": [907, 707]
+        "base_size": [
+            907,
+            707
+        ]
     },
     "arrange_left_margin": 100,
     "humanize": {
@@ -569,6 +572,14 @@
         "daily": {
             "steps": [
                 {
+                    "task": "dungeon",
+                    "enabled": true
+                },
+                {
+                    "task": "zhuagui",
+                    "enabled": true
+                },
+                {
                     "task": "treasure_map",
                     "enabled": true
                 },
@@ -595,17 +606,12 @@
                 {
                     "task": "activity_reward",
                     "enabled": true
-                },
-                {
-                    "task": "dungeon",
-                    "enabled": true
-                },
-                {
-                    "task": "zhuagui",
-                    "enabled": true
                 }
             ],
-            "group_order": ["multi", "single"],
+            "group_order": [
+                "multi",
+                "single"
+            ],
             "loop": {
                 "time_limit_min": 0,
                 "shutdown_after": false,
