@@ -10,7 +10,7 @@ import customtkinter as ctk
 from .. import theme as T
 from ...core import config as cfg_mod
 from ...core import window as win_mod
-from ...tasks import get_task
+from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ..common import (Card, bind_wraplength, open_calibrate,
                       teaming_ns, teaming_ready, _row_optional)
 
@@ -77,24 +77,52 @@ class DungeonConfig(ctk.CTkFrame):
         self._kick_count_windows(quiet=True)
 
     def _required_counts(self):
-        """共享 tasks.dungeon 的必标区域/模板计数 (rdone, rtot, tdone, ttot)。"""
+        """共享 tasks.dungeon 的标定计数（一次标定所有副本）。
+        返回 (rdone, rtot, ropt_miss, tdone, ttot, topt_miss)：
+        必标项 (done/total) + 可选但未标记的个数（可选标了不算必标、不拖就绪）。
+        「刷副本」的标定 spec 是共享 DUNGEON_CALIBRATION（一次标定所有副本），
+        get_task("dungeon") 是仅组队的 DungeonTask、无标定 spec，不能用它。"""
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
-        spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
-        rkey = [t[0] for t in spec.get("regions", []) if not _row_optional(t)]
-        tkey = [t[0] for t in spec.get("templates", []) if not _row_optional(t)]
-        rdone = sum(1 for k in rkey if regions.get(k))
-        tdone = sum(1 for k in tkey if templates.get(k))
-        return rdone, len(rkey), tdone, len(tkey)
+        spec = DUNGEON_CALIBRATION
+        rrows = [(t[0], _row_optional(t)) for t in (spec.get("regions") or [])]
+        trows = [(t[0], _row_optional(t)) for t in (spec.get("templates") or [])]
+
+        def cat(raw, rows):
+            done = sum(1 for k, opt in rows if not opt and raw.get(k))
+            opt_miss = sum(1 for k, opt in rows if opt and not raw.get(k))
+            return done, len([1 for k, opt in rows if not opt]), opt_miss
+
+        rdone, rtot, ropt = cat(regions, rrows)
+        tdone, ttot, topt = cat(templates, trows)
+        return rdone, rtot, ropt, tdone, ttot, topt
+
+    @staticmethod
+    def _calib_line(rdone, rtot, ropt, tdone, ttot, topt):
+        """标定状态行的统一格式（user 拍板 2026-09-25）：
+        「标定：必要区域 x/n（另有 m 处可选未标记）；必要模板 x/n（另有 m 处可选未标记）」——
+        某类 n=0 则该类不显示；可选未标记 m=0 则不显示其括号提示。"""
+        parts = []
+        if rtot:
+            s = f"必要区域 {rdone}/{rtot}"
+            if ropt:
+                s += f"（另有 {ropt} 处可选未标记）"
+            parts.append(s)
+        if ttot:
+            s = f"必要模板 {tdone}/{ttot}"
+            if topt:
+                s += f"（另有 {topt} 处可选未标记）"
+            parts.append(s)
+        return "标定：" + "；".join(parts) if parts else "标定：无"
 
     def _refresh_ready(self):
-        rdone, rtot, tdone, ttot = self._required_counts()
+        rdone, rtot, ropt, tdone, ttot, topt = self._required_counts()
         regions_ok = rdone == rtot
         templates_ok = tdone == ttot
         team_tc = teaming_ns(self.app.cfg)
         skip_team = team_tc.get("skip_team", False)
-        line = f"标定：区域 {rdone}/{rtot}，模板 {tdone}/{ttot}"
+        line = self._calib_line(rdone, rtot, ropt, tdone, ttot, topt)
         if skip_team:
             line += "　✓ 就绪（已组队，跳过组队）" if (regions_ok and templates_ok) else "　（还需标定）"
             ready = regions_ok and templates_ok
