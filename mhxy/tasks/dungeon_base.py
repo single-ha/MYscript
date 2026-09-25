@@ -600,6 +600,15 @@ class DungeonBaseTask(Task):
 
     # ---- 拓印临摹弹窗：探测 + 自动描 + 手动兜底。返回 False=中止 ----
     def _handle_tuoying(self, ctx, loop, regions, threshold):
+        # 整个拓印阶段挂起弹窗守卫（_trace_active，见 base._defuse_popup）：拓印窗看似弹窗但没有
+        # 可点掉的「×」，误让守卫点它的关闭会让「上传后再弹」流程断掉——拓印收尾靠识别标题模板。
+        self._trace_active = True
+        try:
+            return self._handle_tuoying_impl(ctx, loop, regions, threshold)
+        finally:
+            self._trace_active = False
+
+    def _handle_tuoying_impl(self, ctx, loop, regions, threshold):
         tpl = self.flags.get("tuoying_title")
         if tpl is None:
             return True                      # 没标标题模板 → 不知道弹没弹，当没弹继续（真弹了由验证超时兜底）

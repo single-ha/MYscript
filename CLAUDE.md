@@ -202,6 +202,10 @@ mhxy/
   `EXCLUSIVE_SHARED_REGIONS` + `SHARED_TPL_KEYS`），两者读库均经 `task_config` 合并。
   **拓印临摹资产已不在共享里**：标定迁到「工具」页「拓印」（存 `tasks.tuoying`，见上「拓印」条），各任务不重复列出、不参与就绪。
   ⚠ 标定对话框写共享键走 `tasks.shared`、绝不回写任务自身命名空间（`ui/calibrate_dialog.py` 的 `_target_regions`/`_save` 只看 `EXCLUSIVE_SHARED_REGIONS`）；先补共享标定时让旧任务自带值兜底。
+  **弹窗守卫**：可选共享模板 `popup_close`（活动/公告弹窗右上角「×」，同在此标；不进 `SHARED_TPL_KEYS`、不叠加、不参与就绪）。
+  守卫挂在 `base.Task._interruptible_sleep`（节流 `popup_guard.interval_sec`，顶层配置），对**当前前台**窗口截图找 `×`→拟人点掉；
+  同一弹窗连点 `max_clicks` 次不消失 → Esc 兜底（`esc_fallback`+`max_esc` 封顶）→ 告警放弃。多开绝不在后台号点（`window.is_foreground` 门控）；
+  拓印阶段 `_trace_active` 置位挂起守卫（`dungeon_base._handle_tuoying` 包了 try/finally）。
 - **「队长ID 库」（`ui/leader_gallery.py` + 纯函数 `core/leader_history.py`）非显而易见的约束**：
   **激活图路径永远是 `templates/tm_leader_id.png`**（teaming 与 calibrate 都写死读它），切换当前队长 = 把选中历史图
   **字节复制覆盖**该文件、**绝不改 config 路径串**，故 `TeamFormation` 零改、零回归。⚠ 就绪度判定只看

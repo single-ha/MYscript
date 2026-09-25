@@ -18,7 +18,7 @@ from ...tasks.base import dungeon_tasks
 from ...tasks.daily import CHAINABLE, GROUP_OF, GROUP_TITLES, MULTI_BARRIER
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
-from ..common import (Card, Tooltip, required_regions, required_templates,
+from ..common import (Card, Tooltip, bind_wraplength, required_regions, required_templates,
                       teaming_ns)
 from ..dungeon_picker import DungeonPicker
 
@@ -239,12 +239,21 @@ class DailyPage(ctk.CTkFrame):
         left.grid_columnconfigure(0, weight=1)
         head = ctk.CTkFrame(left, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
-        head.grid_columnconfigure(0, weight=1)
+        head.grid_columnconfigure(0, weight=0)
+        head.grid_columnconfigure(1, weight=1)
         head_title = ctk.CTkLabel(head, text="任务清单", font=self.fonts["h2"],
                                   text_color=T.TEXT)
         head_title.grid(row=0, column=0, sticky="w")
         Tooltip(head_title, "点区题折叠/展开　·　每区左侧 ⠿ 上下拖动排序（区内）　·　右侧开关启用/停用　·　"
                             "序号即全局执行先后　·　两区分组固定：多人任务组在前、单人任务组在后", self.fonts)
+        # 执行顺序摘要：并排放在标题右侧（非滚动、可折行），实时显示「勾选且启用」的任务按全局先后拼接的链。
+        self.lbl_exec_order = ctk.CTkLabel(head, text="", font=self.fonts["small"],
+                                           anchor="w", justify="left", text_color=T.ACCENT)
+        self.lbl_exec_order.grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        bind_wraplength(self.lbl_exec_order)
+        Tooltip(self.lbl_exec_order, "当前勾选并启用的任务，按实际执行先后拼接（多人组在前、单人组在后，区内可拖排序）。"
+                                     "整组停用或单独停用的任务不显示；全部未勾选时「开始日常」只会空转。", self.fonts)
+
         self.list_frame = ctk.CTkScrollableFrame(left, fg_color="transparent")
         self.list_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 12))
         self.list_frame.grid_columnconfigure(0, weight=1)
@@ -431,30 +440,21 @@ class DailyPage(ctk.CTkFrame):
                 [(s["task"], s["enabled"], self._task_status(s["task"])) for s in steps])
 
     def _ready_meta(self, name, enabled):
-        """行就绪三态 → (文本, 颜色, 可点=「还需标定」)。「还需标定」可点跳「任务配置」页。
-        判定顺序（用户拍板 2026-09-23）：先看是否选中——未选中即「未选中」；
-        选中了再看标定——未标定=「还需标定」，标好了=「已就绪」。"""
+        """行就绪三态 → (文本, 颜色)。判定顺序（用户拍板 2026-09-23）：先看是否选中——未选中即「未选中」；
+        选中了再看标定——未标定=「还需标定」，标好了=「已就绪」。三者均仅文字样式、不可点；
+        跳「任务配置」页统一走行右侧「⚙ 配置」按钮。"""
         if not enabled:
-            return "未选中", T.TEXT_DIM, False
+            return "未选中", T.TEXT_DIM
         if not self._task_status(name):
-            return "⚠ 还需标定", T.WARN, True
-        return "✓ 已就绪", T.SUCCESS, False
+            return "⚠ 还需标定", T.WARN
+        return "✓ 已就绪", T.SUCCESS
 
-    def _style_ready(self, btn, name, text, color, can_open):
-        """统一给行就绪按钮上样式：
-        - 可点（⚠ 还需标定）：黄色填充胶囊 + 悬停加深 + 手型 + 点击跳「任务配置」页——醒目像按钮。
-        - 不可点（未选中/已就绪/单跑/组关）：透明文本样式（hover 无色差），仅靠文字颜色表达状态。"""
-        if can_open:
-            btn.configure(text=text, text_color=T.WARN_ON,
-                          fg_color=T.WARN, hover_color=T.WARN_HOVER,
-                          border_color=T.WARN_ON, border_width=1,
-                          cursor="hand2",
-                          command=(lambda nm=name: self._open_task_config(nm)))
-        else:
-            btn.configure(text=text, text_color=color,
-                          fg_color="transparent", hover_color=T.SURFACE_2,
-                          border_color=T.WARN_ON, border_width=0,
-                          cursor="arrow", command=None)
+    def _style_ready(self, btn, text, color):
+        """统一给行就绪标签上样式：一律透明文字样式（非按钮、不可点），仅靠文字颜色表达状态。"""
+        btn.configure(text=text, text_color=color,
+                      fg_color="transparent", hover_color=T.SURFACE_2,
+                      border_color=T.WARN_ON, border_width=0,
+                      cursor="arrow", command=None)
 
     def _open_task_config(self, name):
         """「⚠ 还需标定」按钮点击：打开「任务配置」页并滚动定位到该任务的配置卡。"""
@@ -469,9 +469,9 @@ class DailyPage(ctk.CTkFrame):
     def _set_row_status(self, rec):
         """就地刷新某行「就绪/未选中/还需标定」按钮与记录（不重建整表）。"""
         name = rec["name"]
-        st_text, st_color, can_open = self._ready_meta(name, rec["step"]["enabled"])
+        st_text, st_color = self._ready_meta(name, rec["step"]["enabled"])
         rec["ready_text"], rec["ready_color"] = st_text, st_color
-        self._style_ready(rec["ready"], name, st_text, st_color, can_open)
+        self._style_ready(rec["ready"], st_text, st_color)
 
     def _find_row(self, name):
         """按任务名找行记录（拖动后下标会变，统一用 name 定位）。"""
@@ -573,26 +573,38 @@ class DailyPage(ctk.CTkFrame):
 
         # 状态三态（用户拍板 2026-09-23 调整顺序）：先看是否选中——未勾选=「未选中」；
         # 选中了再看标定——未标定=「⚠ 还需标定」（可点跳任务配置页），标好了=「✓ 已就绪」。
-        st_text, st_color, can_open = self._ready_meta(name, step["enabled"])
+        st_text, st_color = self._ready_meta(name, step["enabled"])
         ready_lbl = ctk.CTkButton(mid, text="", font=self.fonts["small"], height=24,
                                   corner_radius=T.RADIUS_SM, border_width=0)
-        self._style_ready(ready_lbl, name, st_text, st_color, can_open)
+        self._style_ready(ready_lbl, st_text, st_color)
         ready_lbl.grid(row=0, column=1, sticky="e", padx=(10, 0))
 
-        # 右：启用 / 停用开关（按任务名定位，拖动后下标会变，故 _toggle_step 用 name 不用 idx）。
+        # 右一：任务配置按钮——点它跳「任务配置」页并定位到该任务的配置卡（标定/参数，改动即保存）。
+        cfg_btn = ctk.CTkButton(row, text="⚙ 配置", font=self.fonts["small"], height=24,
+                                corner_radius=T.RADIUS_SM, border_width=0,
+                                fg_color=T.BTN, text_color=T.TEXT, cursor="hand2",
+                                command=lambda nm=name: self._open_task_config(nm))
+        cfg_btn.grid(row=0, column=3, rowspan=2, padx=(4, 6), pady=5)
+        cfg_btn.bind("<Enter>",
+                     lambda e, b=cfg_btn: b.configure(fg_color=T.ACCENT, text_color=T.ON_ACCENT))
+        cfg_btn.bind("<Leave>",
+                     lambda e, b=cfg_btn: b.configure(fg_color=T.BTN, text_color=T.TEXT))
+        Tooltip(cfg_btn, "打开该任务在「任务配置」页的配置卡（标定 / 参数），改动即保存。", self.fonts)
+
+        # 右二：启用 / 停用开关（按任务名定位，拖动后下标会变，故 _toggle_step 用 name 不用 idx）。
         # 整组停用时行级开关仍保留（组重开后行勾选恢复），仅视觉置灰。
         var = ctk.BooleanVar(value=step["enabled"])
         sw = ctk.CTkSwitch(row, text="", variable=var, width=44,
                            progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
                            command=lambda nm=name, v=var: self._toggle_step(nm, v))
-        sw.grid(row=0, column=3, rowspan=2, padx=(8, 14), pady=5)
+        sw.grid(row=0, column=4, rowspan=2, padx=(8, 14), pady=5)
         # 「刷副本」步：卡片下内嵌副本勾选（唯一入口在本页，任务配置页只做标定；存 tasks.dungeon.selected）。
         if name == "dungeon":
             self._build_dungeon_picker(row)
         if not self._group_on.get(g, True):
             sw.configure(state="disabled")
             title.configure(text_color=T.TEXT_DIM)
-            self._style_ready(ready_lbl, None, st_text, T.TEXT_DIM, False)
+            self._style_ready(ready_lbl, st_text, T.TEXT_DIM)
             for lbl in mid.winfo_children():
                 if isinstance(lbl, ctk.CTkLabel):
                     lbl.configure(text_color=T.TEXT_DIM)
@@ -607,13 +619,13 @@ class DailyPage(ctk.CTkFrame):
         读写共享 tasks.dungeon.selected；标题可点击折叠勾选区，折叠状态存 self._dun_pick_open，重建后保持。
         每个【副本名】即是「单跑」按钮（on_run）——点它只刷那一个副本。"""
         sep = ctk.CTkFrame(row, fg_color=T.BORDER, height=1)
-        sep.grid(row=2, column=0, columnspan=4, sticky="ew", padx=(14, 14), pady=(4, 6))
+        sep.grid(row=2, column=0, columnspan=5, sticky="ew", padx=(14, 14), pady=(4, 6))
         pick = DungeonPicker(row, app=self.app, fonts=self.fonts, on_change=self._on_dungeon_pick,
                              caption="要刷的副本（按勾选顺序刷完 · 点副本名=只刷那一个）",
                              collapsible=True,
                              default_open=self._dun_pick_open, on_open_change=self._on_dun_pick_open,
                              on_run=self._start_single_dungeon)
-        pick.grid(row=3, column=0, columnspan=4, sticky="ew", padx=(18, 16), pady=(0, 10))
+        pick.grid(row=3, column=0, columnspan=5, sticky="ew", padx=(18, 16), pady=(0, 10))
         pick.sync()          # 从配置回填当前勾选，别让刚建的组件显示成全未勾
         self._dungeon_picker = pick
 
@@ -669,6 +681,20 @@ class DailyPage(ctk.CTkFrame):
                 else:
                     self._lbl_count[g].configure(text="已勾选 %d/%d" % (n_on, len(gsteps)),
                                                  text_color=T.TEXT_DIM)
+        self._refresh_exec_order()
+
+    def _refresh_exec_order(self):
+        """刷新卡片底部「执行顺序」摘要：与引擎 _enabled_steps 同语义——只算「行级启用 + 整组启用」的步，
+        按 _steps 全局先后拼接任务名（多人组在前、单人组在后）。"""
+        lbl = getattr(self, "lbl_exec_order", None)
+        if lbl is None:
+            return
+        names = [self._task_title(s["task"]) for s in self._steps
+                 if s["enabled"] and self._group_on.get(GROUP_OF[s["task"]], True)]
+        if names:
+            lbl.configure(text=" -> ".join(names), text_color=T.ACCENT)
+        else:
+            lbl.configure(text="（无，开始日常只会空转）", text_color=T.TEXT_DIM)
 
     # ------------------------------------------------------------------
     # 启用切换 / 左键拖动排序（区内）/ 两区互换 / 保存
@@ -729,7 +755,7 @@ class DailyPage(ctk.CTkFrame):
                 self._style_title(r, T.SURFACE, T.TEXT_DIM)
             self._set_row_status(r)
             if not on:
-                self._style_ready(r["ready"], None, r["ready_text"], T.TEXT_DIM, False)
+                self._style_ready(r["ready"], r["ready_text"], T.TEXT_DIM)
 
     def _drag_start(self, event, frame):
         """按按住的手柄定位其所在区与该区下标，进入拖动。"""
@@ -1071,7 +1097,7 @@ class DailyPage(ctk.CTkFrame):
                 if r["name"] == name:
                     self._single_row = r
                     self._style_title(r, T.ACCENT, T.ON_ACCENT)
-                    self._style_ready(r["ready"], None, "▶ 正在单跑", T.ACCENT, False)
+                    self._style_ready(r["ready"], "▶ 正在单跑", T.ACCENT)
                     return
         self._single_row = None
 
@@ -1082,8 +1108,7 @@ class DailyPage(ctk.CTkFrame):
         if r is not None:
             try:
                 self._style_title(r, r["chip_fg"], r["title_fg"])
-                self._style_ready(r["ready"], r["name"], r["ready_text"], r["ready_color"],
-                                  can_open=(r["ready_text"] == "⚠ 还需标定"))
+                self._style_ready(r["ready"], r["ready_text"], r["ready_color"])
             except Exception:
                 pass
 

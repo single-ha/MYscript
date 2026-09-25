@@ -13,7 +13,8 @@ from ...core import window as win_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_CALIB_TPL_KEYS
-from ...core.config import (SHARED_REGION_KEYS, MAIN_ICON_TPL_KEYS, BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)
+from ...core.config import (SHARED_REGION_KEYS, MAIN_ICON_TPL_KEYS, BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY,
+                            POPUP_CLOSE_TPL_KEY)
 from ..common import Card, load_thumb, bind_wraplength
 
 
@@ -186,7 +187,7 @@ class GeneralPage(ctk.CTkFrame):
         sdone = sum(1 for k in shared_region_keys if sreg.get(k))
         sready = sdone == len(shared_region_keys)
         stpl = shared_tc.get("templates", {})
-        shared_tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY) + MAIN_ICON_TPL_KEYS
+        shared_tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY) + MAIN_ICON_TPL_KEYS + (POPUP_CLOSE_TPL_KEY,)
         tdone = sum(1 for k in shared_tpl_keys if stpl.get(k))
         # 商城/活动图标（主界面判定用）是可选项：只计数展示，不拖累「已就绪」（不标=无法做主界面判定，任务照常跑）。
         # 战斗标识运镖/宝图必标、小闹钟副本/抓鬼必标（各任务 preflight 也会拦），缺了这里不显示「已就绪」。
@@ -202,6 +203,7 @@ class GeneralPage(ctk.CTkFrame):
                                          "「战斗界面标志」是进战斗后的画面元素（运镖/宝图必标，否则一进战斗就误判结束；秘境仅日志用）。"
                                          "「小闹钟」是任务栏那个寻路图标（刷副本/抓鬼必标：副本内寻路、每轮收尾和抓鬼点任务条目寻路都靠它）。"
                                          "「商城/活动图标」用来判断是否回到主界面：把主界面顶部的商城、活动按钮各框一次即可。"
+                                         "「弹窗关闭按钮」是可选的：脚本在任务等待期会自动点掉挡画面的活动/公告弹窗（点不掉按 Esc 兜底），不标=不启用。"
                                         "「拓印」临摹（刷副本偶发的描图案校验）的标题/上传/绘制区已移到「工具」页「拓印」里标。",
                              font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub_s.pack(fill="x", pady=(2, 0))

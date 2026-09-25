@@ -102,6 +102,9 @@ class Task:
     # True=开跑前先把目标窗口带回主界面（run() 入口统一做；找不到主界面只打日志不拦任务）。
     #   特殊任务（如拓印「演练」需拓印弹窗已在前台）覆盖为 False，启动时绝不 ESC 关它。
     ENSURE_MAIN_ON_START = True
+    # True=挂起弹窗守卫（_defuse_popup 直接跳过）：任务的主画面本身就是「带×的弹窗式界面」
+    #   （如秒装备停在商城/摆摊，右上角就有「×」），守卫会把界面自带的×误当弹窗点掉。该类任务置 True。
+    POPUP_GUARD_OFF = False
 
     # 标定向导（calibrate_dialog）按此 spec 驱动渲染。子类覆盖：
     #   {"regions":  [(key, 显示名, 说明), ...],     # 框选区域，写入 tc["regions"][key]
@@ -189,12 +192,76 @@ class Task:
         return max(0.05, base * (1 + random.uniform(-r, r)))
 
     def _interruptible_sleep(self, ctx, seconds):
-        """可被停止打断的等待。"""
+        """可被停止打断的等待。等待期间顺带跑弹窗守卫（节流，见 _defuse_popup）。"""
         end = time.time() + seconds
         while time.time() < end:
             if ctx.should_stop():
                 return
+            if end - time.time() >= 0.25:
+                self._defuse_popup(ctx)
             time.sleep(min(0.05, max(0.0, end - time.time())))
+
+    def _defuse_popup(self, ctx):
+        """弹窗守卫：任务等待期自动点掉挡画面的活动/公告类弹窗。
+
+        挂在 _interruptible_sleep 里节流调用（popup_guard.interval_sec 内最多扫一次）。仅在
+        「可选共享模板 popup_close 已标定」+「总开关 popup_guard.enabled 开」+「目标窗口确在前台」三者
+        同时满足才动手——未标/关闭/后台号一律静默（多开轮转绝不在后台号瞎点，见 window.is_foreground）。
+        命中「×」就拟人点掉；同一弹窗累计连点 max_clicks 次仍未消失 → 升级按 Esc 兜底（esc_fallback 开关，
+        Esc 也封顶 max_esc 次），仍不消失则告警一次并放弃，避免在同一个弹窗上死循环。
+        拓印临摹这类「看似弹窗实为正常界面、不应按关闭钮」的场合，置 self._trace_active=True 挂起守卫。"""
+        # 临时挂起（拓印临摹期间）
+        if getattr(self, "_trace_active", False):
+            return
+        # 任务画面本身是「带×的弹窗式界面」时整个挂起（见 POPUP_GUARD_OFF 类属性）。
+        if getattr(self, "POPUP_GUARD_OFF", False):
+            return
+        cfg = ctx.cfg or {}
+        pg = cfg.get("popup_guard") or {}
+        if not pg.get("enabled", True):
+            return
+        window = ctx.window
+        if window is None or window.rect() is None:
+            return
+        now = time.time()
+        settle = float(pg.get("click_settle_sec", 0.6))
+        if now - getattr(self, "_popup_last_action", 0.0) < settle:
+            return
+        if now - getattr(self, "_popup_last_scan", 0.0) < float(pg.get("interval_sec", 2.0)):
+            return
+        self._popup_last_scan = now
+        if not window.is_foreground():
+            return
+        from ..ui import ui_state
+        point = ui_state.find_popup_close(cfg, window, float(pg.get("match_threshold", 0.85)))
+        if point is None:
+            self._popup_episode = {}
+            return
+        ep = self._popup_episode or {}
+        if not ep:
+            ep = {"clicks": 0, "esc": 0}
+            self._popup_episode = ep
+        max_clicks = int(pg.get("max_clicks", 3))
+        if ep["clicks"] < max_clicks:
+            ep["clicks"] += 1
+            ctx.mouse.human_move(point[0], point[1])
+            ctx.mouse.click(point[0], point[1])
+            self._popup_last_action = now
+            ctx.log(f"弹窗守卫：发现弹窗「×」→ 点击关闭（第 {ep['clicks']}/{max_clicks} 次）。", level="hit")
+            return
+        if pg.get("esc_fallback", True) and ep["esc"] < int(pg.get("max_esc", 2)):
+            ep["esc"] += 1
+            ctx.mouse.press_key("esc")
+            self._popup_last_action = now
+            ctx.log(f"弹窗守卫：「×」点不掉 → 按 Esc 兜底（第 {ep['esc']}/{pg.get('max_esc', 2)} 次）。",
+                    level="warn")
+            return
+        if not ep.get("warned"):
+            ep["warned"] = True
+            scene = win_mod.grab(window.rect()) if window.rect() else None
+            cap = self._save_capture(scene, "popup_stuck") if scene is not None else None
+            ctx.log(f"弹窗守卫：同一弹窗「×」+Esc 都关不掉，已放弃（截图 {cap} 供核对，任务照常继续）。",
+                    level="warn")
 
     def _find_join_ready(self, ctx, rec, list_region, entry_xy, threshold, loop, entry_tpl=None):
         """找「参加」按钮。认出卡片但按钮没匹配上，最常见原因是卡片贴着列表区域上/下缘只露了半张、

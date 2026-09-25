@@ -85,6 +85,37 @@ def is_main_screen(cfg, window, threshold=0.8, region=None):
     return vision.match(scene, tpl, threshold) is not None
 
 
+def find_popup_close(cfg, window, threshold=0.85):
+    """弹窗守卫的探测原语：在当前窗口画面里找活动/公告弹窗右上角的「×」关闭按钮
+    （tasks.shared.templates.popup_close，可选共享模板，在「通用」页「标定（公共区域）」里标）。
+
+    返回：命中 = 按钮中心的【屏幕绝对坐标】(cx, cy)；未命中/不可用 = None。
+    未标模板 / 窗口未定位 / 抓图失败 一律返回 None——调用方（base._defuse_popup）据此静默跳过，
+    绝不当作「有弹窗」去按 Esc 乱来（和 is_main_screen 的 None 语义一致）。
+    """
+    try:
+        shared = ((cfg or {}).get("tasks", {}) or {}).get("shared", {}) or {}
+        tpl_path = (shared.get("templates") or {}).get("popup_close")
+    except AttributeError:
+        return None
+    if not tpl_path:
+        return None
+    tpl = vision.load_template(tpl_path)
+    if tpl is None:
+        return None
+    rect = window.rect()
+    if rect is None:
+        return None
+    scene = win_mod.grab(rect)
+    if scene is None:
+        return None
+    hit = vision.match(scene, tpl, threshold)
+    if hit is None:
+        return None
+    cx, cy, _score = hit
+    return (rect[0] + int(cx), rect[1] + int(cy))
+
+
 def back_to_main_screen(cfg, window, max_tries=6, settle=0.6, threshold=0.8):
     """确保回到主界面：已在主界面直接返回 True，否则反复按 ESC（SendInput）关面板直到回主界面。
 

@@ -134,6 +134,19 @@ def _force_foreground(hwnd, tries=3):
         return False
 
 
+def is_foreground(hwnd):
+    """只读判定：当前前台窗口是否就是 hwnd。
+
+    _force_foreground 的判定逻辑抽成独立函数，供「弹窗守卫」等在做点击前的安全门控用——
+    目标窗口没在前台就不点（多开轮转里后台号的点击会被吞/点歪，铁律：绝不在后台号瞎点）。"""
+    try:
+        if not hwnd:
+            return False
+        return int(_user32.GetForegroundWindow() or 0) == int(hwnd)
+    except Exception:
+        return False
+
+
 def set_dpi_aware():
     """让脚本按真实像素工作，避免 Win 缩放(125%/150%)导致坐标错位。进程级，调一次即可。"""
     try:
@@ -220,6 +233,19 @@ class GameWindow:
         ok = _force_foreground(hwnd)
         time.sleep(0.15 if ok else 0.05)
         return ok
+
+    def is_foreground(self):
+        """只读判定：本窗口当前是否在前台（activate 的校验逻辑抽出，供弹窗守卫等安全门控用）。
+        后台号不做任何点击（点击会被吞/点歪），故守卫等介入前先查它。"""
+        if not self._win:
+            return False
+        try:
+            hwnd = self._win._hWnd
+        except Exception:
+            return False
+        if not hwnd:
+            return False
+        return is_foreground(hwnd)
 
     def resize_to(self, w, h, move_to=None):
         """把窗口尺寸还原到 [w, h]（可选 move_to=(left,top) 一并复位位置）。

@@ -48,8 +48,14 @@ BATTLE_FLAG_TPL_KEY = "battle_flag"
 # 任务栏那个「小闹钟」图标，点它寻路到当前目标。刷副本（副本内寻路/每轮收尾）与抓鬼（点任务条目寻路）必标；
 # 原在「刷副本」「抓鬼」各自标定里分别标（副本的 clock / 抓鬼的 gg_nav 其实是同一个图标），已统一移到公共标定，标一次全通用。
 CLOCK_TPL_KEY = "clock"
+# 弹窗关闭按钮（存 tasks.shared.templates.popup_close，在「通用」页「标定（公共区域）」里标定，可选）：
+# 活动/公告类弹窗右上角的「×」关闭按钮。脚本「弹窗守卫」（base._defuse_popup，见 popup_guard 默认块）
+# 在任务等待期对当前前台窗口截图找它，命中就拟人点掉，防止弹窗挡画面导致流程中断；徽标=守卫不启用。
+# 不进 SHARED_TPL_KEYS（不叠加进各任务 templates）：守卫与 ui_state 读 shop_icon 一样直接读 tasks.shared.templates。
+POPUP_CLOSE_TPL_KEY = "popup_close"
 # 共享模板的友好中文名（就绪/标定提示用的展示名，见 ui/common.shared_template_hint）。
-SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)"}
+SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)",
+                     POPUP_CLOSE_TPL_KEY: "弹窗关闭按钮(×)"}
 # 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟；shop/activity 由 ui_state 直接读 shared，
 # 不叠加，避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
 SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)
@@ -268,6 +274,20 @@ DEFAULT_CONFIG = {
         "idle_chance": 0.0,       # 每轮“走神”停顿概率(抢货想快就调到 0)【标准抢货档：关闭走神】
         "idle_min_sec": 1.5,
         "idle_max_sec": 5.0
+    },
+
+    # ---- 弹窗守卫：任务等待期自动点掉挡画面的活动/公告类弹窗（挂 base._interruptible_sleep 的节流守卫）----
+    #   需先在「通用」页「标定（公共区域）」标定可选模板 popup_close（弹窗右上角「×」）才生效；
+    #   未标/关闭 = 守卫完全静默。只在目标窗口已在前台时点击（多开绝不在后台号瞎点）→
+    #   同弹窗累计连点 max_clicks 次仍未消失才升级 Esc（esc_fallback 开关，esc 次数也封顶），防死循环。
+    "popup_guard": {
+        "enabled": True,           # 总开关。默认开；未标 popup_close 模板时自动无效
+        "interval_sec": 2.0,       # 两次扫描的最小间隔秒数（节流，防频繁抓图/抢鼠标节奏）
+        "match_threshold": 0.85,   # popup_close 模板匹配阈值
+        "max_clicks": 3,           # 同一个弹窗连续点几次「×」还没消失 → 升级处理
+        "click_settle_sec": 0.6,   # 点完「×」后等弹窗消失的冷却秒数
+        "esc_fallback": True,      # × 点不掉时按 Esc 兜底（只在这种已确认有弹窗时才按）
+        "max_esc": 2               # 同一弹窗 Esc 次数封顶，超限告警一次后放弃（避免死循环）
     },
 
     # ---- 游戏快捷键：脚本按「动作名」调用的语义映射（ctx.send_hotkey("open_bag")，键名列表）----
