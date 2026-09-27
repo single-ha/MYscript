@@ -259,6 +259,7 @@ class DungeonBaseTask(Task):
                 ctx.log(f"组队未完成（{reason}），{self.title} 中止。", level="error")
                 return
             ctx.log("组队完成，队长开始跑副本流程…", level="hit")
+        self._team_formed = True   # 队伍可用（新建成功或本就已在队中）——供「日常」跨多人步复用
 
         # —— 队长跑副本流程（侠士进副本后还要轮询各号点确认）——
         self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
@@ -349,7 +350,7 @@ class DungeonBaseTask(Task):
                 ctx.log(f"已发起 {fights} 场战斗，达最大场数上限({max_rounds})，进入收尾。", level="warn")
                 return True
             rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(rect) if rect else None
+            cur = ctx.window.grab_screen(rect) if rect else None
             now = time.time()
 
             # ① 静止画面兜底：结算界面一闪而过/副本已结束时回到的静止场景也判结束（战斗中画面在动不触发）
@@ -484,7 +485,7 @@ class DungeonBaseTask(Task):
         deadline = time.time() + timeout
         while not ctx.should_stop():
             rect = self._scene_rect(ctx, regions)
-            scene = win_mod.grab(rect) if rect else None
+            scene = ctx.window.grab_screen(rect) if rect else None
             hits = vision.match_multi(scene, tpl, threshold) if scene is not None else []
             if hits:
                 if pos < len(hits):
@@ -511,7 +512,7 @@ class DungeonBaseTask(Task):
         deadline = time.time() + timeout
         while not ctx.should_stop():
             scene_rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._match_scene(cur, scene_rect, "xiashi_tab", threshold)
             if hit is not None:
                 ctx.mouse.click(hit[0], hit[1])
@@ -540,7 +541,7 @@ class DungeonBaseTask(Task):
                     if not wctx.window.activate():
                         continue
                 rect = self._scene_rect(wctx, regions)
-                cur = win_mod.grab(rect) if rect else None
+                cur = ctx.window.grab_screen(rect) if rect else None
                 hit = vision.match(cur, tpl, threshold) if cur is not None else None
                 if hit is not None:
                     sx, sy = (rect[0] if rect else 0), (rect[1] if rect else 0)
@@ -615,7 +616,7 @@ class DungeonBaseTask(Task):
         scene_rect = self._scene_rect(ctx, regions)
         deadline = time.time() + loop.get("tuoying_detect_sec", 8.0)
         while not ctx.should_stop():
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._match_scene(cur, scene_rect, "tuoying_title", threshold)
             if hit is not None:
                 ctx.log(f"识别到「拓印」临摹界面（{hit[2]:.3f}），自动临摹…", level="hit")
@@ -646,7 +647,7 @@ class DungeonBaseTask(Task):
                 if ctx.should_stop():
                     return False
                 # 先截绘制区当前画面：识别图案笔画像素，只沿图案描（描到图案外会拉低完成度）
-                frame = win_mod.grab(rect) if rect else None
+                frame = ctx.window.grab_screen(rect) if rect else None
                 if frame is None:
                     ctx.log("⚠ 绘制区截图失败，无法自动临摹——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
                             level="warn")
@@ -688,7 +689,7 @@ class DungeonBaseTask(Task):
         while not ctx.should_stop():
             if time.time() > deadline:
                 return False
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             seen = self._match_scene(cur, scene_rect, "tuoying_title", threshold) is not None
             if not seen:
                 if no_gone_since is None:
@@ -709,7 +710,7 @@ class DungeonBaseTask(Task):
         deadline = time.time() + timeout
         while not ctx.should_stop():
             scene_rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._match_scene(cur, scene_rect, "tuoying_upload", threshold)
             if hit is not None:
                 ctx.mouse.click(hit[0], hit[1])
@@ -728,7 +729,7 @@ class DungeonBaseTask(Task):
         deadline = None if timeout is None else time.time() + timeout
         scene_rect = self._scene_rect(ctx, regions)
         while not ctx.should_stop():
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             if self._match_scene(cur, scene_rect, "tuoying_title", threshold) is None:
                 return True
             if deadline is not None and time.time() > deadline:
@@ -742,7 +743,7 @@ class DungeonBaseTask(Task):
         deadline = time.time() + timeout
         scene_rect = self._scene_rect(ctx, regions)
         while not ctx.should_stop():
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             for key, label in labels.items():
                 hit = self._match_scene(cur, scene_rect, key, threshold)
                 if hit is not None:
@@ -760,7 +761,9 @@ class DungeonBaseTask(Task):
             ctx.log("打不开活动界面（open_activity 未配置），中止。", level="error")
             return False
         ctx.log("已打开活动，翻找副本卡片…")
-        self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 先确认「活动」界面真的弹好了再翻卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
+        if not self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0)):
+            self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
         list_region = regions.get("activity_list")
         # 找「参加」的微滚计数/告警标志（开活动→参加一次性发起、不复用轮转 record，局部状态即可）
         rec = {"_join_warned": False, "_nudges": 0, "_low_warned": False, "_fb_warned": False}
@@ -837,6 +840,7 @@ class DungeonBaseTask(Task):
 
         res = scan.scroll_search(
             grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
+            grab_fn=ctx.window.grab_screen,
             should_stop=ctx.should_stop,
             sleep=lambda s: self._interruptible_sleep(ctx, self._jitter(s, ctx)),
             scroll_step=loop.get("scroll_step", -3),
@@ -862,7 +866,7 @@ class DungeonBaseTask(Task):
         last_diag = 0.0
         while not ctx.should_stop():
             scene_rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._match_scene(cur, scene_rect, flag_key, threshold)
             if hit is not None:
                 ctx.mouse.click(hit[0], hit[1])
@@ -943,7 +947,7 @@ class DungeonBaseTask(Task):
 
     def _grab_scene(self, ctx, regions):
         rect = self._scene_rect(ctx, regions)
-        return win_mod.grab(rect) if rect else None
+        return ctx.window.grab_screen(rect) if rect else None
 
     def _match_scene(self, cur, scene_rect, flag_key, threshold):
         tpl = self.flags.get(flag_key)

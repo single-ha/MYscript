@@ -76,7 +76,7 @@ class TuoyingTask(Task):
         if rect is None:
             ctx.log("绘制区换算失败（窗口未定位），已停止。", level="error")
             return
-        frame = win_mod.grab(rect)
+        frame = ctx.window.grab_screen(rect)
         if frame is None:
             ctx.log("绘制区截图失败，请把「拓印」临摹界面调到前台再试。", level="warn")
             return

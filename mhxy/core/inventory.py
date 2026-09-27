@@ -223,6 +223,7 @@ class InventoryOrganizer:
             grab_rect=self._region_rect,
             probe=probe,
             mouse=self.ctx.mouse,
+            grab_fn=self.ctx.window.grab_screen,
             should_stop=self.ctx.should_stop,
             sleep=lambda s: self._sleep(self._jitter(s)),
             scroll_step=self.loop.get("scroll_step", -3),
@@ -370,7 +371,7 @@ class InventoryOrganizer:
                 return None
             rect = self.ctx.window.rect()
             if rect is not None:
-                scene = win_mod.grab(rect)
+                scene = self.ctx.window.grab_screen(rect)
                 if scene is not None:
                     m = vision.match(scene, tpl, self.threshold)
                     if m is not None:

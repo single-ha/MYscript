@@ -345,6 +345,7 @@ class TeamFormation:
             grab_rect=lambda: self._region_rect(ctx, "friend_list"),
             probe=probe,
             mouse=ctx.mouse,
+            grab_fn=ctx.window.grab_screen,
             should_stop=lambda: self.lead.should_stop() or time.time() > deadline,
             sleep=lambda s: self._sleep(self._jitter(s)),
             scroll_step=self.loop.get("scroll_step", -3),
@@ -494,7 +495,7 @@ class TeamFormation:
                 if multi:
                     ctx.window.activate()
                 rect = ctx.window.rect()
-                scene = win_mod.grab(rect) if rect else None
+                scene = ctx.window.grab_screen(rect) if rect else None
                 found = []
                 for tpl_key, label in keys:
                     tpl = self.tpl.get(tpl_key)
@@ -525,7 +526,7 @@ class TeamFormation:
         rect = self._region_rect(ctx, region_key)
         if tpl is None or rect is None:
             return None
-        scene = win_mod.grab(rect)
+        scene = ctx.window.grab_screen(rect)
         if scene is None:
             return None
         m = vision.match(scene, tpl, self.threshold)
@@ -539,7 +540,7 @@ class TeamFormation:
         rect = ctx.window.rect()
         if tpl is None or rect is None:
             return None
-        scene = win_mod.grab(rect)
+        scene = ctx.window.grab_screen(rect)
         if scene is None:
             return None
         m = vision.match(scene, tpl, self.threshold)
@@ -583,7 +584,7 @@ class TeamFormation:
         arrow_tpl = self.tpl.get("team_arrow")
         if arrow_tpl is None:
             return fallback
-        scene = win_mod.grab(rect)
+        scene = ctx.window.grab_screen(rect)
         if scene is None:
             return fallback
         sh, sw = scene.shape[:2]
@@ -609,7 +610,7 @@ class TeamFormation:
         rect = self._region_rect(ctx, region_key)
         if rect is None:
             return
-        scene = win_mod.grab(rect)
+        scene = ctx.window.grab_screen(rect)
         if scene is None:
             return
         tpl = self.tpl.get(tpl_key)
@@ -649,7 +650,7 @@ class TeamFormation:
                 if multi:
                     ctx.window.activate()
                 rect = ctx.window.rect()
-                scene = win_mod.grab(rect) if rect else None
+                scene = ctx.window.grab_screen(rect) if rect else None
                 keys = cap_keys if rec["role"] == self.ROLE_CAPTAIN else mem_keys
                 found = []
                 for tpl_key, label in keys:

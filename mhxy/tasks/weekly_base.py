@@ -206,7 +206,7 @@ class WeeklyBaseTask(Task):
                 break
 
             rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(rect) if rect else None
+            cur = ctx.window.grab_screen(rect) if rect else None
             in_task = self._any_signal(ctx, cur, rect, threshold)
 
             if not accepted:
@@ -284,7 +284,9 @@ class WeeklyBaseTask(Task):
             self._abort_capture(ctx, regions)
             return False
         ctx.log("已打开活动，翻找活动卡片…")
-        self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 先确认「活动」界面真的弹好了再翻卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
+        if not self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0)):
+            self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
 
         list_region = regions.get("activity_list")
         rec = {"_join_warned": False, "_nudges": 0, "_low_warned": False}
@@ -347,6 +349,7 @@ class WeeklyBaseTask(Task):
 
         res = scan.scroll_search(
             grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
+            grab_fn=ctx.window.grab_screen,
             should_stop=ctx.should_stop,
             sleep=lambda s: self._interruptible_sleep(ctx, self._jitter(s, ctx)),
             scroll_step=loop.get("scroll_step", -3),
@@ -368,7 +371,7 @@ class WeeklyBaseTask(Task):
         deadline = time.time() + timeout
         scene_rect = self._scene_rect(ctx, regions)
         while not ctx.should_stop():
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             if self._any_signal(ctx, cur, scene_rect, threshold):
                 ctx.log("任务迹象已出现，进入做任务阶段。", level="hit")
                 return True
@@ -437,7 +440,7 @@ class WeeklyBaseTask(Task):
 
     def _grab_scene(self, ctx, regions):
         rect = self._scene_rect(ctx, regions)
-        return win_mod.grab(rect) if rect else None
+        return ctx.window.grab_screen(rect) if rect else None
 
     def _match_scene(self, cur, scene_rect, flag_key, threshold):
         """在整张 scene 里匹配 flag_key，命中返回屏幕绝对 (x,y,score)，否则 None。"""
@@ -454,7 +457,7 @@ class WeeklyBaseTask(Task):
         last_diag = 0.0
         scene_rect = self._scene_rect(ctx, regions)
         while not ctx.should_stop():
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._match_scene(cur, scene_rect, flag_key, threshold)
             if hit is not None:
                 ctx.mouse.click(hit[0], hit[1])

@@ -245,13 +245,28 @@ class App(ctk.CTk):
             return False
         return True
 
+    def _log_at_bottom(self):
+        """视口是否已贴着底部（= 最新一条日志正显示在面板里）。
+
+        原判断是 log.yview()[1] >= 0.999 这种浮点阈值：yview 是按**整段文本**折算的比例，
+        行数一多，滚到底常落在 0.99x，阈值稍一踩不准就再也不吸底——日志照样在追加，但最新那几行
+        始终停在可视区外看不见。改成按行号精确比较：取「视口底部像素处所在的行」与「文本总行数」
+        比，到底则 >= 总行数；往上翻看历史则严格小于，不抢滚动。
+        """
+        tb = self.log._textbox
+        total = int(tb.index("end-1c").split(".")[0])
+        h = tb.winfo_height()
+        if h <= 1 or total <= 0:
+            return True               # 还没布局出真实高度/空文本 → 当作到底，别拦着吸底
+        return int(tb.index("@0,%d" % (h - 1)).split(".")[0]) >= total
+
     def _append_log_entry(self, entry, force_scroll=False):
         """把一条新日志增量插进文本框（只在通过筛选时走这里）；阅读时不在底部就不抢滚动。"""
         log = self.log
         ts, source, level, msg = entry
         scroll = force_scroll
         try:
-            scroll = force_scroll or log.yview()[1] >= 0.999
+            scroll = force_scroll or self._log_at_bottom()
         except Exception:
             scroll = True
         log.configure(state="normal")

@@ -297,6 +297,7 @@ class DailyPage(ctk.CTkFrame):
             else:
                 self.switch_auto_organize.deselect()
         self._render_steps()
+        self._refresh_step_hints()   # 参数提示（抓鬼轮数等）就地刷新，不触发重建
         self._sync_disband_lock()
 
     def _has_single_selected(self):
@@ -456,6 +457,43 @@ class DailyPage(ctk.CTkFrame):
                       border_color=T.WARN_ON, border_width=0,
                       cursor="arrow", command=None)
 
+    # 卡片里顺带显示的「当前关键参数」：任务名 → 显示文本。取值口径必须和任务实际跑的一致
+    # （与任务里的归一化同样处理），否则卡上写 1 轮、实际跑 2 轮就骗人了。
+    _HINT_FROM = {
+        # 抓鬼轮数 = tasks.zhuagui.loop.max_rounds，与 ZhuaguiTask 里 max(1, int(...)) 同口径
+        "zhuagui": ("loop", "max_rounds", 2, "轮", "抓鬼轮数（领任务次数，跑满即停）"),
+    }
+
+    def _step_hint(self, name):
+        """该任务卡片要顺带显示的「当前参数」→ (文本, 悬停说明)；没有就 None。"""
+        spec = self._HINT_FROM.get(name)
+        if not spec:
+            return None
+        loop_key, key, default, unit, tip = spec
+        val = (cfg_mod.task_config(self.app.cfg, name).get(loop_key) or {}).get(key, default)
+        try:
+            n = max(1, int(val))          # 与任务侧同口径的下限保护
+        except (TypeError, ValueError):
+            n = int(default)
+        return f"{n} {unit}", f"当前设置：{tip} = {n} {unit}（去右侧「⚙ 配置」里改）"
+
+    def _refresh_step_hints(self):
+        """就地刷新各行卡片上的参数提示（不重建行）。参数在「任务配置」页改动即保存，
+        但那不会改本卡的渲染签名，故须在这里单独刷一次——否则改了轮数回来看还是旧值。"""
+        for rows in self._rows.values():
+            for r in rows:
+                lbl = r.get("hint")
+                if lbl is None:
+                    continue
+                got = self._step_hint(r["name"])
+                if got is None:
+                    lbl.configure(text="")
+                    continue
+                lbl.configure(text=got[0])
+                tip = r.get("hint_tip")
+                if tip is not None:
+                    tip.text = got[1]      # Tooltip 每次弹出才读 .text，改它即可换悬停说明
+
     def _open_task_config(self, name):
         """「⚠ 还需标定」按钮点击：打开「任务配置」页并滚动定位到该任务的配置卡。"""
         self.app._show("config")
@@ -547,7 +585,8 @@ class DailyPage(ctk.CTkFrame):
         mid = ctk.CTkFrame(row, fg_color="transparent")
         mid.grid(row=0, column=2, rowspan=2, sticky="ew", pady=5)
         mid.grid_columnconfigure(0, weight=0)
-        mid.grid_columnconfigure(1, weight=1)
+        mid.grid_columnconfigure(1, weight=0)   # 参数提示（抓鬼轮数等），按内容自适应
+        mid.grid_columnconfigure(2, weight=1)
         base_on = self._group_on.get(g, True)
         chip_fg = T.BTN if base_on else T.SURFACE
         base_txt = T.TEXT if base_on else T.TEXT_DIM
@@ -571,13 +610,23 @@ class DailyPage(ctk.CTkFrame):
                 "点任务名 = 单独跑这一个任务（一次性：不改动勾选/顺序、配置不落盘）；"
                 "单跑中再点这里=停止。整条龙一起跑用上方「开始日常」。", self.fonts)
 
+        # 关键参数提示（如抓鬼的「N 轮」）：夹在任务名与就绪标签之间，让人一眼看到「这趟会跑几轮」。
+        # 不用 Tooltip 自带的悬停延迟，直接跟任务名那颗 Tooltip 走同一套说明。
+        hint_lbl = hint_tip = None
+        got = self._step_hint(name)
+        if got is not None:
+            hint_lbl = ctk.CTkLabel(mid, text=got[0], font=self.fonts["small"],
+                                    text_color=T.TEXT_DIM, anchor="w")
+            hint_lbl.grid(row=0, column=1, sticky="w", padx=(8, 0))
+            hint_tip = Tooltip(hint_lbl, got[1], self.fonts)
+
         # 状态三态（用户拍板 2026-09-23 调整顺序）：先看是否选中——未勾选=「未选中」；
         # 选中了再看标定——未标定=「⚠ 还需标定」（可点跳任务配置页），标好了=「✓ 已就绪」。
         st_text, st_color = self._ready_meta(name, step["enabled"])
         ready_lbl = ctk.CTkButton(mid, text="", font=self.fonts["small"], height=24,
                                   corner_radius=T.RADIUS_SM, border_width=0)
         self._style_ready(ready_lbl, st_text, st_color)
-        ready_lbl.grid(row=0, column=1, sticky="e", padx=(10, 0))
+        ready_lbl.grid(row=0, column=2, sticky="e", padx=(10, 0))
 
         # 右一：任务配置按钮——点它跳「任务配置」页并定位到该任务的配置卡（标定/参数，改动即保存）。
         cfg_btn = ctk.CTkButton(row, text="⚙ 配置", font=self.fonts["small"], height=24,
@@ -612,6 +661,7 @@ class DailyPage(ctk.CTkFrame):
         return {"frame": row, "name": name, "badge": badge, "ready": ready_lbl,
                 "ready_text": st_text, "ready_color": st_color,
                 "title": title, "chip": chip, "chip_fg": chip_fg, "title_fg": base_txt,
+                "hint": hint_lbl, "hint_tip": hint_tip,
                 "sw": sw, "group": g, "idx": len(self._rows[g]), "step": step}
 
     def _build_dungeon_picker(self, row):

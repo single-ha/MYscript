@@ -70,10 +70,11 @@ def _center(rect):
     return rect[0] + rect[2] // 2, rect[1] + rect[3] // 2
 
 
-def _scroll_to_top(grab_rect, mouse, should_stop, sleep, scroll_step,
-                   settle_sec, end_diff, reset_max, log):
+def _scroll_to_top(grab_rect, grab_fn, mouse, should_stop, sleep,
+                   scroll_step, settle_sec, end_diff, reset_max, log):
     """开列表后先往上滚到顶：向上滚一屏、对比滚动前/后该区域，连续两帧几乎不变=已到顶。
-    reset_max 是防死循环上限（列表很长时也不至于无限上滚）。被停止/区域没了即返回。"""
+    reset_max 是防死循环上限（列表很长时也不至于无限上滚）。被停止/区域没了即返回。
+    grab_fn 是抓图回调（默认 win_mod.grab；任务侧传「先确保前台再抓」的窗口方法，见 scroll_search）。"""
     up = -int(scroll_step)          # scroll_step 负=向下；取反得「向上」格数
     prev = None
     ups = 0
@@ -81,7 +82,7 @@ def _scroll_to_top(grab_rect, mouse, should_stop, sleep, scroll_step,
         rect = grab_rect()
         if rect is None:
             return
-        cur = win_mod.grab(rect)
+        cur = grab_fn(rect)
         if cur is not None and prev is not None and vision.frame_diff(cur, prev) < end_diff:
             return                  # 滚不动了=已到顶
         cx, cy = _center(rect)
@@ -96,14 +97,20 @@ def _scroll_to_top(grab_rect, mouse, should_stop, sleep, scroll_step,
 def scroll_search(*, grab_rect, probe, mouse, should_stop, sleep,
                   scroll_step=-3, max_tries=8, settle_sec=0.35,
                   reset_to_top=True, end_diff=2.0, reset_max=20,
-                  log=None, label="列表"):
+                  grab_fn=None, log=None, label="列表"):
     """滚动查找主循环。先（可选）滚到顶，再从顶向下逐屏 probe，命中即停；
     每向下滚一屏用帧差判是否到底（到底=已翻完整段）。返回 ScanResult。
 
+    grab_fn: 抓图回调 grab(rect)->BGR 或 None，默认 win_mod.grab。任务侧传「先确保前台再抓」
+        （如 GameWindow.grab_screen，用户拍板 2026-09-26 识别前先激活），该回调可能返回 None
+        （窗口激活失败/被停）——本循环对 None 场景不入 probe、计一次重试继续，不崩也不误判到底。
+
     用户拍板：滚轮查找在【同一个号】上一气呵成跑完（找到/翻完才返回），不在滚动中途让出去轮转别号——
     故这是个自带内循环的阻塞函数，只在 ACCEPT/翻完/被停止时返回；全程勤查 should_stop。"""
+    if grab_fn is None:
+        grab_fn = win_mod.grab
     if reset_to_top:
-        _scroll_to_top(grab_rect, mouse, should_stop, sleep, scroll_step,
+        _scroll_to_top(grab_rect, grab_fn, mouse, should_stop, sleep, scroll_step,
                        settle_sec, end_diff, reset_max, log)
 
     tries = 0
@@ -112,7 +119,15 @@ def scroll_search(*, grab_rect, probe, mouse, should_stop, sleep,
         rect = grab_rect()
         if rect is None:
             return ScanResult("stopped", scrolls=tries)
-        scene = win_mod.grab(rect)
+        scene = grab_fn(rect)
+        if scene is None:
+            # 抓图失败（窗口激活失败/被停）：这下没画面可判，不动 probe，计一次重试继续
+            pre_scroll_scene = None
+            tries += 1
+            if tries > max_tries:
+                return ScanResult("exhausted", scrolls=tries, reached_end=False)
+            sleep(settle_sec)
+            continue
 
         # 帧差判到底：刚滚过一屏，但画面和滚前几乎一样→滚动条到底了，整段已翻完
         # （这片内容上一轮已 probe 过且没接受，不必再 probe，直接判 exhausted）。

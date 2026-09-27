@@ -33,6 +33,10 @@ _SINGLE_CARDS = {
 
 _MULTI_CARDS = (DungeonConfig, ZhuaguiConfig)
 
+# 「跳转定位」把目标卡滚到视口里、距顶留这么多像素呼吸
+_REVEAL_PAD = 24
+_REVEAL_TRIES = 3      # 内容还在长时的重试上限（见 _scroll_reveal 坑 3）
+
 
 class ConfigPage(ctk.CTkFrame):
     LOG_SOURCE = "任务配置"
@@ -170,13 +174,29 @@ class ConfigPage(ctk.CTkFrame):
         except Exception:
             pass
 
-    def _scroll_reveal(self, card):
-        """滚动到让目标卡顶部出现在滚动区偏上位置（留 24px 呼吸）。"""
+    def _scroll_reveal(self, card, _try=0):
+        """滚动到让目标卡顶部出现在滚动区偏上位置（留 _REVEAL_PAD 呼吸）。
+
+        ⚠ 三个坑（都踩过，缺一个就又变成「一律顶到最下边」）：
+        1) 分母必须是**内容总高**（canvas scrollregion 全高），不是视口高。用视口高算出的
+           比例会成倍偏大，直接被 clamp 到 1.0 → 每次都滚到最下边。
+        2) after_idle 触发时页面往往**还没完成布局**——各配置卡的说明文字/自动换行还在陆续
+           定高，此时量到的 card.winfo_y() 和内容总高都是半成品值，算出来的比例偏大。故每次
+           都先 update_idletasks() 把几何刷到最新再量。
+        3) 内容可能还在继续长（长到 1905px 要好几拍），所以量完回头校验目标卡是否真落在视口里，
+           没落进去就再等一拍重量（封顶 _REVEAL_TRIES 次，绝不无限重排）。
+        """
         try:
-            body = self.body
-            y = card.winfo_y() - body.winfo_y()
-            h = max(1, body.winfo_height())
-            frac = max(0.0, min(1.0, (y - 24) / h))
-            body._parent_canvas.yview_moveto(frac)
+            self.app.update_idletasks()          # 先把几何刷到最新（坑 2）
+            canvas = self.body._parent_canvas
+            box = canvas.bbox("all")
+            total = box[3] if box else 0        # 内容总高（坑 1）
+            y = card.winfo_y()                   # 卡在滚动内容里的纵向偏移（与 body 同坐标系）
+            if total > 0:
+                canvas.yview_moveto(max(0.0, min(1.0, (y - _REVEAL_PAD) / total)))
+            if _try < _REVEAL_TRIES:            # 校验 + 重试（坑 3）
+                top = canvas.yview()[0] * total
+                if not (-1 <= (y - top) < canvas.winfo_height()):
+                    self.app.after_idle(self._scroll_reveal, card, _try + 1)
         except Exception:
             pass

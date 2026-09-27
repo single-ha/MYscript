@@ -8,6 +8,7 @@ GUI 跨页共用件：既含小型 UI 小组件（Card/Pill/load_thumb），也�
 
 import os
 import ctypes
+import weakref
 
 import customtkinter as ctk
 
@@ -134,11 +135,18 @@ class Tooltip:
 
     只绑 <Enter>/<Leave>，不抢控件自身事件；浮窗宽度按 small 字体实测文字决定（不写死），
     用于把页面里的说明文本收成悬停提示。一控件一个实例，销毁时随窗口被销毁，无需显式清理。
+
+    另加「窗口失焦就收起」：<Leave> 只在鼠标移出控件时触发，而切到别的程序时鼠标往往还停在
+    控件上，<Leave> 永远不来；提示窗又带 -topmost，于是会一直浮在别的窗口上面。故用弱引用
+    注册表 + 窗口级 <FocusOut>，失焦时把当前所有提示窗一并销毁（连没弹出来的待弹计时也取消）。
     """
 
     _delay_ms = 400
     _max_w = 380
     _min_w = 140
+
+    _live = weakref.WeakSet()   # 存实例（弱引用）：控件销毁后实例随之回收，不会越攒越多
+    _hooked = set()             # 已绑过 <FocusOut> 的 toplevel，避免同一窗口重复绑
 
     def __init__(self, widget, text, fonts):
         self.widget = widget
@@ -148,6 +156,55 @@ class Tooltip:
         self._tip = None
         widget.bind("<Enter>", self._on_enter)
         widget.bind("<Leave>", self._on_leave)
+        Tooltip._live.add(self)
+        self._bind_toplevel()
+
+    # —— 窗口失焦统一收起 ——
+    def _bind_toplevel(self, root=None):
+        """给所在窗口挂一次 <FocusOut>（同一窗口只挂一次；控件建在哪个窗口就管哪个窗口）。"""
+        try:
+            root = root or self.widget.winfo_toplevel()
+        except Exception:
+            return
+        if root in Tooltip._hooked:
+            return
+        Tooltip._hooked.add(root)
+        try:
+            root.bind("<FocusOut>", Tooltip._make_focus_out_handler(root), add="+")
+        except Exception:
+            Tooltip._hooked.discard(root)
+
+    @staticmethod
+    def _make_focus_out_handler(root):
+        """生成该窗口专用的 <FocusOut> 回调（闭包记住 root）。
+
+        关键坑：绑在 toplevel 上收到的 <FocusOut>，**event.widget 是「刚失去焦点的那个控件」**
+        （Tk 把事件沿祖先链冒泡给 toplevel，但 event.widget 仍指向原控件），不是 toplevel 自己。
+        所以判断「焦点还在不在本窗口」必须用闭包里的 root，绝不能拿 event.widget 当窗口用——
+        那样焦点在本窗口内控件之间移动时会被误判成失焦，把提示窗错杀。
+        """
+
+        def _on_focus_out(_event):
+            # 焦点仍落在本窗口（含子控件）内 → 只是控件间移动，别动提示窗
+            try:
+                fd = root.focus_displayof()
+                if fd is not None and str(fd.winfo_toplevel()) == str(root):
+                    return
+            except Exception:
+                pass
+            Tooltip.hide_all()
+
+        return _on_focus_out
+
+    @classmethod
+    def hide_all(cls):
+        """销毁当前所有提示窗，并取消待弹计时。"""
+        for tt in list(cls._live):
+            try:
+                tt._cancel_pending()
+                tt._hide()
+            except Exception:
+                pass
 
     def _on_enter(self, _event):
         self._cancel_pending()

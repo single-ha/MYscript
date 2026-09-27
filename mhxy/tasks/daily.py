@@ -38,7 +38,8 @@
 import subprocess
 import time
 
-from .base import Task, register, get_task, dungeon_tasks, enter_target_for
+from .base import (Task, register, get_task, dungeon_tasks, dungeon_display_names,
+                   enter_target_for)
 from .dungeon_base import DUNGEON_NS
 from ..core.config import SINGLE_TASK_ORDER
 from ..core.teaming import TeamFormation
@@ -81,6 +82,7 @@ class DailyTask(Task):
     # ------------------------------------------------------------------
     def _run(self, ctx):
         self._any_real_run = False     # 本趟是否有任何任务真跑（演练/未就绪被跳过的都不算）
+        self._team_ready = False       # 本趟是否已组好队：第一个多人步组好后，后续多人步复用（不重复组队）
         steps = self._enabled_steps(ctx)
         if not steps:
             ctx.log("没有勾选任何任务，已停止。", level="error")
@@ -324,11 +326,42 @@ class DailyTask(Task):
         wctx.log(f"───── 开始「{title}」 ─────", level="hit")
         return "ready"
 
+    def _team_head(self, ctx):
+        """多人步开场提示语：据「本趟队伍是否已就绪 / 用户是否勾了已组队」说明谁来组队。"""
+        if bool(ctx.task_cfg("teaming").get("skip_team", False)):
+            return "已组队，队长直接跑"
+        if self._team_ready:
+            return "队伍已就绪，队长直接跑"
+        return "组队 → 队长跑"
+
+    def _collective_run(self, ctx, task):
+        """跑一个多人步，并把「队伍已就绪」在本趟日常内传递下去（跨副本、跨多人步只组一次）。
+
+        本趟前序多人步已组好队时（_team_ready），临时把共享 tasks.teaming.skip_team 置 True 让本步
+        跳过它自带的组队握手，结束（正常/异常/停止）都在 finally 恢复原值——只改内存、不落盘，
+        既不影响后续手动单跑副本/抓鬼，也不影响其它多人任务的独立组队。
+        跑完若任务报告队伍可用（task._team_formed，含「本就已在队中」），标记后续多人步一律复用。
+        """
+        team_c = ctx.cfg.setdefault("tasks", {}).setdefault("teaming", {})
+        orig = bool(team_c.get("skip_team", False))
+        reuse = self._team_ready and not orig
+        if reuse:
+            team_c["skip_team"] = True
+        try:
+            task.run(ctx)
+        finally:
+            if reuse:
+                team_c["skip_team"] = orig
+        if getattr(task, "_team_formed", False):
+            self._team_ready = True
+
     def _run_collective(self, ctx, step_name):
         """集体跑一次「多人步」：组队 → 队长线性跑完（→可选解散）。用主 ctx（任务自带 select+组队）。
         阻塞执行，期间各队员号在屏障上待命（本就在队伍里被传送/自动战斗）。
-        dungeon=把刷副本页勾选的全部副本按勾选顺序一个个刷完（每个副本 run() 自带组队）；
-        zhuagui=抓鬼一次（自带组队）。"""
+        组队只在「本趟第一个真正跑的多人步」做一次，后续多人步复用同一队伍（见 _collective_run）：
+        队伍要活到最后一个多人步跑完才解散（_disband_after_multi），中途重跑组队既徒增耗时，
+        队长已在队中还会让「创建队伍」落空。dungeon=把勾选的全部副本按勾选顺序一个个刷完；
+        zhuagui=抓鬼一次。"""
         if step_name == "dungeon":
             self._run_collective_dungeons(ctx)
             return
@@ -342,10 +375,10 @@ class DailyTask(Task):
         if not ok:
             ctx.log(f"跳过「{title}」（未就绪）：" + "；".join(probs), level="warn")
             return
-        ctx.log(f"───── 所有号已汇合，开始集体「{title}」（组队 → 队长跑）─────", level="hit")
+        ctx.log(f"───── 所有号已汇合，开始集体「{title}」（{self._team_head(ctx)}）─────", level="hit")
         try:
             self._any_real_run = True
-            task.run(ctx)
+            self._collective_run(ctx, task)
         except Exception as e:
             ctx.log(f"「{title}」运行异常：{e}，继续后续任务。", level="error")
             return
@@ -353,7 +386,9 @@ class DailyTask(Task):
             ctx.log(f"───── 「{title}」完成 ─────", level="hit")
 
     def _run_collective_dungeons(self, ctx):
-        """「刷副本」集体步：把刷副本页勾选的副本按勾选顺序逐一刷完（每个副本 run() 自带组队）。
+        """「刷副本」集体步：把勾选中的副本**按展示顺序**（侠士本在前、类内等级低→高，
+        然后普通本）逐一刷完（各自 run() 自带组队，但队伍由 _collective_run 保证整趟只组一次：
+        第一个副本组好后，后面直接复用）。勾选只决定「刷不刷」，不决定顺序（见 _selected_dungeons）。
         某副本演练/未就绪/异常 → 跳过继续下一个，最后汇总（行为与「刷副本」页顺序队列一致）。"""
         names = self._selected_dungeons(ctx)
         if not names:
@@ -375,16 +410,17 @@ class DailyTask(Task):
             if not ok:
                 ctx.log(f"跳过副本「{title}」（未就绪）：" + "；".join(probs), level="warn")
                 continue
-            ctx.log(f"─── 所有号已汇合，集体刷副本 {i}/{total}「{title}」（组队 → 队长跑）───", level="hit")
+            ctx.log(f"─── 所有号已汇合，集体刷副本 {i}/{total}「{title}」"
+                    f"（{self._team_head(ctx)}）───", level="hit")
             try:
                 # 进本要点的「进入」序号：写进内存 cfg 的 tasks.dungeon.enter_target（运行时字段，
                 # 不入盘）。同标签区几个「进入」长得一样，dungeon_base 按「该副本在标签区展示顺序里的
-                # 第几个」来点——此前这字段随旧刷副本运行页删除后没人再写，导致全部副本都点第 1 个。
+                # 第几个」来点——此前此字段随旧刷副本运行页删除后没人再写，导致全部副本都点第 1 个。
                 et = enter_target_for(dname)
                 if et:
                     (ctx.cfg.setdefault("tasks", {}).setdefault(DUNGEON_NS, {}))["enter_target"] = et
                 self._any_real_run = True
-                task.run(ctx)
+                self._collective_run(ctx, task)
             except Exception as e:
                 ctx.log(f"「{title}」运行异常：{e}，继续下一个副本。", level="error")
                 continue
@@ -480,17 +516,22 @@ class DailyTask(Task):
 
     @staticmethod
     def _selected_dungeons(ctx):
-        """读副本中枢勾选的【全部】有效副本名（tasks.dungeon.selected 是列表，按勾选顺序）；
-        空/非法则退回首个已收录副本（保证至少能跑一个）。"""
-        names = [c.name for c in dungeon_tasks()]
+        """读副本中枢勾选的【全部】有效副本名，**一律按展示顺序**返回。
+
+        勾选框只决定「刷不刷」，不决定顺序：这里拿展示基准 base.dungeon_display_names()
+        去过滤勾选结果（侠士本在前、类内等级低→高，然后普通本）。所以 config 里
+        `tasks.dungeon.selected` 的存放顺序无关紧要——历史遗留或手改的乱序也不会影响跑的顺序，
+        界面勾选区怎么排、跑的顺序就怎么排。空/非法则退回展示顺序里首个已收录副本（保证至少能跑一个）。"""
+        order = dungeon_display_names()
         sel = ctx.task_cfg("dungeon").get("selected")
         if isinstance(sel, str):
             sel = [sel]
         if isinstance(sel, list):
-            out = [s for s in sel if s in names]
+            chosen = {s for s in sel if isinstance(s, str)}
+            out = [n for n in order if n in chosen]   # 按展示顺序过滤；未收录的名字自然落选
             if out:
                 return out
-        return names[:1]
+        return order[:1]
 
     @staticmethod
     def _selected_dungeon(ctx):

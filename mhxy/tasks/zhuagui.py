@@ -184,6 +184,7 @@ class ZhuaguiTask(Task):
                 ctx.log(f"组队未完成（{reason}），抓鬼中止。", level="error")
                 return
             ctx.log("组队完成，队长开始抓鬼循环…", level="hit")
+        self._team_formed = True   # 队伍可用（新建成功或本就已在队中）——供「日常」跨多人步复用
 
         # —— 第二步：队长跑抓鬼循环（N 轮）——
         self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
@@ -275,7 +276,7 @@ class ZhuaguiTask(Task):
         deadline = time.time() + confirm_sec + 2.0
         no_cancel_since = None
         while not ctx.should_stop():
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             m = vision.match(cur, tpl, threshold) if cur is not None else None
             if m is None:
                 if no_cancel_since is None:
@@ -295,7 +296,7 @@ class ZhuaguiTask(Task):
         last_diag = 0.0
         while not ctx.should_stop():
             scene_rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
 
             nxt = self._match_scene(cur, scene_rect, "gg_next", threshold)
             if nxt is not None:
@@ -317,7 +318,9 @@ class ZhuaguiTask(Task):
             ctx.log("打不开活动界面（open_activity 未配置），中止。", level="error")
             return False
         ctx.log("已打开活动，翻找抓鬼卡片…")
-        self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 先确认「活动」界面真的弹好了再翻卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
+        if not self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0)):
+            self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
         list_region = regions.get("activity_list")
         # 找「参加」的微滚计数/告警标志（抓鬼本流程一次性发起、不复用轮转 record，局部状态即可）
         rec = {"_join_warned": False, "_nudges": 0}
@@ -348,6 +351,7 @@ class ZhuaguiTask(Task):
 
         res = scan.scroll_search(
             grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
+            grab_fn=ctx.window.grab_screen,
             should_stop=ctx.should_stop,
             sleep=lambda s: self._interruptible_sleep(ctx, self._jitter(s, ctx)),
             scroll_step=loop.get("scroll_step", -3),
@@ -373,7 +377,7 @@ class ZhuaguiTask(Task):
         last_diag = 0.0
         while not ctx.should_stop():
             scene_rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._match_scene(cur, scene_rect, flag_key, threshold)
             if hit is not None:
                 ctx.mouse.click(hit[0], hit[1])
@@ -402,7 +406,7 @@ class ZhuaguiTask(Task):
         warned_no_cancel = False
         while not ctx.should_stop():
             scene_rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(scene_rect) if scene_rect else None
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
 
             cancel_tpl = self.flags.get(cancel_key)
             if cancel_tpl is None and not warned_no_cancel:
@@ -494,7 +498,7 @@ class ZhuaguiTask(Task):
 
     def _grab_scene(self, ctx, regions):
         rect = self._scene_rect(ctx, regions)
-        return win_mod.grab(rect) if rect else None
+        return ctx.window.grab_screen(rect) if rect else None
 
     def _match_scene(self, cur, scene_rect, flag_key, threshold):
         tpl = self.flags.get(flag_key)

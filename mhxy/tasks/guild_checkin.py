@@ -152,7 +152,7 @@ class GuildCheckinTask(Task):
     def _do_wait(self, ctx, rec, key, label, next_state):
         """盯一个模板：出现并点一次→进下一步；超时（跨步累计）或停止→该号结束。每步只截一帧检一次。"""
         scene_rect = self._scene_rect(ctx, rec["regions"])
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, key, rec["threshold"])
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
@@ -200,7 +200,7 @@ class GuildCheckinTask(Task):
 
     def _grab_scene(self, ctx, regions):
         rect = self._scene_rect(ctx, regions)
-        return win_mod.grab(rect) if rect else None
+        return ctx.window.grab_screen(rect) if rect else None
 
     def _match_scene(self, cur, scene_rect, key, threshold):
         tpl = self.flags.get(key)

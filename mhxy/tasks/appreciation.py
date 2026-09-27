@@ -217,7 +217,9 @@ class AppreciationTask(Task):
             rec["done"] = True
             return
         ctx.log("已打开活动，翻找「趣味鉴赏」卡片…")
-        self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 先确认「活动」界面真的弹好了再翻卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
+        if not self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0)):
+            self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
         rec["scrolls"] = 0
         self._goto(rec, S_FIND_CARD)
 
@@ -259,6 +261,7 @@ class AppreciationTask(Task):
 
         res = scan.scroll_search(
             grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
+            grab_fn=ctx.window.grab_screen,
             should_stop=ctx.should_stop,
             sleep=lambda s: self._interruptible_sleep(ctx, self._jitter(s, ctx)),
             scroll_step=loop.get("scroll_step", -3),
@@ -297,7 +300,7 @@ class AppreciationTask(Task):
         rect = ctx.window.region_to_screen_rect(region)
         if rect is None:
             return                      # 窗口没了/取不到 rect → 轮转层 already 处理；这里直接让出
-        cur = win_mod.grab(rect)
+        cur = ctx.window.grab_screen(rect)
         hit = self._match_region(cur, rect, "appr_heart", threshold)
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
@@ -306,7 +309,9 @@ class AppreciationTask(Task):
             rec["not_found_since"] = None
             rec["scrolls"] = 0
             ctx.log(f"点中心形图案（{hit[2]:.3f}），累计 {rec['clicks']}/{self.target_clicks}。", level="hit")
-            self._interruptible_sleep(ctx, self._jitter(float(loop.get("post_click_sec", 1.0)), ctx))
+            # 点完心形图案后停满 post_click_sec（默认 1s）再点下一个：鉴赏要一下一下点，
+            # 用 _jitter_at_least 只往上抖、绝不低于基准（普通 _jitter 会把它压到 0.6s，太快容易点空/漏判）。
+            self._interruptible_sleep(ctx, self._jitter_at_least(float(loop.get("post_click_sec", 1.0)), ctx))
             return
 
         # 当前屏没匹配到心形图案 → 在图文列表区域滚动再匹配
@@ -384,7 +389,7 @@ class AppreciationTask(Task):
 
     def _grab_scene(self, ctx, regions):
         rect = self._scene_rect(ctx, regions)
-        return win_mod.grab(rect) if rect else None
+        return ctx.window.grab_screen(rect) if rect else None
 
     def _match_scene(self, cur, scene_rect, flag_key, threshold):
         """在整张 scene 里匹配 flag_key，命中返回屏幕绝对 (x,y,score)，否则 None。"""

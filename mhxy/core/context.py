@@ -19,6 +19,8 @@ class TaskContext:
         self.cfg = cfg
         # 按 config 设定「只认游戏进程的窗口」，避免把终端/编辑器等同名标题窗口当成游戏号去点击。
         win_mod.set_game_process(cfg.get("window_process", "MyGame_x64r.exe"))
+        # 识别抓图前先确保前台（用户拍板）；多开嫌前台切换频繁可在配置里关掉回到「只抓不激活」。
+        win_mod.set_grab_auto_activate(bool(cfg.get("grab_auto_activate", True)))
         # window 非空（多开派生子上下文）则绑定指定窗口；否则按标题建一个待 locate 的窗口。
         self.window = window or GameWindow(cfg.get("window_title", "梦幻西游"),
                                            cfg.get("window_offset", [0, 0]))
@@ -105,7 +107,7 @@ class TaskContext:
         rect = self.window.rect()
         if rect is None:
             return
-        scene = win_mod.grab(rect)
+        scene = self.window.grab_screen(rect)
         if scene is None:
             return
         if vision.match(scene, tpl, loop.get("match_threshold", 0.85)) is None:

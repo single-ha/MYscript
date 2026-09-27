@@ -13,12 +13,14 @@ import customtkinter as ctk
 from . import theme as T
 from .common import Tooltip
 from ..core import config as cfg_mod
-from ..tasks.base import dungeon_tasks, dungeon_cats, dungeon_display_layout
+from ..tasks.base import (dungeon_tasks, dungeon_cat_order, dungeon_display_layout,
+                          dungeon_display_names)
 
 
 class DungeonPicker(ctk.CTkFrame):
-    """副本勾选网格。每个 checkbox 直接读写 tasks.dungeon.selected（按展示顺序归一），
-    与刷副本页的勾选区行为完全一致（同一份 config，谁勾都同步）。
+    """副本勾选网格。每个 checkbox 直接读写 tasks.dungeon.selected，与刷副本页的勾选区行为
+    完全一致（同一份 config，谁勾都同步）。勾选框**只决定「刷不刷」，不决定顺序**——勾选结果
+    每次都按展示顺序归一存，运行时也按展示顺序过滤后跑（daily._selected_dungeons）。
     collapsible=True 时标题行变成折叠开关（▾/▸，点标题可展开/收起勾选区），
     折叠/展开状态经 on_open_change(open) 通知宿主持久化（宿主重建组件时可回传 default_open）。"""
 
@@ -38,12 +40,14 @@ class DungeonPicker(ctk.CTkFrame):
         self.chevron = None
         self._dungeons = dungeon_tasks()
 
-        # 展示/勾选顺序：第一行侠士本、第二行普通本，每行内按等级低→高。取自各 Task.cat。
-        # 与进副本点「进入」的序号共用同一基准（tasks.base.dungeon_display_layout）——两处不一致会进错本。
-        self.cat_order = dungeon_cats() + [c for c in dungeon_display_layout() if c not in dungeon_cats()]
-        self.cat_label = {"xiashi": "侠士本", "common": "普通本"}
+        # 展示顺序：第一行侠士本、第二行普通本，每行内按等级低→高。取自各 Task.cat。
+        # 唯一基准是 base.dungeon_display_names()——与「运行时按什么顺序刷」和「进副本点第几个
+        # 『进入』」共用同一份（运行时按它过滤勾选结果，见 daily._selected_dungeons）。
+        # 三处不一致就会进错本/刷错顺序，故都只调 base 那几个函数，不要在本文件另算一套。
         self.layout = dungeon_display_layout()
-        self.display_names = [n for cat in self.cat_order for n in self.layout[cat]]
+        self.cat_order = dungeon_cat_order()
+        self.cat_label = {"xiashi": "侠士本", "common": "普通本"}
+        self.display_names = dungeon_display_names()
 
         self._vars = {}                # name -> (CB, var)
         self._selected = []            # 当前勾选（按 display_names 顺序）
@@ -174,12 +178,13 @@ class DungeonPicker(ctk.CTkFrame):
             sel = [sel]
         if not isinstance(sel, list):
             sel = []
-        sel = [n for n in self.display_names if n in sel]
         if var.get():
             if name not in sel:
                 sel.append(name)
         else:
             sel = [n for n in sel if n != name]
+        # 改动之后才归一：勾选只决定「刷不刷」，存储顺序一律按展示顺序，顺带滤掉未收录的名字
+        sel = [n for n in self.display_names if n in sel]
         hub["selected"] = sel
         cfg_mod.set_task_config(cfg, self.TASK_NAME, hub)
         cfg_mod.save_config(cfg)

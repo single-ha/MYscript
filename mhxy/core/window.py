@@ -27,6 +27,11 @@ _user32.SetActiveWindow.argtypes = [ctypes.wintypes.HWND]
 _user32.ShowWindow.argtypes = [ctypes.wintypes.HWND, ctypes.c_int]
 _user32.GetWindowThreadProcessId.argtypes = [ctypes.wintypes.HWND, ctypes.wintypes.LPDWORD]
 _user32.GetWindowThreadProcessId.restype = ctypes.wintypes.DWORD
+_user32.WindowFromPoint.restype = ctypes.wintypes.HWND
+_user32.WindowFromPoint.argtypes = [ctypes.wintypes.POINT]
+_user32.GetAncestor.restype = ctypes.wintypes.HWND
+_user32.GetAncestor.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint]
+GA_ROOT = 0x2
 
 _kernel32 = ctypes.windll.kernel32
 _kernel32.OpenProcess.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.BOOL, ctypes.wintypes.DWORD]
@@ -147,6 +152,21 @@ def is_foreground(hwnd):
         return False
 
 
+# ---- 识别前自动激活 ----
+# 用户拍板 2026-09-26：任务识别图标前，若窗口不在前台先激活再抓图。
+# 原因：mss 抓的是屏幕真实像素，窗口被盖住时抓到的不是本窗口画面，模板识别会认错/认不到。
+# 多开轮询后台号画面时会频繁切前台（闪动略多、速率略慢），故提供总开关可一键关掉：
+# 任务建 ctx 时按 config.grab_auto_activate 接线（core/context.py），默认开。
+_GRAB_AUTO_ACTIVATE = True
+
+
+def set_grab_auto_activate(enabled):
+    """配置「识别抓图前先确保前台」总开关。True=抓图前若非前台先 activate（失败返回 None，
+    宁缺勿错）；False=照旧直抓（多开轮询省前台切换时用）。"""
+    global _GRAB_AUTO_ACTIVATE
+    _GRAB_AUTO_ACTIVATE = bool(enabled)
+
+
 def set_dpi_aware():
     """让脚本按真实像素工作，避免 Win 缩放(125%/150%)导致坐标错位。进程级，调一次即可。"""
     try:
@@ -246,6 +266,70 @@ class GameWindow:
         if not hwnd:
             return False
         return is_foreground(hwnd)
+
+    def _occluded(self, rect):
+        """抽查 grab 矩形内 5 个点，判定该区域是否被别的窗口遮住（用户拍板 2026-09-26「方案A」）。
+        WindowFromPoint 是纯只读顶层窗口查询，不发输入不抢焦点；
+        采样点取中心+四角（内缩若干像素，避开边框圆角）。判定规则：
+          - 某点查不到/越屏/取到别的窗口 → 一律按「被挡」返回 True（保守：宁肯多切一次前台）；
+          - 全部采样点都属于本窗口顶层（GA_ROOT 比对，兼容客户端子窗口）→ 画面完整可见，返回 False。
+        目的：多开后台号多半只是「没焦点」而画面完全可见，识别不必为它反复抢焦点。"""
+        if not self._win:
+            return True
+        try:
+            hwnd = self._win._hWnd
+        except Exception:
+            return True
+        if not hwnd:
+            return True
+        root = _user32.GetAncestor(hwnd, GA_ROOT)
+        if not root:
+            return True
+        x0, y0, w, h = rect
+        if w <= 0 or h <= 0:
+            return True
+        ins = max(1, min(12, w // 6, h // 6))
+        pts = [(x0 + ins, y0 + ins), (x0 + w - ins, y0 + ins),
+               (x0 + ins, y0 + h - ins), (x0 + w - ins, y0 + h - ins),
+               (x0 + w // 2, y0 + h // 2)]
+        for px, py in pts:
+            wf = _user32.WindowFromPoint(ctypes.wintypes.POINT(px, py))
+            if not wf:
+                return True
+            if _user32.GetAncestor(wf, GA_ROOT) != root:
+                return True
+        return False
+
+    def grab_screen(self, rect, activate=None):
+        """任务识别抓图的统一入口：先确保读到的画面是本窗口的，返回 BGR 图；抓不到/被停用返回 None。
+
+        rect: 屏幕绝对 [left, top, w, h]（用 region_to_screen_rect 换好的）。
+        activate: 本调用是否先切前台；默认 None=按全局开关 _GRAB_AUTO_ACTIVATE（config.grab_auto_activate），
+        显式 True/False 可单点覆盖。
+
+        用户拍板 2026-09-26「识别图标时窗口被挡住先激活再识别」：mss 抓的是屏幕真实像素，
+        窗口被盖住时画面是别的窗口的，模板会认错/认不到。规则（方案A，遮挡感知，同日升级）：
+          · 已在台（is_foreground 快判）→ 直接抓，零额外开销（该号自己的回合/单开几乎不加耗时）；
+          · 不在台 → 先 WindowFromPoint 抽查 grab 矩形 5 点判定是否真被遮：
+              - 画面完整可见（多开不重叠排布的后台号常态）→ 直接抓，不抢焦点、零切台；
+              - 真被遮 → 再 activate()（含校验重试），激活失败返回 None——宁可跳过本次识别，
+                也不用可能被遮的错误画面去匹配（再误点）；
+          · 全局开关关掉时完全跳过激活，保持旧行为。
+        GUI 侧的抓图（标定向导/窗口缩略图）不走这里，用模块级 grab()（框选时窗口本身就可见）。"""
+        if rect is None:
+            return None
+        if activate is None:
+            activate = _GRAB_AUTO_ACTIVATE
+        if activate and not self.is_foreground():
+            if self._occluded(rect):
+                if not self.activate():
+                    return None
+        return grab(rect)
+
+    def grab_window(self, region=None, activate=None):
+        """按窗口（或窗口内 [x,y,w,h] 区域）抓图的便捷入口：内部换算成屏幕矩形后走 grab_screen。"""
+        rect = self.region_to_screen_rect(region) if region else self.rect()
+        return self.grab_screen(rect, activate=activate)
 
     def resize_to(self, w, h, move_to=None):
         """把窗口尺寸还原到 [w, h]（可选 move_to=(left,top) 一并复位位置）。

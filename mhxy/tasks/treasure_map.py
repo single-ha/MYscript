@@ -12,8 +12,11 @@
         跳过阶段A、直接进阶段B开背包挖包裹里的藏宝图。
   自动判断逐号进行：各号进度不同(有的有图有的没)也能各自走对分支。
 阶段 B 挖宝：
-  开背包(快捷键) → 滚轮找藏宝图 → 双击用 → 自动传送挖宝 → 挖完游戏弹「下一张使用」按钮 → 点它
+  开背包(快捷键) → 滚轮找藏宝图 → 双击用 → 自动传送挖宝 → 挖完游戏弹「使用」按钮 → 点它
   → 循环到不再弹 → 再开背包确认无图 →【关上背包】→ 该号结束。
+  ★ 点「使用」是【双条件】（user 2026-09-27 拍板）：必须同一帧里既认到该按钮、又认到
+    藏宝图道具图标才点；只见按钮不见道具就不点（多半背包里已经没图了），等画面静止后回开背包
+    确认——真没图就收尾、有图就重新双击，天然自愈。理由：只认按钮就点会空点/白耗挖宝超时。
 
 ★ 多开轮转（用户要求「多号之间每一步都轮转」，2026-06-23 比照秘境降妖重做）：
   每个号各持一份状态(record)，主循环对每个号【各推进一小步】(非阻塞)，号与号之间逐步轮转——
@@ -46,7 +49,7 @@ S_DIALOG = "DIALOG"                   # 阶段A：等 NPC 对话框 → 点「�
 S_COLLECTING = "COLLECTING"           # 阶段A：自动寻宝中，盯人物静止=收集完成
 S_DIG_OPEN_BAG = "DIG_OPEN_BAG"       # 阶段B：发开背包快捷键
 S_DIG_FIND = "DIG_FIND"               # 阶段B：背包里滚轮找藏宝图 → 双击用；翻完无图=该号挖完
-S_DIGGING = "DIGGING"                 # 阶段B：挖宝中，盯「下一张使用」续挖 / 静止判这批挖完
+S_DIGGING = "DIGGING"                 # 阶段B：挖宝中，盯「使用」按钮续挖 / 静止判这批挖完
 
 # 状态→中文（仅用于停止汇总「某号停在哪一步」的可读提示）
 _STATE_CN = {
@@ -85,7 +88,7 @@ class TreasureMapTask(Task):
             ("flag_treasure_entry", "宝图任务入口", "活动列表里「宝图任务」那一条，框图标+文字、要独特"),
             ("flag_join", "参加按钮", "活动列表里「宝图任务」那一行右侧的「参加」按钮，框按钮本身、要独特"),
             ("flag_tingting", "「听听无妨」选项", "和 NPC 对话弹框里要点的那个选项"),
-            ("flag_next_map", "「下一张使用」按钮", "挖完一张后游戏自动弹出的继续按钮"),
+            ("flag_next_map", "「使用」按钮", "挖完一张后游戏自动弹出的继续按钮"),
             ("treasure_item", "藏宝图道具", "背包里藏宝图那个图标的样子"),
             ("flag_bag_arrange", "背包「整理」按钮", "打开背包后那个「整理」按钮。每次回开背包确认前先点它让道具归位（可选，找不到就跳过）", True),
             # 战斗界面标志已移到「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
@@ -223,11 +226,13 @@ class TreasureMapTask(Task):
     def _new_record(self, wctx):
         """每个号一份独立状态。轮转时按 state 各推进一步，互不干扰。
         phase_b：是否已进入挖宝阶段（决定卡死兜底回开活动还是回重开背包）。
-        last/still_since/t0/t_diag：收集/挖宝监控的逐帧状态（原内部 while 循环搬到这里、跨访问保留）。"""
+        last/still_since/t0/t_diag：收集/挖宝监控的逐帧状态（原内部 while 循环搬到这里、跨访问保留）。
+        nxt_wait_logged：「使用」按钮在、但同帧没看到藏宝图道具 的等待提示只打一次（防刷屏）。"""
         return {"ctx": wctx, "state": self._start_state, "t_state": time.time(),
                 "scrolls": 0, "dug": 0, "phase_b": False,
                 "last": None, "still_since": None, "t0": 0.0, "t_diag": 0.0,
-                "recover": 0, "done": False, "dead_logged": False}
+                "recover": 0, "done": False, "dead_logged": False,
+                "nxt_wait_logged": False}
 
     @staticmethod
     def _goto(rec, state):
@@ -241,6 +246,7 @@ class TreasureMapTask(Task):
         rec["last"] = None
         rec["still_since"] = None
         rec["t_diag"] = 0.0
+        rec["nxt_wait_logged"] = False
 
     @staticmethod
     def _state_elapsed(rec):
@@ -274,7 +280,9 @@ class TreasureMapTask(Task):
             rec["done"] = True
             return
         ctx.log("已打开活动，滚轮翻找「宝图任务」…")
-        self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 先确认「活动」界面真的弹好了再翻卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
+        if not self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0)):
+            self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
         rec["scrolls"] = 0
         self._goto(rec, S_FIND_CARD)
 
@@ -316,6 +324,7 @@ class TreasureMapTask(Task):
 
         res = scan.scroll_search(
             grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
+            grab_fn=ctx.window.grab_screen,
             should_stop=ctx.should_stop,
             sleep=lambda s: self._interruptible_sleep(ctx, self._jitter(s, ctx)),
             scroll_step=loop.get("scroll_step", -3),
@@ -343,7 +352,7 @@ class TreasureMapTask(Task):
     def _do_dialog(self, ctx, rec, loop, regions, threshold):
         timeout = loop.get("dialog_timeout_sec", 30)
         scene_rect = self._scene_rect(ctx, regions)
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, "flag_tingting", threshold)
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
@@ -375,7 +384,7 @@ class TreasureMapTask(Task):
             self._goto_dig(rec)
             return
         scene_rect = self._scene_rect(ctx, regions)
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
         in_battle = ui_state.is_present(cur, self.flags, "battle_flag", threshold)
         diff = self._frame_diff(rec["last"], cur) if rec["last"] is not None else None
         if in_battle:
@@ -411,7 +420,7 @@ class TreasureMapTask(Task):
         arrange_tpl = self.flags.get("flag_bag_arrange")
         if arrange_tpl is not None:
             scene_rect = self._scene_rect(ctx, regions)
-            cur = win_mod.grab(scene_rect)
+            cur = ctx.window.grab_screen(scene_rect)
             hit = self._match_scene(cur, scene_rect, "flag_bag_arrange", threshold)
             if hit is not None:
                 ctx.mouse.click(hit[0], hit[1])
@@ -444,6 +453,7 @@ class TreasureMapTask(Task):
 
         res = scan.scroll_search(
             grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
+            grab_fn=ctx.window.grab_screen,
             should_stop=ctx.should_stop,
             sleep=lambda s: self._interruptible_sleep(ctx, self._jitter(s, ctx)),
             scroll_step=loop.get("scroll_step", -3),
@@ -462,22 +472,35 @@ class TreasureMapTask(Task):
         self._close_bag(ctx)
         rec["done"] = True
 
-    # ---- 阶段 B：挖宝监控（盯「下一张使用」续挖；长时间无弹窗且静止→这批挖完，回开背包确认）----
+    # ---- 阶段 B：挖宝监控（盯「使用」续挖；长时间无弹窗且静止→这批挖完，回开背包确认）----
     def _do_digging(self, ctx, rec, loop, regions, threshold):
         per_map_timeout = loop.get("dig_timeout_sec", 120)
         idle_need = loop.get("collect_idle_sec", 4.0)
         still_diff = loop.get("still_diff", _STILL_DIFF)
         scene_rect = self._scene_rect(ctx, regions)
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
 
         nxt = self._match_scene(cur, scene_rect, "flag_next_map", threshold)
         if nxt is not None:
-            ctx.mouse.click(nxt[0], nxt[1])
-            rec["dug"] += 1
-            ctx.log(f"挖完第 {rec['dug']} 张，点「下一张使用」继续。", level="hit")
-            rec["t0"], rec["last"], rec["still_since"] = time.time(), None, None
-            self._interruptible_sleep(ctx, self._jitter(1.0, ctx))
-            return
+            # ★ 双条件（user 2026-09-27）：必须【同一帧里既认到「使用」按钮、又认到藏宝图
+            #   道具图标】才点。只认按钮就点的话，模板空点/背包里其实没图了都会照点不误
+            #   （点了没反应，还白耗一次挖宝超时）。认不到道具就不点，落到下面的静止判定
+            #   → 回开背包确认：是真没图就正常收尾，有图就重新双击，天然自愈。
+            item = self._dig_item_visible(ctx, cur, scene_rect, threshold)
+            if item is None:
+                if not rec.get("nxt_wait_logged"):
+                    rec["nxt_wait_logged"] = True
+                    ctx.log("看到「使用」但同帧没看到藏宝图道具图标 → 先不点，"
+                            "等画面静止后回开背包确认。", level="warn")
+            else:
+                ctx.mouse.click(nxt[0], nxt[1])
+                rec["dug"] += 1
+                ctx.log(f"挖完第 {rec['dug']} 张（道具 {item[2]:.3f} 也在画面里），"
+                        f"点「使用」继续。", level="hit")
+                rec["t0"], rec["last"], rec["still_since"] = time.time(), None, None
+                rec["nxt_wait_logged"] = False
+                self._interruptible_sleep(ctx, self._jitter(1.0, ctx))
+                return
 
         in_battle = ui_state.is_present(cur, self.flags, "battle_flag", threshold)
         diff = self._frame_diff(rec["last"], cur) if rec["last"] is not None else None
@@ -488,7 +511,7 @@ class TreasureMapTask(Task):
                 if rec["still_since"] is None:
                     rec["still_since"] = time.time()
                 elif time.time() - rec["still_since"] >= idle_need:
-                    ctx.log("无更多「下一张」且画面静止 → 这批可能挖完，回开背包确认。")
+                    ctx.log("画面静止且没有可续的「使用」→ 这批可能挖完，回开背包确认。")
                     self._goto(rec, S_DIG_OPEN_BAG)
                     return
             else:
@@ -561,7 +584,7 @@ class TreasureMapTask(Task):
 
     def _grab_scene(self, ctx, regions):
         rect = self._scene_rect(ctx, regions)
-        return win_mod.grab(rect) if rect else None
+        return ctx.window.grab_screen(rect) if rect else None
 
     def _match_scene(self, cur, scene_rect, flag_key, threshold):
         """在整张 scene 里匹配 flag_key，命中返回屏幕绝对 (x,y,score)，否则 None。"""
@@ -582,6 +605,28 @@ class TreasureMapTask(Task):
         m = vision.match(cur, tpl, 0.0)
         return m[2] if m is not None else None
 
+    def _dig_item_visible(self, ctx, scene_img, scene_rect, threshold):
+        """挖宝阶段确认「背包里确实还有藏宝图可挖」——命中返回屏幕绝对 (x,y,score)，否则 None。
+
+        先在已抓好的 scene 图里找（零额外开销，scene 通常是整窗）；若 scene 被标窄了没盖住
+        背包面板，再补抓一次整窗找一遍。只在这一步才多抓图，所以平时盯屏监控的开销不变。"""
+        tpl = self.flags.get("treasure_item")
+        if tpl is None or scene_img is None:
+            return None
+        m = vision.match(scene_img, tpl, threshold)
+        if m is not None and scene_rect:
+            return (scene_rect[0] + m[0], scene_rect[1] + m[1], m[2])
+        full = ctx.window.rect()
+        if not full or full == scene_rect:
+            return None
+        img = ctx.window.grab_screen(full)
+        if img is None:
+            return None
+        m = vision.match(img, tpl, threshold)
+        if m is None:
+            return None
+        return (full[0] + m[0], full[1] + m[1], m[2])
+
     def _close_bag(self, ctx):
         """收尾关背包：聚焦后按一次「关闭面板」(Esc)。"""
         self._focus(ctx)
@@ -594,7 +639,7 @@ class TreasureMapTask(Task):
         是否已有宝图走运行期自动判，故阶段A(宝图入口/参加/听听无妨)与阶段B(下一张/藏宝图)标志全自检。"""
         keys = [("flag_treasure_entry", "宝图入口"), ("flag_join", "参加按钮"),
                 ("flag_tingting", "听听无妨"), ("battle_flag", "战斗"),
-                ("flag_next_map", "下一张使用"), ("treasure_item", "藏宝图"),
+                ("flag_next_map", "使用"), ("treasure_item", "藏宝图"),
                 ("flag_bag_arrange", "整理按钮")]
         while not ctx.should_stop():
             if deadline and time.time() >= deadline:

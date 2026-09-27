@@ -53,9 +53,14 @@ CLOCK_TPL_KEY = "clock"
 # 在任务等待期对当前前台窗口截图找它，命中就拟人点掉，防止弹窗挡画面导致流程中断；徽标=守卫不启用。
 # 不进 SHARED_TPL_KEYS（不叠加进各任务 templates）：守卫与 ui_state 读 shop_icon 一样直接读 tasks.shared.templates。
 POPUP_CLOSE_TPL_KEY = "popup_close"
+# 活动界面标志（存 tasks.shared.templates.activity_ui_flag，在「通用」页「标定（公共区域）」里标定，可选）：
+# 「活动」界面打开后独有的画面元素（面板标题/顶栏等）。发完 open_activity 快捷键后先等它出现、
+# 确认界面真的弹好了再开始滚轮翻找活动卡片（见 tasks/base.Task._wait_activity_ui）。不标=沿用固定等待时长。
+ACTIVITY_UI_TPL_KEY = "activity_ui_flag"
 # 共享模板的友好中文名（就绪/标定提示用的展示名，见 ui/common.shared_template_hint）。
 SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)",
-                     POPUP_CLOSE_TPL_KEY: "弹窗关闭按钮(×)"}
+                      "activity_ui_flag": "活动界面标志",
+                      POPUP_CLOSE_TPL_KEY: "弹窗关闭按钮(×)"}
 # 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟；shop/activity 由 ui_state 直接读 shared，
 # 不叠加，避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
 SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)
@@ -248,6 +253,9 @@ DEFAULT_CONFIG = {
                                          #   top_right/top_left/bottom_right/bottom_left/off(关闭)。设置里可改。
     "appearance": "dark",                # 界面外观：dark(夜间) / light(白天)，侧栏可切换
     "debug_log": False,                  # 调试日志开关：开启后 level="debug" 的日志才进全局面板（设置页可勾）
+    "grab_auto_activate": True,          # 任务识别抓图前若窗口不在前台先激活再抓（用户拍板 2026-09-26）：
+                                         #   mss 抓屏是屏幕真实像素，窗口被盖时认错；多开轮询会频繁切前台，
+                                         #   嫌闪可设 false 回到「只抓不激活」。见 core/window.set_grab_auto_activate
 
     # ---- 目标窗口选择（基础特性，跨任务共享）----
     #   所有任务都基于它确定「操作哪个号」：单开=选 1 个窗口，多开=选多个号轮流操作。
@@ -408,7 +416,7 @@ DEFAULT_CONFIG = {
                 "flag_treasure_entry": None, # 活动列表里「宝图任务」条目
                 "flag_join": None,           # 「宝图任务」那一行右侧的「参加」按钮（按行匹配点它）
                 "flag_tingting": None,       # 对话框「听听无妨」选项
-                "flag_next_map": None,       # 挖完弹出的「下一张使用」按钮
+                "flag_next_map": None,       # 挖完弹出的「使用」按钮
                 "treasure_item": None,       # 背包里藏宝图道具图标（双击用图靠它定位）
                 "flag_bag_arrange": None     # 背包「整理」按钮（可选：回开背包确认前点一下让道具归位）
             }
@@ -640,6 +648,7 @@ DEFAULT_CONFIG = {
                 "clock": None,           #   小闹钟(寻路)（刷副本/抓鬼必标，点它寻路到当前目标）
                 "shop_icon": None,       #   商城图标（可选，主界面判定用）
                 "activity_icon": None,   #   活动图标（可选，供后续界面判定复用）
+                "activity_ui_flag": None, # 活动界面标志（可选，发 open_activity 后等它出现再翻找卡片）
             },
         },
 

@@ -25,7 +25,6 @@ import time
 from ..core import config as cfg_mod
 from ..core import input as input_mod
 from ..core import vision
-from ..core import window as win_mod
 
 
 def is_present(scene, flags, flag_key, threshold):
@@ -79,7 +78,7 @@ def is_main_screen(cfg, window, threshold=0.8, region=None):
     rect = window.region_to_screen_rect(region) if region else window.rect()
     if rect is None:
         return None
-    scene = win_mod.grab(rect)
+    scene = window.grab_screen(rect)
     if scene is None:
         return None
     return vision.match(scene, tpl, threshold) is not None
@@ -106,7 +105,7 @@ def find_popup_close(cfg, window, threshold=0.85):
     rect = window.rect()
     if rect is None:
         return None
-    scene = win_mod.grab(rect)
+    scene = window.grab_screen(rect)
     if scene is None:
         return None
     hit = vision.match(scene, tpl, threshold)

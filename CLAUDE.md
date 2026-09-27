@@ -38,7 +38,11 @@
    docstring 与 memory `ctklabel-wraplength-gotcha`——**改它前务必看懂，否则极易改回截断/振荡**。
 9. **多开通用约束（贯穿全部任务）**：多开各号窗口须**同尺寸**（共用标定点位）；一只鼠标，多开节奏天然慢于单开；
    操作某号前先 `window.activate()` 切前台（`_force_foreground` 绕过焦点抢占并校验，失败则跳过该号、下轮重试，
-   绝不在后台号瞎点）。通用页「调整窗口」排布为**用户拍板**：调基准尺寸 + **2列×2行**网格（第1排贴屏幕/工作区顶、
+   绝不在后台号瞎点）。**识别抓图统一走 `GameWindow.grab_screen`（用户拍板 2026-09-26 遮挡感知方案A）**：
+   mss 抓的是屏幕真实像素，窗口被盖时画面是别的窗口的会认错——已在前台直抓零开销；不在前台先 `WindowFromPoint`
+   抽查 grab 矩形 5 点（中心+四角，GA_ROOT 比对兼容子窗口），**画面完整可见的后台号直接抓、不抢焦点**（多开
+   不重叠排布下的常态，切台数归零），**真被遮才 `activate()`**，激活失败返回 None（宁缺勿错，不用被遮画面去
+   匹配）；config 顶层 `grab_auto_activate=false` 可关。通用页「调整窗口」排布为**用户拍板**：调基准尺寸 + **2列×2行**网格（第1排贴屏幕/工作区顶、
    最后1排贴任务栏），**最多 5 个窗口，第 5 个居中放屏幕正中**；实现用 `window.work_area()`（SPI_GETWORKAREA）。
 
 ## 架构（三层，包名 mhxy/）
@@ -127,10 +131,16 @@ mhxy/
   页内 `_log_line` 照范式写成一行转发 `self.app.log_line(msg, level, getattr(self,"LOG_SOURCE",None))`，
   全局面板会按 source 打来源标签（如「秒装备 ›」）。一页里有多种来源（如通用页的组队/解散）就在
   `pump`/各消息处显式把第三个参 source 传成对应短名覆盖。
-- **副本中枢（「刷副本」页 = DungeonPage）**：副本统一收进该页用**勾选框多选**、点「开始」按勾选顺序**一个个顺序刷**
+- **副本中枢（「刷副本」页 = DungeonPage）**：副本统一收进该页用**勾选框多选**、点「开始」**按展示顺序一个个顺序刷**
   （一个跑完自动接下一个；某副本 preflight/异常失败**跳过继续下一个**，最后汇总；「停止」即停整个队列）。
   **加新副本只需写个 `is_dungeon = True` 的 Task**、在 `tasks/__init__.py` import——
-  `base.dungeon_tasks()` 自动把它列进勾选清单，GUI 不用改。约定：勾选结果存 `tasks.dungeon.selected`（字符串列表，按勾选顺序）。
+  `base.dungeon_tasks()` 自动把它列进勾选清单，GUI 不用改。约定：勾选结果存 `tasks.dungeon.selected`（字符串列表）。
+  ⚠ **勾选框只决定「刷不刷」，不决定顺序**（user 拍板 2026-09-27）：刷的顺序**一律按展示顺序**
+  （侠士本在前、类内等级低→高，然后普通本）。唯一顺序基准 = `base.dungeon_display_names()`
+  （另有 `dungeon_cat_order()`/`dungeon_display_layout()`），**三处都用它**：GUI 勾选区排列
+  （`ui/dungeon_picker.py`）、运行时排序（`daily._selected_dungeons` 按它过滤勾选结果）、
+  进副本点第几个「进入」（`base.enter_target_for`）——三处不一致就会刷错顺序/进错本，
+  故别在任何一处另算一套。副作用：config 里 `selected` 的**存放顺序无关紧要**（历史遗留/手改的乱序不影响跑的顺序）。
   **所有副本共用一套标定**（只按普通/侠士区分）：模板/区域/loop 全存共享 `tasks.dungeon` 命名空间，一次标定覆盖全部副本。
   **组队设置（队长 captain_index / 已组队 skip_team / 跑完解散
   auto_disband）统一存共享 `tasks.teaming`**，各多人任务（蹈海去/抓鬼等）的 preflight/run 都读这份共享配置；
@@ -188,7 +198,10 @@ mhxy/
   只按该任务自己的流程走——不套整体时间上限/定时、绝不「跑完关机」、不按「跑完解散」收尾解散、
   不触发「自动整理背包」；「已组队」是会话条件属共享组队设置、不动。实现= `DailyPage._single_build_cfg` 内存覆盖。
 - **组队是共享能力、单独可一键触发**：握手在 `core/teaming.TeamFormation`；通用页有「选队长 + 一键组队」
-  （跑 `DungeonTask`），角色参数存共享 `tasks.teaming`。任何副本跑之前都先自动组队。
+  （跑 `DungeonTask`），角色参数存共享 `tasks.teaming`。副本/抓鬼各自单跑时都先自动组队；**但「日常」一趟里的多个多人步只组一次**——
+  队伍要活到最后一个多人步跑完才解散（`daily._disband_after_multi`），故 `daily` 用 `_team_ready` 记「本趟已组好队」，
+  经 `_collective_run` 临时把 `tasks.teaming.skip_team` 置 True 让后续多人步（副本 2..N、抓鬼）复用（`finally` 恢复、只改内存不落盘），
+  任务侧用 `self._team_formed` 回报队伍可用。手动单跑各任务不受影响。
 - **公共区域标定（`tasks.shared`）**：活动列表区 `activity_list` / 背包列表区 `bag_list` 跨任务画面相同、共用一套标定，
   统一存共享命名空间 `tasks.shared.regions`，**只在「通用」页「标定（公共区域）」标定一次**（各任务 CALIBRATION 不再列出这两项）；
   `core/config.py task_config()` 读取时自动叠加进各任务 regions（运行时与就绪判定都吃到；新任务直接用 `tc["regions"]` 读即可，
@@ -206,6 +219,9 @@ mhxy/
   守卫挂在 `base.Task._interruptible_sleep`（节流 `popup_guard.interval_sec`，顶层配置），对**当前前台**窗口截图找 `×`→拟人点掉；
   同一弹窗连点 `max_clicks` 次不消失 → Esc 兜底（`esc_fallback`+`max_esc` 封顶）→ 告警放弃。多开绝不在后台号点（`window.is_foreground` 门控）；
   拓印阶段 `_trace_active` 置位挂起守卫（`dungeon_base._handle_tuoying` 包了 try/finally）。
+  **活动界面就绪确认（user 2026-09-26 拍板）**：可选共享模板 `activity_ui_flag`（活动面板打开后独有的元素，同在公共标定、不叠加不参与就绪）。
+  各任务发完 `open_activity` 快捷键后走 `base.Task._wait_activity_ui`（轮询整窗找该模板，默认 3s）——**确认活动界面真弹好了才开始滚轮翻卡片**，
+  避免界面延迟/被公告弹窗挡时在空画面上白翻。**未标定/超时→退回原固定 sleep(0.6s)**，故不标也能照常跑；阈值/等待秒数 `loop.activity_ui_wait_sec`。
 - **「队长ID 库」（`ui/leader_gallery.py` + 纯函数 `core/leader_history.py`）非显而易见的约束**：
   **激活图路径永远是 `templates/tm_leader_id.png`**（teaming 与 calibrate 都写死读它），切换当前队长 = 把选中历史图
   **字节复制覆盖**该文件、**绝不改 config 路径串**，故 `TeamFormation` 零改、零回归。⚠ 就绪度判定只看

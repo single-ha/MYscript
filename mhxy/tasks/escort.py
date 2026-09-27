@@ -229,8 +229,14 @@ class EscortTask(Task):
             ctx.log("打不开活动界面（open_activity 快捷键未配置），放弃该号。", level="error")
             rec["done"] = True
             return
-        ctx.log("已打开活动，滚轮翻找「运镖」…")
-        self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 先确认「活动」界面真的弹好了再翻找卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
+        opened = self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0))
+        if opened:
+            ctx.log("活动界面已就绪，滚轮翻找「运镖」…")
+        else:
+            ctx.log("已打开活动，等活动界面就绪（未标定 activity_ui_flag 或等待超时，按固定时长继续）…",
+                    level="warn")
+            self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
         rec["scrolls"] = 0
         self._goto(rec, S_FIND_CARD)
 
@@ -267,6 +273,7 @@ class EscortTask(Task):
 
         res = scan.scroll_search(
             grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
+            grab_fn=ctx.window.grab_screen,
             should_stop=ctx.should_stop,
             sleep=lambda s: self._interruptible_sleep(ctx, self._jitter(s, ctx)),
             scroll_step=loop.get("scroll_step", -3),
@@ -287,7 +294,7 @@ class EscortTask(Task):
     # ---- 等首个「押送普通镖银」对话框 → 点它，开始第 1 趟 ----
     def _do_dialog(self, ctx, rec, loop, regions, threshold):
         scene_rect = self._scene_rect(ctx, regions)
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, "escort_silver", threshold)
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
@@ -303,7 +310,7 @@ class EscortTask(Task):
     # ---- 点完押送后等「确认」按钮（超时容错继续）----
     def _do_confirm(self, ctx, rec, loop, regions, threshold):
         scene_rect = self._scene_rect(ctx, regions)
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, "escort_confirm", threshold)
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
@@ -335,7 +342,7 @@ class EscortTask(Task):
         no_dlg_giveup = float(loop.get("no_dialog_giveup_sec", 90.0))
         per_trip_timeout = loop.get("escort_timeout_sec", 600)
         scene_rect = self._scene_rect(ctx, regions)
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
 
         # 对话框又弹出来了 → 这一趟跑完、还有次数，续点开始下一趟
         hit = self._match_scene(cur, scene_rect, "escort_silver", threshold)
@@ -471,7 +478,7 @@ class EscortTask(Task):
 
     def _grab_scene(self, ctx, regions):
         rect = self._scene_rect(ctx, regions)
-        return win_mod.grab(rect) if rect else None
+        return ctx.window.grab_screen(rect) if rect else None
 
     def _match_scene(self, cur, scene_rect, flag_key, threshold):
         """在整张 scene 里匹配 flag_key，命中返回屏幕绝对 (x,y,score)，否则 None。"""

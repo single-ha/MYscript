@@ -21,7 +21,7 @@ import numpy as np
 from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
-from ..core.config import CAPTURES_DIR
+from ..core.config import CAPTURES_DIR, ACTIVITY_UI_TPL_KEY
 
 _REGISTRY = {}
 
@@ -66,14 +66,32 @@ def dungeon_cats():
 
 def dungeon_display_layout():
     """副本统一展示基准：按类别分组的名字列表（类内等级低→高）。
-    GUI 勾选区、进副本点「进入」的序号都以它为唯一基准——勾选顺序/游戏内多个「进入」
-    长得一样，必须靠「该副本在其标签区展示顺序里的第几个」来定位，两处不一致就会进错本。"""
+    GUI 勾选区、进副本点「进入」的序号都以它为唯一基准——各副本长得像/「进入」按钮长得一样，
+    必须靠「该副本在其标签区展示顺序里的第几个」来定位，两处不一致就会进错本。"""
     layout = {}
     for t in dungeon_tasks():
         layout.setdefault(getattr(t, "cat", "common"), []).append(t.name)
     for names in layout.values():
         names.sort(key=_dun_sort_key)
     return layout
+
+
+def dungeon_cat_order():
+    """副本类别的展示顺序：游戏画面分区顺序（侠士本→普通本）在前，将来新增的类别接后面。"""
+    layout = dungeon_display_layout()
+    known = dungeon_cats()
+    return known + [c for c in layout if c not in known]
+
+
+def dungeon_display_names():
+    """全部副本的**展示顺序**扁平列表（侠士本在前，类内等级低→高）。
+
+    唯一顺序基准，GUI 勾选区排列、运行时「刷哪些/按什么顺序刷」、进副本点第几个「进入」
+    三处都以它为准——三处不一致就会进错本。
+    勾选框只决定「刷不刷」，**不决定顺序**：运行时按本列表过滤勾选结果，所以 config 里
+    `tasks.dungeon.selected` 的存放顺序无关紧要（历史遗留/手改的乱序也不会影响跑的顺序）。"""
+    layout = dungeon_display_layout()
+    return [n for cat in dungeon_cat_order() for n in layout[cat]]
 
 
 def enter_target_for(name):
@@ -146,7 +164,7 @@ class Task:
         else:
             # 回不去：存一张现场截图，方便核对到底是「面板真没关掉」还是「其实已主界面但商城图标没认到」。
             rect = ctx.window.rect()
-            scene = win_mod.grab(rect) if rect is not None else None
+            scene = ctx.window.grab_screen(rect) if rect is not None else None
             cap = self._save_capture(scene, "main_screen_fail") if scene is not None else None
             ctx.log(f"未能回到主界面（面板没关掉或商城图标没认到），截图 {cap} 供核对，按任务原流程继续。",
                     level="warn")
@@ -190,6 +208,43 @@ class Task:
     def _jitter(self, base, ctx):
         r = ctx.cfg.get("humanize", {}).get("interval_jitter", 0.4)
         return max(0.05, base * (1 + random.uniform(-r, r)))
+
+    def _jitter_at_least(self, base, ctx):
+        """同 _jitter，但**只往上抖、绝不低于 base**（结果落在 base ~ base*(1+r)）。
+
+        用于「必须至少等这么久」的场景：_jitter 是 ±r 对称抖动，基准 1s 可能被压到 0.6s，
+        而这类等待的基准本身就是「游戏需要落定的最小时间」（如鉴赏点完心形图案要停 1s 再点下一个），
+        抖短了就不是基准想要的效果了。仍保留向上的随机性，不破坏拟人化。
+        """
+        r = ctx.cfg.get("humanize", {}).get("interval_jitter", 0.4)
+        return max(0.05, base, base * (1 + random.uniform(-r, r)))
+
+    def _wait_activity_ui(self, ctx, threshold, timeout=3.0, rect_region=None):
+        """确认「活动」界面已真正打开：发完 open_activity 快捷键后轮询等共享模板 activity_ui_flag 出现，
+        出现才返回 True，允许调用方开始滚轮翻找活动卡片；超时（或未标定模板）返回 False，
+        由调用方退回原有的固定等待兜底（向后兼容：不标定也能照常跑）。
+
+        activity_ui_flag 是「通用」页「标定（公共区域）」里的可选共享模板（tasks.shared.templates）：
+        选中「活动」界面后独有的画面元素（面板标题/顶栏等），能区分「活动真的弹好了」和「还在主界面/别的面板」。
+        之所以要这一步：open_activity 快捷键发出后界面可能有延迟、或被公告弹窗挡着，此时直接开始滚轮翻找
+        就是在空画面上白翻，还可能误点。找不到模板时（未标定）返回 False 让调用方走旧路径。
+        """
+        shared = ((ctx.cfg or {}).get("tasks", {}) or {}).get("shared", {}) or {}
+        tpl_path = ((shared.get("templates") or {}).get(ACTIVITY_UI_TPL_KEY))
+        tpl = vision.load_template(tpl_path) if tpl_path else None
+        if tpl is None:
+            return False  # 未标定 → 退回固定等待
+        region = rect_region
+        deadline = time.time() + max(0.1, timeout)
+        while time.time() < deadline:
+            if ctx.should_stop():
+                return False
+            rect = ctx.window.region_to_screen_rect(region) if region else ctx.window.rect()
+            scene = ctx.window.grab_screen(rect) if rect is not None else None
+            if scene is not None and vision.match(scene, tpl, threshold) is not None:
+                return True
+            self._interruptible_sleep(ctx, self._jitter(0.2, ctx))
+        return False
 
     def _interruptible_sleep(self, ctx, seconds):
         """可被停止打断的等待。等待期间顺带跑弹窗守卫（节流，见 _defuse_popup）。"""
@@ -258,7 +313,7 @@ class Task:
             return
         if not ep.get("warned"):
             ep["warned"] = True
-            scene = win_mod.grab(window.rect()) if window.rect() else None
+            scene = ctx.window.grab_screen(window.rect()) if window.rect() else None
             cap = self._save_capture(scene, "popup_stuck") if scene is not None else None
             ctx.log(f"弹窗守卫：同一弹窗「×」+Esc 都关不掉，已放弃（截图 {cap} 供核对，任务照常继续）。",
                     level="warn")
@@ -310,7 +365,7 @@ class Task:
                 if list_region else ctx.window.rect())
         if rect is None:
             return None
-        scene = win_mod.grab(rect)
+        scene = ctx.window.grab_screen(rect)
         if scene is None:
             return None
         rx, ry = rect[0], rect[1]
@@ -364,7 +419,7 @@ class Task:
                 if list_region else ctx.window.rect())
         if rect is None:
             return None
-        scene = win_mod.grab(rect)
+        scene = ctx.window.grab_screen(rect)
         if scene is None:
             return None
         sh = scene.shape[0]
@@ -492,13 +547,13 @@ class Task:
         self._interruptible_sleep(ctx, min_sec)
         if ctx.should_stop():
             return None
-        prev = win_mod.grab(rect)
+        prev = ctx.window.grab_screen(rect)
         deadline = time.time() + max(0.0, max_sec - min_sec)
         while time.time() < deadline:
             if ctx.should_stop():
                 return None
             time.sleep(poll)
-            cur = win_mod.grab(rect)
+            cur = ctx.window.grab_screen(rect)
             if cur is None:
                 return prev
             if self._frame_diff(prev, cur) < stable_diff:

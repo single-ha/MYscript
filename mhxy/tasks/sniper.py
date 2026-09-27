@@ -225,7 +225,7 @@ class SniperTask(Task):
             return False
         ui_state.back_to_main_screen(cfg, ctx.window)      # ESC 逐层关面板回主界面
         self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
-        scene = win_mod.grab(rect)
+        scene = ctx.window.grab_screen(rect)
         if scene is None:
             ctx.log("截图失败，跳过自动进商城。", level="warn")
             return False
@@ -277,6 +277,7 @@ class SniperTask(Task):
         for step in (-3, 3):          # 先下后上，双向各翻一遍
             res = scan.scroll_search(
                 grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
+                grab_fn=ctx.window.grab_screen,
                 should_stop=ctx.should_stop, sleep=sleep,
                 scroll_step=step, max_tries=8, settle_sec=0.35,
                 reset_to_top=False, label=f"标签页区域找「{label}」")
@@ -318,7 +319,7 @@ class SniperTask(Task):
         if img is None:
             ctx.log("「摆摊」页签模板缺失，跳过点页签。", level="warn")
             return False
-        scene = win_mod.grab(rect)
+        scene = ctx.window.grab_screen(rect)
         hit = vision.match(scene, img, 0.78) if scene is not None else None
         if hit is None:
             ctx.log("没识别到「摆摊」页签，跳过（已在商城界面也可继续识别）。", level="warn")
@@ -342,7 +343,7 @@ class SniperTask(Task):
         img = vision.load_template(tpl_path)
         if img is None:
             return False
-        scene = win_mod.grab(rect)
+        scene = ctx.window.grab_screen(rect)
         hit = vision.match(scene, img, threshold) if scene is not None else None
         if hit is None:
             return False
@@ -382,13 +383,13 @@ class SniperTask(Task):
         self._interruptible_sleep(ctx, min_w)
         if ctx.should_stop():
             return None
-        prev = win_mod.grab(list_rect)
+        prev = ctx.window.grab_screen(list_rect)
         deadline = time.time() + max(0.0, max_w - min_w)
         while time.time() < deadline:
             if ctx.should_stop():
                 return None
             time.sleep(POLL)
-            cur = win_mod.grab(list_rect)
+            cur = ctx.window.grab_screen(list_rect)
             if cur is None:
                 return prev
             if self._frame_diff(prev, cur) < STABLE_DIFF:

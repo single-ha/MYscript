@@ -252,7 +252,9 @@ class SecretRealmTask(Task):
             rec["done"] = True
             return
         ctx.log("已打开活动，翻找秘境降妖卡片…")
-        self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 先确认「活动」界面真的弹好了再翻卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
+        if not self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0)):
+            self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
         rec["scrolls"] = 0
         self._goto(rec, S_FIND_CARD)
 
@@ -290,6 +292,7 @@ class SecretRealmTask(Task):
 
         res = scan.scroll_search(
             grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
+            grab_fn=ctx.window.grab_screen,
             should_stop=ctx.should_stop,
             sleep=lambda s: self._interruptible_sleep(ctx, self._jitter(s, ctx)),
             scroll_step=loop.get("scroll_step", -3),
@@ -362,7 +365,7 @@ class SecretRealmTask(Task):
     #   首击常被游戏当成「聚焦/选中」吞掉（和抓鬼 gg_nav 同款），需隔 nav_double_gap_sec 补点一次。
     def _do_nav(self, ctx, rec, loop, regions, threshold):
         scene_rect = self._scene_rect(ctx, regions)
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, "sr_nav", threshold)
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
@@ -386,7 +389,7 @@ class SecretRealmTask(Task):
     # ---- 战斗监控：每访问一次扫一遍——判失败/胜利/「进入战斗」续战，不再设单轮超时 ----
     def _do_battle(self, ctx, rec, loop, regions, threshold):
         scene_rect = self._scene_rect(ctx, regions)
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
 
         # 1) 判定失败：先点掉「失败」结算，「离开」按钮才点得到
         fail = self._match_scene(cur, scene_rect, "sr_fail", threshold)
@@ -442,7 +445,7 @@ class SecretRealmTask(Task):
     # ---- 失败/超时后：点「离开」收尾本轮（超时容错按结束处理）----
     def _do_leave(self, ctx, rec, loop, regions, threshold):
         scene_rect = self._scene_rect(ctx, regions)
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, "sr_leave", threshold)
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
@@ -502,7 +505,7 @@ class SecretRealmTask(Task):
     def _try_click(self, ctx, rec, regions, threshold, flag_key, label, next_state):
         """在 scene 里找某按钮，命中就点它并切到 next_state，返回是否点到（非阻塞，一次扫描）。"""
         scene_rect = self._scene_rect(ctx, regions)
-        cur = win_mod.grab(scene_rect)
+        cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, flag_key, threshold)
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
@@ -530,7 +533,7 @@ class SecretRealmTask(Task):
 
     def _grab_scene(self, ctx, regions):
         rect = self._scene_rect(ctx, regions)
-        return win_mod.grab(rect) if rect else None
+        return ctx.window.grab_screen(rect) if rect else None
 
     def _match_scene(self, cur, scene_rect, flag_key, threshold):
         """在整张 scene 里匹配 flag_key，命中返回屏幕绝对 (x,y,score)，否则 None。"""
@@ -548,7 +551,7 @@ class SecretRealmTask(Task):
         rect = self._scene_rect(ctx, regions)
         if rect is None or tpl is None:
             return None
-        scene = win_mod.grab(rect)
+        scene = ctx.window.grab_screen(rect)
         if scene is None:
             return None
         sh, sw = scene.shape[:2]
