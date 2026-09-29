@@ -76,7 +76,13 @@ mhxy/
     weekly_base.py   WeeklyBaseTask 周常基类（门派闯关/海底世界/迷魂塔共用）：多人先自动组队（tasks.teaming，
                       只驱动队长窗口），两阶段循环「领任务(开活动→找卡片→参加→寻路→点自配 confirm)→做任务
                       (轮询 战斗标识/进战/小闹钟，三样全无满 clean_need_sec=判完成)→再开新一轮」直到 中止/时间上限；
-                      中止(立即停)=翻完无卡/无参加/NPC超时/进不了场景；三任务薄子类只用 @register + name/title
+                      中止(立即停)=翻完无卡/无参加/NPC超时/进不了场景；三任务薄子类只用 @register + name/title。
+                      ★ 门派闯关多一步「领取任务」：点完 NPC「参加活动」后还要点它才真正领到任务（user 2026-09-28），
+                      由类属性 `NEEDS_CLAIM_TASK` 开关（只有 sect_gate 置 True）＋**必标**模板 `claim_task` 驱动；
+                      缺标 preflight 直接拒跑（preflight 的必标列表取自 spec，不写死——否则 spec 加行会漏检）；
+                      但某轮等不到该按钮仍只提示不阻断。另两个周常用 `without_templates()` 从标定 spec 里
+                      剥掉该行（必标会被迫去标用不上的图），向导里不会出现该项。⚠ 加模板键必须同时登记进
+                      `weekly_base._FLAG_KEYS`——`_load_flags` 只按该列表建字典，漏登记会静默失效。
     dungeon.py       DungeonTask（组队/一键组队）：把所选多开窗口组成一队即停（通用页「一键组队」跑它，
                       角色参数存共享 tasks.teaming）。name 仍叫 "dungeon" 仅为兼容；刷副本页跑的是选中副本而非它。
     disband.py       DisbandTask（解散队伍/一键解散）：让所选各号都退出当前队伍（每号同一套流程，不分队长队员），

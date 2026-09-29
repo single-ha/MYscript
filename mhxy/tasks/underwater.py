@@ -7,7 +7,7 @@
 本类只写名称/标题——「参加活动」NPC 对话框按钮等模板在页面标定向导里各自框选。
 """
 
-from .weekly_base import WeeklyBaseTask
+from .weekly_base import WeeklyBaseTask, without_templates
 from .base import register  # noqa: F401
 
 
@@ -16,3 +16,5 @@ class UnderwaterTask(WeeklyBaseTask):
     name = "underwater"
     title = "海底世界"
     description = "周常：海底世界（多人组队，队长跑循环，漫无目标时自动中止）"
+    # 本活动点完「参加活动」就进场景，没有「领取任务」这一步 → 向导里不列该项
+    CALIBRATION = without_templates(WeeklyBaseTask.CALIBRATION, "claim_task")

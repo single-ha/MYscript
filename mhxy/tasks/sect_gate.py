@@ -5,6 +5,10 @@
 薄子类：全部逻辑在 WeeklyBaseTask（mhxy/tasks/weekly_base.py）：
 多人任务先自动组队、组好后只驱动队长窗口，循环跑「领任务 → 做任务 → 判完成 → 再开新一轮」。
 本类只写名称/标题——「参加活动」NPC 对话框按钮等模板在页面标定向导里各自框选。
+
+★ 本活动比别的周常多一步（user 2026-09-28 反馈）：点完 NPC 对话框的「参加活动」之后，
+还要再点一下「领取任务」才真正领到任务，所以打开 NEEDS_CLAIM_TASK 开关，并要求标定
+「领取任务」按钮模板（必标键 claim_task，缺了 preflight 直接拒跑）。
 """
 
 from .weekly_base import WeeklyBaseTask
@@ -16,3 +20,4 @@ class SectGateTask(WeeklyBaseTask):
     name = "sect_gate"
     title = "门派闯关"
     description = "周常：门派闯关（多人组队，队长跑循环，漫无目标时自动中止）"
+    NEEDS_CLAIM_TASK = True   # 点完「参加活动」还要点一下「领取任务」

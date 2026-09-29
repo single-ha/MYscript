@@ -6,6 +6,9 @@
   领任务  打开活动列表 → 找到活动卡片 → 点「参加」→ 角色自动寻路到活动 NPC → 点「参加活动」
           三个任务的差异只在最后这个 NPC 对话框按钮（图样文案不同）→ 各自在命名空间里标
           定自己的 confirm 模板即可，代码零差异。
+          ★ 门派闯关还要再多点一下「领取任务」（NEEDS_CLAIM_TASK 开关，user 2026-09-28 反馈）：
+            点完「参加活动」后点「领取任务」才真正领到任务。该模板(claim_task)是**必标**，
+            没标 preflight 直接拒跑；万一某轮等不到这个按钮，仍只提示不阻断（可能已直接进任务场景）。
   做任务  参考进副本后的逻辑：轮询「战斗中标识(battle_flag) / 进入战斗 / 任务栏小闹钟(clock)」：
           · 战斗中标识在 → 战斗中，等
           · 进入战斗在     → 点它发起本场
@@ -34,11 +37,26 @@ from ..core import vision
 from ..core import window as win_mod
 from ..core.teaming import (TeamFormation, TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES)
 from ..ui import ui_state
+from ..ui.common import required_templates
 from .base import Task, register   # noqa: F401  (register 供子类用，语义上子类 @register)
 
-# 每个号/每轮的模板键（card/join/confirm/enter 在任务自身命名空间标定；
+# 每个号/每轮的模板键（card/join/confirm/enter/claim_task 在任务自身命名空间标定；
 # battle_flag / clock 在「通用」页公共标定，task_config 叠加进本任务 templates）。
-_FLAG_KEYS = ["card", "join", "confirm", "enter", "battle_flag", "clock"]
+# ⚠ 模板要在这里登记，_load_flags 只按本列表建字典 —— 漏登记 = 运行期永远取不到该模板
+#   （踩过：claim_task 漏加 → 这一步永远走「没标定」分支、静默失效）。
+_FLAG_KEYS = ["card", "join", "confirm", "enter", "battle_flag", "clock", "claim_task"]
+
+
+def without_templates(spec, *drop_keys):
+    """派生一份「去掉某些模板行」的标定 spec，让用不到那一步的周常向导里不出现该条目。
+
+    三个周常共用同一份 CALIBRATION（差异只在各自命名空间存的模板图），但「领取任务」只有
+    门派闯关要点、且是必标。保留在共用 spec 里会让海底世界/迷魂塔也被迫去标一个用不上的图
+    （必标 = 缺了 preflight 直接拒跑），故让这两个子类各自剥掉。
+    """
+    out = dict(spec)
+    out["templates"] = [t for t in spec.get("templates", []) if t[0] not in drop_keys]
+    return out
 
 
 class WeeklyBaseTask(Task):
@@ -58,10 +76,18 @@ class WeeklyBaseTask(Task):
             ("confirm", "NPC「参加活动」按钮", "自动寻路到活动 NPC 后对话框里要点的「参加活动」按钮"
                                               "（每个活动的图样文案不同）"),
             ("enter", "进入战斗按钮", "做任务场景里点它发起战斗的「进入战斗」按钮"),
+            ("claim_task", "「领取任务」按钮", "门派闯关专用：点完 NPC「参加活动」之后还要点一下的"
+                                             "「领取任务」按钮。海底世界/迷魂塔没有这一步，"
+                                             "向导里不会出现该项"),
             # battle_flag / clock 已移到「通用」页「标定（公共区域）」，见 tasks.shared
         ],
         "watchlist": False,
     }
+
+    # 点完 NPC「参加活动」之后，是否还要再点一下「领取任务」（user 2026-09-28：门派闯关要）。
+    # 做成类属性开关而不是子类各自实现：三个周常共用同一份流程代码，只由这个开关决定走不走这一步，
+    # 新增周常想加这步就置 True（再在标定向导里把「领取任务」模板标上，它随之成为必标）。
+    NEEDS_CLAIM_TASK = False
 
     def __init__(self):
         self.flags = None
@@ -106,7 +132,9 @@ class WeeklyBaseTask(Task):
         if not regions.get("activity_list"):
             problems.append("『活动列表区域』未标定 —— 请到「通用」页点「标定（公共区域）」框选（所有任务共用）")
         templates = tc.get("templates", {})
-        for tk in ("card", "join", "confirm", "enter"):
+        # 必标模板直接取 CALIBRATION spec（不写死列表）—— 否则 spec 加了行、preflight 忘了加，
+        # 就会变成「向导里让标、preflight 不查」，缺失也能开跑，最后卡在运行期才发现。
+        for tk in required_templates(self.CALIBRATION):
             p = templates.get(tk)
             if not p or vision.load_template(p) is None:
                 problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
@@ -308,12 +336,29 @@ class WeeklyBaseTask(Task):
             self._abort_capture(ctx, regions)
             return False
         ctx.log("已点「参加活动」，等进入任务场景…")
+        # 门派闯关：点完「参加活动」后还要点一下「领取任务」（只在开关打开时走，且不阻断流程）
+        if self.NEEDS_CLAIM_TASK:
+            self._do_claim_task(ctx, loop, regions, threshold)
         enter_wait = loop.get("enter_wait_sec", 30)
         if not self._wait_task_enter(ctx, loop, regions, threshold, enter_wait):
             ctx.log(f"{enter_wait:.0f}s 内没等到任务迹象（战斗/进入战斗/小闹钟），中止。", level="error")
             self._abort_capture(ctx, regions)
             return False
         return True
+
+    def _do_claim_task(self, ctx, loop, regions, threshold):
+        """门派闯关：点完 NPC「参加活动」后再点「领取任务」。返回是否点到。
+
+        claim_task 是**必标**模板（没标 preflight 就拦住不让跑），所以这里「没标」只可能是
+        标完之后模板文件被删了之类的意外——仍只提示不崩，绝不因为它把整轮流程带走。"""
+        if not (self.flags or {}).get("claim_task"):
+            ctx.log("⚠「领取任务」模板读不到（本该由 preflight 拦住）→ 跳过这一步继续。", level="warn")
+            return False
+        wait = float(loop.get("claim_task_sec", 5.0))
+        if self._click_when(ctx, "claim_task", "领取任务", regions, threshold, wait):
+            return True
+        ctx.log(f"{wait:.0f}s 内没看到「领取任务」按钮 → 跳过（可能已直接进任务场景）。")
+        return False
 
     # ---- 找卡片 → 点「参加」：返回 "join_clicked" / "abort_no_card" / "abort_no_join" / "stopped" ----
     def _find_card_once(self, ctx, rec, list_region, loop, regions, threshold):
