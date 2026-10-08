@@ -25,6 +25,7 @@ from . import tuoying        # noqa: F401,E402
 from . import zhuagui        # noqa: F401,E402
 from . import guild_checkin  # noqa: F401,E402
 from . import activity_reward  # noqa: F401,E402
+from . import login         # noqa: F401,E402
 from . import appreciation   # noqa: F401,E402
 from . import weekly_base    # noqa: F401,E402
 from . import sect_gate      # noqa: F401,E402

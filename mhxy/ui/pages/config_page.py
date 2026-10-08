@@ -19,6 +19,7 @@ from .guild_checkin import GuildCheckinConfig
 from .activity_reward import ActivityRewardConfig
 from .dungeon import DungeonConfig
 from .zhuagui import ZhuaguiConfig
+from .login import LoginConfig
 
 # name -> 单人任务配置卡；顺序由 core.config.SINGLE_TASK_ORDER 决定（与「日常」个人组同源）
 _SINGLE_CARDS = {
@@ -80,6 +81,17 @@ class ConfigPage(ctk.CTkFrame):
         self.body = scroll
 
         row = 0
+
+        # 登录游戏区（自己起客户端，不在日常任务链里，故单列一区放最上面）
+        row = self._section(scroll, row, "login", "🚀 登录游戏 · 逐号启动客户端",
+                            "标定客户端路径与切号按钮；账号本身在「账号库」里标定（最多 10 个），"
+                            "并挑最多 5 个去登录（按挑的先后依次登录）——账号库在「日常」页顶部登录区。")
+        c = LoginConfig(scroll, self.app)
+        c.grid(row=row, column=0, sticky="ew", padx=2, pady=(0, 12))
+        self._cards.append(c)
+        self._card_by_name[c.TASK_NAME] = c
+        self._sections[-1]["widgets"].append(c)
+        row += 1
 
         # 单人任务区
         row = self._section(scroll, row, "single", "👤 单人任务 · 每号独立跑",

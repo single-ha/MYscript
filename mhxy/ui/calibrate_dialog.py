@@ -62,10 +62,14 @@ _VIRTUAL_SPECS = {
 # 当前屏幕框选，不再开 CalibrateDialog 窗口。逻辑与 CalibrateDialog._grab_roi 同源
 # （藏起界面→当前屏幕框选→按落点反查参照窗口算相对坐标），抽成模块级函数共享。
 # ----------------------------------------------------------------------
-def grab_roi_on_app(app, cfg, prompt, with_crop=False, toast=None, alpha_windows=None):
+def grab_roi_on_app(app, cfg, prompt, with_crop=False, toast=None, alpha_windows=None,
+                    require_window=True):
     """在【当前屏幕】框选一块区域，返回 (rel_roi, crop)；失败/取消返回 (None, None)。
     不激活/不切前台：你把哪个号摆在前面就标到哪个，框完按落点反查参照窗口算相对坐标。
-    toast: 可选回调 toast(msg, color)；alpha_windows: 框选期间临时隐身的窗口（默认仅 app）。"""
+    toast: 可选回调 toast(msg, color)；alpha_windows: 框选期间临时隐身的窗口（默认仅 app）。
+    require_window=False 时**只取图**、不查游戏窗口：找不到窗口也照样弹框选层（退到主屏），
+    也不校验「框选是否落在窗口内」——给「只要像素图、坐标无所谓」的调用方用（账号卡片/头像图模板）。
+    那种场景若还硬要求先找到游戏窗口，用户只会看到「界面闪一下、框选层不弹」（已踩）。"""
     title = cfg.get("window_title", "梦幻西游")
     offset = cfg.get("window_offset", [0, 0])
     windows = alpha_windows or (app,)
@@ -77,13 +81,17 @@ def grab_roi_on_app(app, cfg, prompt, with_crop=False, toast=None, alpha_windows
             except Exception:
                 pass
 
+    # 总是找一下游戏窗口：找到就用它的中心决定框选层弹在哪块屏（多开/副屏场景必需）；
+    # 只有 require_window=True 时「找不到」才算失败。require_window=False 找不到就退主屏照弹。
     hint_wins = win_mod.locate_all(title, offset)
-    if not hint_wins:
+    if require_window and not hint_wins:
         if toast:
             toast(f"没找到游戏窗口（标题含「{title}」），请先打开游戏。", T.WARN)
         return None, None
-    hr = hint_wins[0].rect()
+    hr = hint_wins[0].rect() if hint_wins else None
     center = (hr[0] + hr[2] // 2, hr[1] + hr[3] // 2) if hr else None
+    if not require_window and not hint_wins and toast:
+        toast("没找到游戏窗口，仍可框选 —— 请确认框的是游戏画面里的账号卡片。", T.WARN)
 
     _set_alpha(0.0)
     try:
@@ -108,6 +116,8 @@ def grab_roi_on_app(app, cfg, prompt, with_crop=False, toast=None, alpha_windows
         roi_abs, crop = result, None
     if roi_abs is None:
         return None, None
+    if not require_window:
+        return roi_abs, crop      # 只要图：坐标没意义，跳过下面「必须在窗口内」的校验
 
     cx = roi_abs[0] + roi_abs[2] // 2
     cy = roi_abs[1] + roi_abs[3] // 2
@@ -123,27 +133,34 @@ def grab_roi_on_app(app, cfg, prompt, with_crop=False, toast=None, alpha_windows
     return rel, crop
 
 
-def calibrate_template_direct(app, task_name, key, name, toast=None):
-    """无弹窗直接框选并裁图存成模板，写入 cfg.tasks.<task_name>.templates[key]。返回 True=已保存。
-    供「标定队长ID」按钮直接调用（task_name="teaming", key="leader_id"）。"""
+def calibrate_template_direct(app, task_name, key, name, toast=None, out_rel=None, prompt=None,
+                              require_window=True):
+    """无向导直接框选一张模板图，写进 cfg.tasks.<task_name>.templates[key] 并返回 True=已保存
+    （如组队队长ID：直接标定就指向 task_name="teaming", key="leader_id"）。
+
+    out_rel: 指定落盘相对路径时用它存图，且**不写** config 的 templates[key]——给「账号库」这类
+        自管物理槽的调用方用（存完自己复制进槽，config 里不该留一个指不到的点位）。None=默认行为。
+    require_window: 传 out_rel 时应一并传 False——只要像素图，不该因为「先没找到游戏窗口」而
+        静默失败（表现为界面闪一下、框选层不弹）。"""
     cfg = cfg_mod.load_config()
-    rel, crop = grab_roi_on_app(app, cfg, f"框选「{name}」（会裁下来存成模板图）",
-                                with_crop=True, toast=toast)
+    rel, crop = grab_roi_on_app(app, cfg, prompt or f"请选{name}，点击后拖动框选",
+                                with_crop=True, toast=toast, require_window=require_window)
     if rel is None:
         return False
     if crop is None or crop.size == 0:
         if toast:
             toast("截图失败，请重试。", T.DANGER)
         return False
-    rel_path = f"templates/tm_{key}.png"
+    rel_path = out_rel or f"templates/tm_{key}.png"
     if not vision.save_image(rel_path, crop):
         if toast:
-            toast("保存模板图失败。", T.DANGER)
+            toast("保存截图失败。", T.DANGER)
         return False
-    tc = cfg_mod.task_config(cfg, task_name)
-    tc.setdefault("templates", {})[key] = rel_path
-    cfg_mod.set_task_config(cfg, task_name, tc)
-    cfg_mod.save_config(cfg)
+    if out_rel is None:
+        tc = cfg_mod.task_config(cfg, task_name)
+        tc.setdefault("templates", {})[key] = rel_path
+        cfg_mod.set_task_config(cfg, task_name, tc)
+        cfg_mod.save_config(cfg)
     return True
 
 

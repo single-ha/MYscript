@@ -485,6 +485,29 @@
                 "tuoying_upload": null
             }
         },
+        "login": {
+            "client_path": "",
+            "client_args": "",
+            "account_library": [
+                {
+                    "slot": 0,
+                    "name": "账号1"
+                }
+            ],
+            "accounts": [
+                0
+            ],
+            "regions": {
+                "account_list": null
+            },
+            "templates": {
+                "user_menu": null,
+                "switch_account": null,
+                "select_account_tab": null,
+                "login": null,
+                "enter_game": null
+            }
+        },
         "guild_checkin": {
             "loop": {
                 "match_threshold": 0.85,

@@ -18,8 +18,8 @@ from ...tasks.base import dungeon_tasks
 from ...tasks.daily import CHAINABLE, GROUP_OF, GROUP_TITLES, MULTI_BARRIER
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
-from ..common import (Card, Tooltip, bind_wraplength, required_regions, required_templates,
-                      teaming_ns)
+from ..common import (Card, Tooltip, bind_wraplength, required_regions,
+                      required_templates, teaming_ns)
 from ..dungeon_picker import DungeonPicker
 
 # 分区集合。两区分组固定：多人组在前、个人组在后（不提供互换）；GROUP_OF 里出现过的区都保留（以后加新区自动跟上）。
@@ -88,7 +88,7 @@ class DailyPage(ctk.CTkFrame):
         self.switch_auto_organize = None      # 「自动整理背包」开关（任何任务检测到背包满自动整理）
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(4, weight=1)
 
         self._build_header()
         self._build_control()
@@ -107,10 +107,13 @@ class DailyPage(ctk.CTkFrame):
                         "各任务的标定、参数都请到「任务配置」页设置。点「任务名」=只跑那一个任务"
                         "（一次性、不落盘）；副本勾选区点「副本名」=只刷那一本。", self.fonts)
 
+    # ------------------------------------------------------------------
+    # 登录游戏区（页面顶部、可折叠）：从「账号库」里挑最多 5 个号，逐号起客户端登录
+    # ------------------------------------------------------------------
     # ---- 控制区：运行按钮 + 工具（选择窗口/刷新），无标定/无模式开关 ----
     def _build_control(self):
         card = Card(self)
-        card.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 14))
+        card.grid(row=3, column=0, sticky="ew", padx=4, pady=(0, 14))
         card.grid_columnconfigure(0, weight=1)
 
         top = ctk.CTkFrame(card, fg_color="transparent")
@@ -229,7 +232,7 @@ class DailyPage(ctk.CTkFrame):
     # ---- 主体：分区任务清单（日志已移到全局右栏）----
     def _build_body(self):
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.grid(row=2, column=0, sticky="nsew", padx=4)
+        body.grid(row=4, column=0, sticky="nsew", padx=4)
         body.grid_columnconfigure(0, weight=1)
         body.grid_rowconfigure(0, weight=1)
 

@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import copy
+import shutil
 from pathlib import Path
 
 # 数据根目录：config.json / templates / captures 都存这里。
@@ -181,6 +182,51 @@ def _mk_dungeon_shared():
     }
 
 
+def _mk_login():
+    """登录游戏（tasks.login）的默认配置块。
+
+    流程（每个号各起一个客户端进程，user 2026-09-29 拍板「每个号单独启动一次客户端」）：
+      启动客户端 → 等它的窗口出现（按 hwnd 差集认「刚弹出来那个」，不碰已开好的号）
+      → 点「用户」→ 点「切换账号」→ 点「选择账号」标签页
+      → 在账号列表区滚动查找该号模板并点它 → 点「登录」→ 点「进入游戏」→ 等进游戏完成。
+    账号本身不在这逐项标定：账号库（core/account_history.py，最多 LOGIN_ACCOUNT_SLOTS 个账号图）
+    由「日常」页登录区的「账号库」弹窗维护；从库里挑最多 LOGIN_MAX_ACCOUNTS 个存进 accounts
+    （有序=挑的先后=登录先后）。"""
+    return {
+        "client_path": "",          # 客户端 exe 路径（任务配置页「浏览」选；不存在则 preflight 拒跑）
+        "client_args": "",          # 启动参数（可选，空=不带参数；按空格切分）
+        "account_library": [],      # 账号库 [{slot, name}, ...]（由账号库弹窗写，slot 0~LOGIN_ACCOUNT_SLOTS-1）
+        "accounts": [],             # 登录队列 = 有序账号槽位号（最多 LOGIN_MAX_ACCOUNTS 个；由账号库弹窗写）
+        "loop": {
+            "match_threshold": 0.85,        # 模板匹配阈值
+            "client_launch_timeout_sec": 180,  # 启动客户端后等它的窗口出现的超时
+            "client_between_sec": 3.0,      # 一个号进完游戏到起下一个客户端之间的间隔
+            "step_timeout_sec": 30,         # 等「用户/切换账号/选择账号/登录/进入游戏」出现的单步超时
+            "enter_game_wait_sec": 300,     # 点「进入游戏」后等真正进游戏的上限
+            "enter_game_settle_sec": 8.0,   # 未标「商城图标」判不了主界面时，进游戏后固定等这么久
+            "poll_sec": 0.3,                # 等按钮出现的轮询间隔
+            "settle_sec": 0.6,              # 每点一下之后的画面落定等待
+            "accept_any_new_window": True,  # 新窗口标题不含 window_title 时也认它（客户端登录窗标题可能与游戏窗口不同）
+            "scroll_step": -3,              # 账号列表每次滚轮格数（负=向下翻）
+            "scroll_max_tries": 10,         # 翻账号列表最多翻几屏
+            "scroll_settle_sec": 0.35,      # 每滚一屏后等画面落定再重找的间隔
+            "scroll_reset_top": True,       # 翻找前先滚到顶，保证向下扫一遍能覆盖整段(不漏上半截)
+            "scroll_end_diff": 2.0,         # 滚一屏后该区域帧差<此值=滚不动了，据此判「整段翻完」
+            "scroll_reset_max": 20,         # 「滚到顶」最多上滚几屏的防死循环上限
+        },
+        "regions": {
+            LOGIN_REQUIRED_REGION: None,   # 「选择账号」界面里那片账号列表区（滚轮在此翻找账号卡片）
+        },
+        "templates": {              # 模板一律由标定向导写入（存 templates/tm_<key>.png）
+            "user_menu": None,            # 客户端主界面上的「用户」菜单入口
+            "switch_account": None,       # 「用户」菜单里的「切换账号」
+            "select_account_tab": None,   # 切号界面里的「选择账号」标签页
+            "login": None,                # 选好号之后要点的「登录」按钮
+            "enter_game": None,           # 登录后选区里的「进入游戏」按钮
+        },                          # 账号卡片/头像【不在这里标】→ 见 core/account_history.py（账号库）
+    }
+
+
 def _mk_weekly():
     """周常三任务（门派闯关/海底世界/迷魂塔）的默认配置块（三个结构完全一致，各存 tasks.<name>）。
 
@@ -241,6 +287,22 @@ SINGLE_TASK_ORDER = ["treasure_map", "secret_realm", "appreciation", "sanjie",
                      "escort", "guild_checkin", "activity_reward"]
 # 单人任务卡顺序 = 日常「单人任务组」默认任务顺序（两处必须一致，改这里两者同步）：
 #   ui/pages/config_page.py 的单人卡片按此顺序创建；config 的 daily.steps 个人组默认顺序 = 它。
+# ⚠ 登录游戏（login）不在 SINGLE_TASK_ORDER 里：它自己启动客户端、不依赖已开好的号，
+#   只能在「日常」页顶部自己的「登录游戏」区单独触发，不能进整条龙的 steps。
+
+# ---- 登录游戏（tasks.login）的账号约定 ----
+# 账号【不在这逐项标定】：账号库（最多 LOGIN_ACCOUNT_SLOTS 个账号卡片/头像图）由
+# 「日常」页登录区的「账号库」弹窗标定+挑选（core/account_history.py 存物理槽与列表，
+# UI 薄壳 ui/account_gallery.py）；从这些账号里最多挑 LOGIN_MAX_ACCOUNTS 个进登录队列。
+# 任务里「选号」就是拿该账号的图在「选择账号」列表区滚轮翻找并点它。
+LOGIN_ACCOUNT_SLOTS = 10      # 账号库容量（最多标定几个账号）
+LOGIN_MAX_ACCOUNTS = 5        # 登录队列上限（最多挑几个去登录）
+# 登录流程必标模板（仍走普通标定向导；它们与账号库无关）
+LOGIN_FLOW_TPL_KEYS = ("user_menu", "switch_account", "select_account_tab", "login", "enter_game")
+LOGIN_FLOW_TPL_LABELS = {"user_menu": "「用户」菜单", "switch_account": "「切换账号」",
+                         "select_account_tab": "「选择账号」标签页", "login": "「登录」按钮",
+                         "enter_game": "「进入游戏」按钮"}
+LOGIN_REQUIRED_REGION = "account_list"
 
 DEFAULT_CONFIG = {
     # ---- 跨任务共享 ----
@@ -793,6 +855,9 @@ DEFAULT_CONFIG = {
             },
         },
 
+        # ---- 登录游戏（自己起客户端，串行逐号登录；不进日常 steps，只在「日常」页顶部登录区触发）----
+        "login": _mk_login(),
+
         # ---- 刷副本（副本中枢）----
         #   所有副本进副本前/后流程一致、标定【共用一套】（只按普通/侠士区分），整体存这份共享块，
         #   由 dungeon_base 读取；各副本本身不再有各自模板/区域/超时。
@@ -847,7 +912,40 @@ def load_config():
     cfg = _deep_merge(DEFAULT_CONFIG, user_cfg)
     if _migrate_shared_clock(cfg):
         save_config(cfg)
+    if _migrate_login_account_slots(cfg):
+        save_config(cfg)
     return cfg
+
+
+def _migrate_login_account_slots(cfg):
+    """一次性迁移（2026-09-29 账号库取代逐项标定）：旧版把账号图当 tasks.login.templates.account_1..10
+    逐项标定，现已改为「账号库」弹窗标定 + account_library/accounts 两个列表，故把旧键清掉。
+    图本身（templates/tm_account_N.png）也一并搬进新物理槽 templates/tm_login_account{N-1}.png，
+    这样万一旧版标过也不必重标；没有对应图的键就是没标过的，直接丢。"""
+    login = ((cfg.get("tasks") or {}).get("login") or {})
+    tpl = login.get("templates") or {}
+    changed = False
+    for n in range(1, LOGIN_ACCOUNT_SLOTS + 1):
+        key = "account_%d" % n
+        if key not in tpl:
+            continue
+        rel = tpl.pop(key)
+        changed = True
+        if not rel:
+            continue
+        src = Path(rel) if Path(rel).is_absolute() else PROJECT_ROOT / rel
+        dst = PROJECT_ROOT / ("templates/tm_login_account%d.png" % (n - 1))
+        try:
+            if src.exists() and src.resolve() != dst.resolve():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(dst))
+        except OSError:
+            pass
+    if changed and tpl:
+        login["templates"] = tpl
+    elif changed:
+        login.pop("templates", None)
+    return changed
 
 
 def _migrate_shared_clock(cfg):

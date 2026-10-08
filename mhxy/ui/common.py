@@ -272,7 +272,7 @@ def bind_wraplength(label, padding=4):
     return T.bind_wraplength(label, padding)
 
 
-def load_thumb(template_rel, thumbs_list, max_h=40):
+def load_thumb(template_rel, thumbs_list, max_h=40, max_w=None):
     """把模板图按高缩放成缩略图 CTkImage，引用 append 进 thumbs_list 防 GC，兼容中文/打包路径。
     不存在/失败返回 None。多页复用（SniperPage 清单、队长ID 库与行内按钮都调它）。"""
     if not template_rel:
@@ -296,12 +296,95 @@ def load_thumb(template_rel, thumbs_list, max_h=40):
             img = Image.fromarray(cv2.cvtColor(arr, cv2.COLOR_BGR2RGB))
         w, h = img.size
         scale = max_h / max(1, h)
-        size = (max(1, int(w * scale)), max_h)
+        nw, nh = max(1, int(w * scale)), max_h
+        if max_w and nw > max_w:
+            scale2 = max_w / nw
+            nw, nh = max_w, max(1, int(nh * scale2))
+        size = (nw, nh)
         cimg = ctk.CTkImage(light_image=img, dark_image=img, size=size)
         thumbs_list.append(cimg)
         return cimg
     except Exception:
         return None
+
+
+def _short(text, n):
+    """超长文字截断加省略号（缩略图条上的名字用，避免把整条撑高）。"""
+    text = str(text)
+    return text if len(text) <= n else text[:n] + "…"
+
+
+class OrderThumbs(ctk.CTkFrame):
+    """「登录顺序」缩略图条：账号1的图 → 账号2的图 …（按点选先后排）。
+
+    为什么用图不用文字：账号名是用户自己起的（可能都叫「账号1」或随手改过），真正能一眼分清
+    「这是哪张卡」的是图。日常页登录区与账号库底部共用这一个 widget，故放 common（两处都 import 它）。
+
+    set_items([(序号, 名字, 模板相对路径或None), ...])；空列表显示 empty_text 提示。
+    缩略图丢了（图被删/路径坏）就用「无图」占位，不让整条崩掉。"""
+
+    def __init__(self, master, fonts, empty_text="", thumb_h=38, max_cells=8, border_color=None, max_w=None):
+        # width/height 给 1：CTkFrame 默认 200x200，空的缩略图条会撑出 200px 空白（实测踩过）
+        super().__init__(master, fg_color="transparent", width=1, height=1)
+        self.fonts = fonts
+        self.empty_text = empty_text
+        self.thumb_h = thumb_h
+        self.max_cells = max_cells
+        self._border_color = border_color or T.BORDER
+        self._max_w = max_w
+        self._thumbs = []              # 防 GC（每次重建前清空）
+        self.grid_columnconfigure(0, weight=1)
+
+    def _clear(self):
+        for w in self.winfo_children():
+            w.destroy()
+        self._thumbs.clear()
+
+    def set_items(self, items):
+        self._clear()
+        row = ctk.CTkFrame(self, fg_color="transparent", width=1, height=1)
+        row.grid(row=0, column=0, sticky="w")
+        if not items:
+            if self.empty_text:
+                ctk.CTkLabel(row, text=self.empty_text, font=self.fonts["small"],
+                             text_color=T.TEXT_DIM).grid(row=0, column=0, sticky="w")
+            return
+        shown = list(items)[:self.max_cells]
+        col = 0
+        for i, (idx, name, rel) in enumerate(shown):
+            if i:
+                ctk.CTkLabel(row, text="→", font=self.fonts["small"], text_color=T.TEXT_DIM
+                             ).grid(row=0, column=col, padx=(2, 2))
+                col += 1
+            cell = ctk.CTkFrame(row, fg_color="transparent", width=self.thumb_h + 16, height=1)
+            cell.grid(row=0, column=col, padx=2)
+            col += 1
+            cell.grid_columnconfigure(0, weight=1)
+            img = load_thumb(rel, self._thumbs, max_h=self.thumb_h, max_w=self._max_w) if rel else None
+            # 缩略图用单独带描边的小框；文字标签在外面，不进描边
+            # 不固定宽高、不关闭 propagate：让框自适应图片实际大小（避免 38x38 固定框把 57x38 图切了）
+            thumb_wrap = ctk.CTkFrame(cell, fg_color=T.SURFACE_2, border_width=2,
+                                      border_color=self._border_color, corner_radius=T.RADIUS_SM)
+            thumb_wrap.grid(row=0, column=0)
+            if img is not None:
+                ctk.CTkLabel(thumb_wrap, text="", image=img
+                             ).grid(row=0, column=0, padx=2, pady=2)
+            else:
+                ph = ctk.CTkLabel(thumb_wrap, text="无图", font=self.fonts["small"], text_color=T.TEXT_DIM,
+                                  width=self.thumb_h, height=self.thumb_h)
+                ph.grid(row=0, column=0)
+            lbl = ctk.CTkLabel(cell, text=f"{idx}. {_short(name, 6)}", font=self.fonts["small"],
+                               text_color=T.TEXT, width=self.thumb_h + 22)
+            lbl.grid(row=1, column=0, pady=(1, 0))
+            if len(str(name)) > 6:
+                # 名字过长就截断加省略号（不要换行：格子窄，换行会把整条缩略图条撑成好几行高）
+                try:
+                    Tooltip(lbl, f"第 {idx} 个登录：{name}", self.fonts)
+                except Exception:
+                    pass
+        if len(items) > len(shown):
+            ctk.CTkLabel(row, text=f"…共 {len(items)} 个", font=self.fonts["small"],
+                         text_color=T.TEXT_DIM).grid(row=0, column=col, padx=(4, 0))
 
 
 def param_entry(parent, fonts, label, initial, on_change, width=70, tooltip=None):

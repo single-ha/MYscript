@@ -407,6 +407,66 @@ def global_no(w, fallback):
     return (gi + 1) if isinstance(gi, int) and gi >= 0 else fallback + 1
 
 
+def _hwnd_of(w):
+    """取 GameWindow / pygetwindow 窗口对象的句柄（int）；取不到返回 None。"""
+    try:
+        raw = getattr(w, "_win", None) or w
+        h = getattr(raw, "_hWnd", None)
+        return int(h) if h else None
+    except Exception:
+        return None
+
+
+def snapshot_hwnds():
+    """当前所有顶层窗口的句柄集合（启动客户端「前」拍一张）。
+
+    登录任务靠它认「哪个窗口是刚启动出来的」——多开时桌面上已有一堆号，按标题找最大那个
+    会挑到旧号的窗口上去。返回 set[int]（拿不到句柄的窗口忽略）。"""
+    out = set()
+    for w in gw.getAllWindows():
+        h = _hwnd_of(w)
+        if h:
+            out.add(h)
+    return out
+
+
+def wait_new_game_window(before, title_substr, offset=(0, 0), timeout=60.0, poll=0.5,
+                         accept_any=False, min_size=(400, 300), should_stop=None, sleep=None):
+    """等一个「启动前还不存在」的窗口出现（按 hwnd 差集认新窗口），返回 GameWindow 或 None。
+
+    before: 启动前的 snapshot_hwnds()。
+    accept_any: True 时，只要出现一个「不在 before 里、非最小化、够大(≥min_size)」的窗口就认下它，
+        用于客户端登录窗标题与 window_title 不一致的情况；多个候选取面积最大的那个。
+    should_stop: 可打断的回调（True=停止，立即返回 None）。sleep: 可打断的睡眠（默认 time.sleep）。"""
+    end = time.time() + max(0.0, float(timeout))
+    while True:
+        if should_stop is not None and should_stop():
+            return None
+        for w in locate_all(title_substr, offset):
+            if _hwnd_of(w) not in before:
+                return w
+        if accept_any:
+            cands = []
+            for w in gw.getAllWindows():
+                if _hwnd_of(w) in before:
+                    continue
+                try:
+                    if w.isMinimized or w.width < min_size[0] or w.height < min_size[1]:
+                        continue
+                except Exception:
+                    continue
+                cands.append(w)
+            if cands:
+                cands.sort(key=lambda x: x.width * x.height, reverse=True)
+                return GameWindow(title_substr, offset).bind(cands[0])
+        if time.time() >= end:
+            return None
+        if sleep is not None:
+            sleep(poll)
+        else:
+            time.sleep(poll)
+
+
 def resolve_targets(title_substr, offset, targets):
     """按 targets 配置从 locate_all 结果里选出要操作的窗口列表（纯函数，供任务与 GUI 共用）。
 

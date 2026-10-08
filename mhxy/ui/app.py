@@ -17,7 +17,7 @@ from ..core.runner import TaskRunner, set_run_rejected_hook
 from ..core.input import get_cursor
 from .common import (DEFAULT_STOP_HOTKEY, DEFAULT_FAILSAFE, FAILSAFE_CORNERS,
                      _in_failsafe_corner, _parse_stop_hotkey, _vk_down)
-from .pages import (DailyPage, WeeklyPage, ConfigPage, ToolsPage,
+from .pages import (StartPage, DailyPage, WeeklyPage, ConfigPage, ToolsPage,
                     GeneralPage, SettingsPage, AboutPage)
 
 
@@ -29,7 +29,8 @@ LOG_LEVEL_LABELS = {"info": "信息", "hit": "命中", "warn": "警告", "error"
 # 主窗口
 # ----------------------------------------------------------------------
 class App(ctk.CTk):
-    NAV = [("daily", "🐉  日常"),
+    NAV = [("start", "🏠  起始"),
+           ("daily", "🐉  日常"),
            ("weekly", "🗓  周常"),       # 内嵌 门派闯关/海底世界/迷魂塔（多人·自动组队·队长跑循环）
            ("general", "🧰  通用"),
            ("config", "🎛  任务配置"),   # 内嵌 单人/多人任务的全部 参数+标定（运行唯一入口在「日常」）
@@ -369,6 +370,7 @@ class App(ctk.CTk):
     # 任务配置页（config）内嵌各任务的「配置/标定」卡，由 ConfigPage 直接组装（见 pages/config_page.py）；
     # 工具/周常等分类页内部懒建子页（见 pages/category.py），这里只登记顶层导航页。
     PAGE_CLASSES = {
+        "start": StartPage,
         "daily": DailyPage,
         "weekly": WeeklyPage,
         "general": GeneralPage,

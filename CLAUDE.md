@@ -64,6 +64,7 @@ mhxy/
     rotation.py 多开轮转推进器：连续推进到等待点才让出；详见 docstring + memory rotation-engine
     teaming.py  TeamFormation：跨窗口组队握手编排 + run_disband() 解散队伍（每号同一套退队流程）
     inventory.py InventoryOrganizer：整理背包（翻包裹逐物使用/丢弃/出售）的可复用编排，只依赖 ctx；详见 memory organize-bag-task
+    account_history.py 账号库（登录游戏用）：10 个固定物理槽 + 有序登录队列（最多 5 个），纯逻辑零 GUI；详见文件 docstring
   tasks/  可插拔任务
     base.py     Task 基类 + 注册表（register/get_task/all_tasks）+ _make_rotation()（包多开轮转）+ dungeon_tasks()
     sniper.py   SniperTask（秒装备）：preflight() 自检 + run() 主循环；刷新=每轮重进货架 _enter_shelf()
@@ -73,6 +74,12 @@ mhxy/
     appreciation.py AppreciationTask（趣味鉴赏）：开活动→参加→匹配并点击心形图案，点满 target_clicks 或鉴赏
                       超时即停；当前屏没匹配到就在「图文列表区域」滚动再找（滚动只在该区内，反向滚回防漏）
     secret_realm.py  SecretRealmTask（秘境降妖）：开活动→参加→挑战→盯「进入战斗」续战，可连跑 max_runs 轮
+    login.py         LoginTask（登录游戏）：按账号库里**有序**挑中的号（tasks.login.accounts，≤5）逐号 subprocess 起客户端，
+                      用户→切换账号→选择账号→滚轮翻账号卡片→登录→进入游戏→等主界面(商城图标)；
+                      每个号各起一次客户端（user 2026-09-29 拍板），窗口靠 hwnd 差集认新弹的那个
+                      (core/window.wait_new_game_window，不碰已开好的号)。账号图取自 core/account_history
+                      的物理槽（登录标定只管 5 个流程模板+账号列表区，不含账号图）。⚠ 它**不在 daily 链里**
+                      （无 ENSURE_MAIN_ON_START / POPUP_GUARD_OFF 两处关开关，见文件 docstring），运行入口只有日常页登录区
     weekly_base.py   WeeklyBaseTask 周常基类（门派闯关/海底世界/迷魂塔共用）：多人先自动组队（tasks.teaming，
                       只驱动队长窗口），两阶段循环「领任务(开活动→找卡片→参加→寻路→点自配 confirm)→做任务
                       (轮询 战斗标识/进战/小闹钟，三样全无满 clean_need_sec=判完成)→再开新一轮」直到 中止/时间上限；
@@ -104,18 +111,22 @@ mhxy/
     roi_overlay.py      全屏框选组件（纯 tk，冻结截图上拖框，返回屏幕绝对 ROI）
     calibrate_dialog.py GUI 内标定对话框（区域 + 模板缩略图画廊 + 加装备），按任务 CALIBRATION spec 驱动
     leader_gallery.py   队长ID 库画廊（见下「队长ID 库」约束）
+    account_gallery.py  账号库弹窗（登录游戏用）：框选账号卡片/头像入库 + 挑最多 5 个进登录队列，仿队长ID 库；数据见 core/account_history.py
     inventory_items_dialog.py 整理背包「物品清单」管理弹窗（缩略图+名字+动作下拉+框选添加，写 tasks.organize_bag.items）
     pages/organize_bag.py  OrganizeBagPage：整理背包独立页（工具分类页「整理背包」tab）——一键整理/标定/管理物品；
                           原在通用页卡片，迁到工具页；共享命名空间 tasks.organize_bag。「自动整理背包」开关
                           已迁到「日常」页控制区（影响日常运行中自动清背包）
     pages/config_page.py  ConfigPage：任务配置页（导航「🎛 任务配置」，2026-09-23 起取代原 single/multi 两页）——
-                          单人/多人全部任务的 参数+标定 收拢成一个可滚动界面，无任何运行入口；单人7卡
-                          (按 config.SINGLE_TASK_ORDER) + 多人2卡(刷副本/抓鬼；组队开关已不在本页，
+                          单人/多人全部任务的 参数+标定 收拢成一个可滚动界面，无任何运行入口；登录1卡(最上)
+                          + 单人7卡(按 config.SINGLE_TASK_ORDER) + 多人2卡(刷副本/抓鬼；组队开关已不在本页，
                           见下「已组队」条)。
                           各任务页文件（treasure_map/secret_realm/appreciation/sanjie/escort/guild_checkin/
-                          activity_reward/dungeon/zhuagui）均改为无 run 的配置卡类 *Config，参数「改动即保存」
+                          activity_reward/dungeon/zhuagui/login）均改为无 run 的配置卡类 *Config，参数「改动即保存」
                           （common.param_entry 失焦/回车写回 config）；副本勾选唯一入口仍留在「日常」页
                           （DungeonPicker，共享 tasks.dungeon.selected），本页刷副本卡只做共用标定+就绪，不含勾选。
+    pages/login.py        LoginConfig：登录游戏的配置卡（客户端路径/启动参数/等待参数 + 标定入口 + 账号库按钮，共享 tasks.login）；
+                          就绪度自绘（账号库里标几个用几个，账号本身不在这标）。日常页登录区**不设标定入口**，
+                          只留「账号库…/开始登录」+「⚙ 设置」按钮跳转来这里（daily._goto_login_config）
     pages/tuoying.py       TuoyingPage：拓印独立页（工具分类页「拓印」tab）——标定/就绪状态/一键拓印演练；
                           共享命名空间 tasks.tuoying（原在通用页公共标定，迁到这里）
     pages/tools.py      工具分类页（Tab: 秒装备 / 整理背包 / 拓印）
@@ -200,6 +211,14 @@ mhxy/
   主循环指定唯一持有者、`_drive_chain_until_yield(blocking=True)` 把它从头做完整再放行，排队的号跳过等待
   （不做跨号轮转）；窗口失效的号不占持有权（不会饿死别号）。任务单独跑（独立页/多开轮转）不受影响。
   多人步只走集体 `_run_collective`，不建独立链。
+  **「登录游戏」不在链里（user 拍板 2026-09-29）**：它自己起客户端（没有「已开好的号」可跑），
+  故不在 daily.steps/GROUP_OF/SINGLE_TASK_ORDER，入口只有「日常」页顶部可折叠登录区——
+  点「账号库」弹窗（`ui/account_gallery.py`，仿队长ID 库；数据/槽文件在 `core/account_history.py`）：
+  **最多标定 `LOGIN_ACCOUNT_SLOTS`(10) 个账号**（框选账号卡片/头像，物理槽 `templates/tm_login_account0..9.png`，
+  名字可改），**最多挑 `LOGIN_MAX_ACCOUNTS`(5) 个去登录**、按挑的先后依次登录
+  （存 `tasks.login.accounts` 有序 list + `account_library` 清单，**账号图不再进登录标定向导**）。
+  点「开始登录」起独立 `DailyPage.login_runner`
+  （与整条龙/单跑互斥；急停按钮自动覆盖 `vars(page)` 里的 runner）。
   **任务「单跑」（日常页点任务名/副本名）忽略「日常」页的整链设置（user 拍板 2026-09-24）**：
   只按该任务自己的流程走——不套整体时间上限/定时、绝不「跑完关机」、不按「跑完解散」收尾解散、
   不触发「自动整理背包」；「已组队」是会话条件属共享组队设置、不动。实现= `DailyPage._single_build_cfg` 内存覆盖。
