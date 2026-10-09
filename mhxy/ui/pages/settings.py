@@ -131,11 +131,13 @@ class SettingsPage(ctk.CTkFrame):
         self._row(card, 3, "急停 快捷键（停止一切）", self._build_hotkey(card), sticky="ew")
         self._row(card, 4, "失控急停（甩鼠标到屏幕角）", self._build_failsafe(card), sticky="ew")
         self._row(card, 5, "识别置信度（匹配阈值）", self._build_threshold(card), sticky="ew")
-        self.var_debug_sw = ctk.CTkSwitch(card, text="开启（显示 debug 级日志）",
-                                          variable=self.var_debug, font=self.fonts["body"],
-                                          text_color=T.TEXT, fg_color=T.ACCENT,
-                                          progress_color=T.ACCENT_HOVER)
+        self.var_debug_sw = ctk.CTkSwitch(card, text="", variable=self.var_debug,
+                                          font=self.fonts["body"], text_color=T.TEXT,
+                                          progress_color=T.ACCENT, fg_color=T.BTN,
+                                          button_color=T.ON_ACCENT,
+                                          command=self._sync_debug_text)
         self._row(card, 6, "调试日志", self.var_debug_sw)
+        self._sync_debug_text()
 
         # 配置迁移：导出 / 导入（zip 打包 config.json + templates/，换机/换号搬标定）——用户拍板 2026-09-20。
         box = ctk.CTkFrame(card, fg_color="transparent")
@@ -156,6 +158,11 @@ class SettingsPage(ctk.CTkFrame):
                             font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         hint.grid(row=1, column=0, sticky="ew", pady=(4, 0))
         bind_wraplength(hint)
+
+    def _sync_debug_text(self):
+        """把调试开关右侧文字同步成当前状态（开/关），toggle 时即时更新。"""
+        state = "已开启" if bool(self.var_debug.get()) else "已关闭"
+        self.var_debug_sw.configure(text=f"{state}（显示 debug 级日志）")
 
     def _build_hotkey(self, parent):
         box = ctk.CTkFrame(parent, fg_color="transparent")
@@ -430,6 +437,7 @@ class SettingsPage(ctk.CTkFrame):
         fc = self.app.cfg.get("failsafe_corner", DEFAULT_FAILSAFE)
         self.var_failsafe.set(FAILSAFE_CORNERS.get(fc, "右上角"))
         self.var_debug.set(bool(self.app.cfg.get("debug_log", False)))
+        self._sync_debug_text()
         thr = self._get_threshold()
         self.var_threshold.set(thr)
         if hasattr(self, "thr_value"):

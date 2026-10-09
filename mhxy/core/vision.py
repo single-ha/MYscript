@@ -129,3 +129,36 @@ def best_score(scene_bgr, template_bgr):
     res = cv2.matchTemplate(scene_bgr, template_bgr, cv2.TM_CCOEFF_NORMED)
     _, max_val, _, max_loc = cv2.minMaxLoc(res)
     return (float(max_val), (max_loc[0] + tw // 2, max_loc[1] + th // 2))
+
+
+def save_debug_image(scene, path, col_x0=None, col_x1=None,
+                     card_xy=None, hits=None, tpl_wh=None, note=""):
+    """诊断用：在 scene 副本上画标注并存到 path（绝对/相对均可）。坐标均为 scene 局部坐标。
+    只画几何 + ASCII 文本（cv2 不支持中文）。返回是否保存成功。
+      col_x0/col_x1：卡片所在列左右边界 → 黄色竖带（列内找「参加」的范围）
+      card_xy：卡片中心 → 红十字
+      hits：[(cx,cy,score)] 低阈值候选 → 框（≥0.7 绿、否则橙）+ 分数
+      tpl_wh：(w,h) 命中框尺寸，缺省不画框
+      note：左上角 ASCII 备注"""
+    if scene is None:
+        return False
+    img = scene.copy()
+    h, w = img.shape[:2]
+    if col_x0 is not None and col_x1 is not None:
+        cv2.rectangle(img, (int(col_x0), 0), (int(col_x1) - 1, h - 1), (0, 255, 255), 1)
+    if tpl_wh and hits:
+        tw, th = int(tpl_wh[0]), int(tpl_wh[1])
+        for (cx, cy, s) in hits:
+            x0, y0 = int(cx - tw / 2), int(cy - th / 2)
+            x1, y1 = int(cx + tw / 2), int(cy + th / 2)
+            color = (0, 200, 0) if s >= 0.7 else (255, 120, 0)
+            cv2.rectangle(img, (x0, y0), (x1, y1), color, 1)
+            cv2.putText(img, f"{s:.2f}", (x0, max(12, y0 - 2)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+    if card_xy is not None:
+        cv2.drawMarker(img, (int(card_xy[0]), int(card_xy[1])),
+                       (0, 0, 255), cv2.MARKER_CROSS, 18, 2)
+    if note:
+        cv2.putText(img, note, (4, max(12, h - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+    return save_image(path, img)

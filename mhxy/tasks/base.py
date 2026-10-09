@@ -360,6 +360,8 @@ class Task:
         钉死在卡片一行之内：本行按钮没匹配上就返回 None，宁可靠上层微滚重试，也不顺藤点隔壁。"""
         if join_tpl is None:
             ctx.log("找「参加」失败：join 模板未标定。", level="warn")
+            if self._debug_on(ctx):
+                ctx.log("[调试] join/enter 模板未标定，无法定位按钮（请到对应标定页补标）。", level="debug")
             return None
         rect = (ctx.window.region_to_screen_rect(list_region)
                 if list_region else ctx.window.rect())
@@ -383,6 +385,8 @@ class Task:
         lo_thr = max(float(threshold), 0.7)
         hits = vision.match_multi(col, join_tpl, lo_thr, max_hits=64, sort_origin_top_left=True)
         if not hits:
+            self._diag_join_miss(ctx, scene, rect, col, x0, col_idx, join_tpl,
+                                 ex_local, ey_local, loop, hits, 0.0)
             return None
         ys = sorted(h[1] for h in hits)
         gaps = sorted(ys[i + 1] - ys[i] for i in range(len(ys) - 1))
@@ -396,6 +400,8 @@ class Task:
             if best_d is None or d < best_d:
                 best, best_d = (cx, cy, s), d
         if best is not None and best_d > max_follow:
+            self._diag_join_miss(ctx, scene, rect, col, x0, col_idx, join_tpl,
+                                 ex_local, ey_local, loop, hits, max_follow, best_d)
             now = time.time()
             last = getattr(self, "_join_follow_warn_ts", 0.0)
             if now - last > 20:  # 单次只告警一次，避免每帧刷屏（有卡片时每轮都可能重试）
@@ -408,6 +414,7 @@ class Task:
         if best is None:
             return None
         cx, cy, s = best
+        self._join_dbg_n = 0        # 命中一次即重置诊断截图计数（下次失败重新计数）
         return (rx + x0 + cx, ry + cy, s)
 
     def _join_clip_dir(self, ctx, list_region, entry_screen_xy, entry_tpl):
@@ -432,7 +439,11 @@ class Task:
         near_bot = sh - ey_local < margin
         if not near_top and not near_bot:
             return None
-        return "top" if ey_local <= sh // 2 else "bottom"
+        dirn = "top" if ey_local <= sh // 2 else "bottom"
+        if self._debug_on(ctx):
+            ctx.log(f"[调试] 卡片贴列表边（局部y={ey_local}/{sh}，上缘={near_top} 下缘={near_bot}）"
+                    f"→ 微滚方向 {dirn}。", level="debug")
+        return dirn
 
     def _nudge_list(self, ctx, list_region, dirn, loop):
         """把列表朝「让越界那半滚进来」的方向微滚一格。dirn: 'top'=向上滚（露出上一行），
@@ -446,6 +457,8 @@ class Task:
         step = 1 if step < 1 else step
         delta = -step if dirn == "bottom" else step
         ctx.log(f"卡片贴着列表边缘({dirn})，微滚 {step} 格把被裁那半露出再找「参加」…", level="info")
+        if self._debug_on(ctx):
+            ctx.log(f"[调试] 微滚 dirn={dirn} step={step} 于列表中心 ({cx},{cy})。", level="debug")
         ctx.mouse.scroll(delta, cx, cy)
 
     def _make_rotation(self, ctx, records, step_fn, multi, switch_delay, tick, time_limit=0):
@@ -530,6 +543,67 @@ class Task:
         fname = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + str(name) + ".png"
         vision.save_image(str(CAPTURES_DIR / fname), scene)
         return fname
+
+    def _debug_on(self, ctx):
+        """「调试日志」开关（config.debug_log，设置页可勾）是否开启。
+        昂贵诊断（额外扫描/存图）与 level="debug" 日志都以此为准，关时零开销。"""
+        try:
+            return bool((ctx.cfg or {}).get("debug_log", False))
+        except Exception:
+            return False
+
+    def _diag_join_miss(self, ctx, scene, rect, col, x0, col_idx, join_tpl,
+                        ex_local, ey_local, loop, hits, max_follow, best_d=None):
+        """「认出卡片但找不到『参加/进入』」时的诊断（仅调试开关开、且节流+限量时执行）。
+
+        采集：本列 / 各列 / 全屏 raw 最高分（区分『真没有』vs『有但低于阈值』vs『按钮在隔壁列』）、
+        命中与 max_follow 拒绝详情；并存一张**标注截图**到 captures/。只读，不改点击行为。
+        节流键：loop.join_debug_cooldown_sec（默认 5s）、loop.join_debug_max_shots（默认 8 张/次运行）。"""
+        if not self._debug_on(ctx) or scene is None or col is None or join_tpl is None:
+            return
+        now = time.time()
+        if now - getattr(self, "_join_dbg_ts", 0.0) < float(loop.get("join_debug_cooldown_sec", 5.0)):
+            return
+        self._join_dbg_ts = now
+        try:
+            sh, sw = scene.shape[0], scene.shape[1]
+            scols = max(1, int(loop.get("activity_columns", 2)))
+            col_w = sw / scols
+            x1 = int(round((col_idx + 1) * col_w))
+            lo, loc = vision.best_score(col, join_tpl)
+            per_col = []
+            for ci in range(scols):
+                a, b = int(round(ci * col_w)), int(round((ci + 1) * col_w))
+                sub = scene[:, max(0, a):min(sw, b)]
+                s, _ = vision.best_score(sub, join_tpl) if sub.size else (0.0, None)
+                per_col.append(round(s, 3))
+            sg, locg = vision.best_score(scene, join_tpl)
+            ctx.log(
+                f"[调试] 找「参加/进入」失败 region={tuple(rect)} scene={sw}x{sh} "
+                f"列#{col_idx + 1}/{scols} x=[{x0},{x1}] 卡片局部=({ex_local},{ey_local}) "
+                f"本列raw最高={lo:.3f}@{loc}，各列最高={per_col}，全屏raw最高={sg:.3f}@{locg}",
+                level="debug")
+            if hits:
+                ctx.log(
+                    f"[调试] 本列命中 {len(hits)} 个 ys={[h[1] for h in hits]} "
+                    f"max_follow={max_follow:.0f} 最近距离={best_d} → 越出本行带被拒点。", level="debug")
+            # 低阈值再扫一遍做标注：把「近失」候选也画出来
+            cands = vision.match_multi(col, join_tpl, 0.5, max_hits=32)
+            marks = [(x0 + c[0], c[1], c[2]) for c in cands]
+            self._join_dbg_n = getattr(self, "_join_dbg_n", 0) + 1
+            max_shots = int(loop.get("join_debug_max_shots", 8))
+            if self._join_dbg_n > max_shots:
+                ctx.log(f"[调试] 诊断截图已达上限 {max_shots} 张，本次不再存图。", level="debug")
+                return
+            fname = (datetime.datetime.now().strftime("%Y%m%d_%H%M%S_")
+                     + f"dbg_join_{self.name}.png")
+            note = f"col#{col_idx + 1} card=({ex_local},{ey_local}) best={lo:.2f}"
+            if vision.save_debug_image(scene, str(CAPTURES_DIR / fname), col_x0=x0, col_x1=x1,
+                                       card_xy=(ex_local, ey_local), hits=marks,
+                                       tpl_wh=join_tpl.shape[::-1], note=note):
+                ctx.log(f"[调试] 已存诊断截图 captures/{fname}", level="debug")
+        except Exception as e:
+            ctx.log(f"[调试] 诊断异常（忽略）：{e}", level="debug")
 
     def _wait_still(self, ctx, rect, min_sec=0.3, max_sec=2.0, stable_diff=1.5, poll=0.06):
         """自适应等画面静止：先等 min_sec，再每隔 poll 截一帧比上一帧，

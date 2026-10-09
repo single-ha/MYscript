@@ -551,11 +551,14 @@ class DungeonBaseTask(Task):
                 if wctx.window.rect() is None:
                     remaining.remove((wctx, role))
                     continue
-                if len(remaining) > 1:
+                if not wctx.window.is_foreground():
                     if not wctx.window.activate():
                         continue
                 rect = self._scene_rect(wctx, regions)
-                cur = ctx.window.grab_screen(rect) if rect else None
+                # 必须用**该队员自己的**窗口对象抓（rect 也是它的）：若用队长对象，
+                # _occluded 会拿队员矩形去比对队长的 GA_ROOT → 恒判「被遮」→ 反把队长切前台，
+                # 随后点击落到已失去焦点的队员号上，确认点不进。user 2026-10-09 修。
+                cur = wctx.window.grab_screen(rect) if rect else None
                 hit = vision.match(cur, tpl, threshold) if cur is not None else None
                 if hit is not None:
                     sx, sy = (rect[0] if rect else 0), (rect[1] if rect else 0)
@@ -573,29 +576,17 @@ class DungeonBaseTask(Task):
         tuo = (tasks.get("tuoying", {}) or {}).get("regions", {}) or {}
         return tuo.get("tuoying_area") or None
 
-    # ---- 进副本主入口：点「进入」 + 偶发「拓印」临摹弹窗处理 + 侠士确认/普通验证进本（外套重试）----
+    # ---- 进副本主入口：点「进入」 + 偶发「拓印」临摹弹窗处理 +（侠士）各队员确认 + 显式校验进本 ----
     def _enter_with_tuoying(self, ctx, assignments, loop, regions, threshold, step_to):
+        """点「进入」→ 处理拓印 →（侠士：轮询各队员点「确认」）→ 显式校验已进本；
+        任一环节没过则回队长重新点「进入」，重试 enter_retry_max 次。
+
+        普通/侠士进本后的判据统一为 _verify_entered（识别到 结算/跳过剧情/小闹钟 任一出现
+        才算进本）。唯一差异：侠士本多一段「轮询各队员窗口点确认」（队长不弹、不等，
+        见 _confirm_all_windows）。"""
         retries = max(1, int(loop.get("enter_retry_max", 3)))
         retry_pause = loop.get("enter_retry_pause", 1.2)
-        if self.cat == "xiashi":
-            for attempt in range(1, retries + 1):
-                if ctx.should_stop():
-                    return False
-                if not self._click_enter_multi(ctx, loop, regions, threshold, step_to):
-                    ctx.log(f"{self.title}「进入」未点到（第 {attempt} 次），中止。", level="error")
-                    return False
-                self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
-                if not self._handle_tuoying(ctx, loop, regions, threshold):
-                    return False
-                confirmed = self._confirm_all_windows(ctx, assignments, regions, threshold,
-                                                      loop.get("confirm_sec", 40))
-                if confirmed:
-                    return True
-                ctx.log(f"各队员确认未收齐（第 {attempt} 次），返回队长重新点「进入」…", level="warn")
-                self._focus(ctx)
-                self._interruptible_sleep(ctx, self._jitter(retry_pause, ctx))
-            ctx.log("侠士进副本确认多次未完成，中止。", level="error")
-            return False
+        is_xiashi = self.cat == "xiashi"
         for attempt in range(1, retries + 1):
             if ctx.should_stop():
                 return False
@@ -605,12 +596,24 @@ class DungeonBaseTask(Task):
             self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
             if not self._handle_tuoying(ctx, loop, regions, threshold):
                 return False
-            if self._verify_entered(ctx, loop, regions, threshold, loop.get("enter_check_sec", 10.0)):
+            if is_xiashi:
+                confirmed = self._confirm_all_windows(ctx, assignments, regions, threshold,
+                                                      loop.get("confirm_sec", 40))
+                # 确认阶段把各队员逐个切前台，此刻前台停在最后一个队员号；后面抓的是队长窗口、
+                # _run_rounds 也操作队长，故先切回队长，否则首批点击会被后台号吞掉。
+                self._focus(ctx)
+                if not confirmed:
+                    ctx.log(f"各队员确认未收齐（第 {attempt} 次），返回队长重新点「进入」…", level="warn")
+                    self._interruptible_sleep(ctx, self._jitter(retry_pause, ctx))
+                    continue
+            if self._verify_entered(ctx, loop, regions, threshold,
+                                    loop.get("enter_check_sec", 10.0)):
                 return True
             ctx.log(f"点「进入」后未确认已进本（第 {attempt} 次），返回队长重新点「进入」…", level="warn")
             self._focus(ctx)
             self._interruptible_sleep(ctx, self._jitter(retry_pause, ctx))
-        ctx.log("普通副本多次点「进入」仍未进本（可能被拓印/弹窗拦截且模板未标定），中止。", level="error")
+        ctx.log(f"{self.title}多次点「进入」仍未进本（可能被拓印/弹窗拦截且模板未标定，"
+                "或侠士确认后未验到进本），中止。", level="error")
         return False
 
     # ---- 拓印临摹弹窗：探测 + 自动描 + 手动兜底。返回 False=中止 ----
