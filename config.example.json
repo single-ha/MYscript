@@ -501,11 +501,10 @@
                 "account_list": null
             },
             "templates": {
-                "user_menu": null,
                 "switch_account": null,
-                "select_account_tab": null,
-                "login": null,
-                "enter_game": null
+                "enter_game": null,
+                "switch_role": null,
+                "existing_role_tab": null
             }
         },
         "guild_checkin": {

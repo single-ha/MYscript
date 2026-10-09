@@ -213,7 +213,8 @@ def _trace_stroke(mouse, ox, oy, stroke, lateral=3, sample_step=5, speed=1.7):
     """按住状态下，沿 stroke（帧内相对坐标）依次移动；每采样点加横向偏移仿笔宽。
     ox/oy 为绘制区屏幕绝对左上角，把帧内坐标换算回屏幕坐标。"""
     prev = None
-    for i in range(0, len(stroke), max(1, sample_step)):
+    step = max(1, int(sample_step))          # 配置里可能是 float（如 5.0），range 步长必须 int
+    for i in range(0, len(stroke), step):
         if prev is not None:
             # 横向锯齿：垂直当前段走向随机偏多少，笔迹加宽
             dx = stroke[min(i + 2, len(stroke) - 1)][0] - prev[0]

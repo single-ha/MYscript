@@ -8,9 +8,13 @@
   · 账号库是**多选**（最多 5 个 = 登录队列），每个账号一张独立的图、谁也不覆盖谁。
 - 10 个固定物理槽 templates/tm_login_account0..9.png（纯 ASCII 名，避开中文路径坑）。
   槽位号 = 账号的稳定身份：删除某账号只腾出它的槽，下次标定复用该槽（不会串号）。
-- 框选暂存：标定时 calibrate_template_direct 写到 templates/tm_login_account_pick.png，
-  add_account 立刻把它字节复制进空槽（复制成功才删暂存图）——与队长ID 库的
-  「calibrate 写激活图 → push 复制进槽」是同一套约定。
+- **每号两张图**（2026-10-09 登录流程改版）：
+    · 账号卡片   templates/tm_login_account{slot}.png ——「选择账号」列表里那张卡/头像
+    · 角色卡片   templates/tm_login_char{slot}.png     ——进游戏→换角色→已有角色列表里那张角色卡
+  登录流程里两步选人：先点账号卡、后点该号的角色卡，故两张都要标才跑得起来。
+- 框选暂存：标定时 calibrate_template_direct 写到 templates/tm_login_account_pick.png /
+  tm_login_char_pick.png，add_account / save_char 立刻把它字节复制进空槽（复制成功才删暂存图）——
+  与队长ID 库的「calibrate 写激活图 → push 复制进槽」是同一套约定。
 - config（tasks.login 下，只碰这两个键，不整块回写）：
     account_library = [{slot, name}, ...]     账号库，slot 0..9，name 用户可改（默认 账号N）
     accounts        = [slot, ...]             登录队列（**按点击顺序**、最多 5 个；空=没选）
@@ -25,8 +29,10 @@ from . import vision
 from .config import LOGIN_ACCOUNT_SLOTS, LOGIN_MAX_ACCOUNTS
 
 TASK = "login"
-PICK_REL = "templates/tm_login_account_pick.png"   # 框选暂存图（标定写这里，库里立刻复制走）
-SLOT_REL = "templates/tm_login_account{}.png"      # 账号库物理槽 0..9
+PICK_REL = "templates/tm_login_account_pick.png"   # 框选暂存图（账号卡片，标定写这里，库里立刻复制走）
+SLOT_REL = "templates/tm_login_account{}.png"      # 账号卡片物理槽 0..9
+CHAR_PICK_REL = "templates/tm_login_char_pick.png" # 框选暂存图（角色卡片，登录流程选角色用）
+CHAR_SLOT_REL = "templates/tm_login_char{}.png"    # 角色卡片物理槽 0..9
 MAX_SLOTS = LOGIN_ACCOUNT_SLOTS                    # 账号库容量（10）
 MAX_PICK = LOGIN_MAX_ACCOUNTS                      # 登录队列上限（5）
 
@@ -35,8 +41,13 @@ MAX_PICK = LOGIN_MAX_ACCOUNTS                      # 登录队列上限（5）
 # 小工具
 # ----------------------------------------------------------------------
 def slot_rel(slot):
-    """账号槽位号 -> 模板相对路径。"""
+    """账号槽位号 -> 账号卡片模板相对路径。"""
     return SLOT_REL.format(int(slot))
+
+
+def char_slot_rel(slot):
+    """账号槽位号 -> 该号角色卡片模板相对路径。"""
+    return CHAR_SLOT_REL.format(int(slot))
 
 
 def default_name(slot):
@@ -101,6 +112,11 @@ def get_names(cfg):
 def slot_exists(slot):
     """该槽的图是否真的在磁盘上（config 有记录但图丢了也要如实反映）。"""
     return os.path.exists(_abs(slot_rel(slot)))
+
+
+def char_slot_exists(slot):
+    """该号的角色卡片图是否真的在磁盘上（登录流程「选角色」一步要用它）。"""
+    return os.path.exists(_abs(char_slot_rel(slot)))
 
 
 def free_slots(cfg):
@@ -174,13 +190,14 @@ def rename(cfg, slot, name):
 
 
 def delete_account(cfg, slot):
-    """删除账号：删槽文件 + 移出库 + 顺带从登录队列里摘掉。返回 (ok, msg)。"""
+    """删除账号：删账号卡片 + 角色卡片两个槽文件 + 移出库 + 顺带从登录队列里摘掉。返回 (ok, msg)。"""
     slot = int(slot)
     lib = get_library(cfg)
     if not any(it["slot"] == slot for it in lib):
         return False, "这个账号不在库里。"
     lib = [it for it in lib if it["slot"] != slot]
     _remove(slot_rel(slot))
+    _remove(char_slot_rel(slot))
     _commit(cfg, _write_back(cfg, lib))
     return True, "已删除该账号。"
 
@@ -200,6 +217,18 @@ def recalibrate(cfg, slot):
         return False, "保存账号图失败。"
     _remove(PICK_REL)
     return True, "已更新该账号的图。"
+
+
+def save_char(cfg, slot):
+    """把刚框选好的角色卡片图（CHAR_PICK_REL）存进该号的角色槽。返回 (ok, msg)。
+    角色图与账号图独立（同一账号可反复重标角色卡），不碰账号卡片图。"""
+    slot = int(slot)
+    if not os.path.exists(_abs(CHAR_PICK_REL)):
+        return False, "没拿到刚框选的角色图（标定未成功？）。"
+    if not _copy(CHAR_PICK_REL, char_slot_rel(slot)):
+        return False, "保存角色图失败。"
+    _remove(CHAR_PICK_REL)
+    return True, "已保存该号的角色卡。"
 
 
 def set_selected(cfg, slots):
@@ -250,4 +279,7 @@ def status_text(cfg):
     if not lib:
         return "账号库 空（最多可标定 %d 个）" % MAX_SLOTS, False
     text = "账号库 %d/%d 个　已选 %d/%d 个" % (len(lib), MAX_SLOTS, len(sel), MAX_PICK)
+    if sel:
+        miss = sum(1 for s in sel if not char_slot_exists(s))
+        text += "　角色卡 %d/%d 个" % (len(sel) - miss, len(sel))
     return text, bool(sel)

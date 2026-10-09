@@ -28,6 +28,16 @@ _DEP_MODULES = ["cv2", "mss", "numpy", "pyautogui", "pygetwindow", "customtkinte
 # 传给子进程，子进程据此不再尝试提权——否则被拒后重启的进程会反复弹 UAC、甚至死循环。
 _ELEVATED_FLAG = "MHXY_ELEVATED"
 
+# runas 辅助进程的参数传递用【环境变量】（不走命令行：路径/中文文案拼进 -c 会被 Windows
+# 命令行转义改坏）。键名全部大写纯 ASCII，_elevate 里塞值、辅助进程里按名取值。
+_ELEVATE_ENV = {
+    "EP": "MHXY_EP",   # runas 目标可执行（pythonw.exe / python.exe）
+    "PA": "MHXY_PA",   # 给目标的参数（带引号的本脚本绝对路径）
+    "BA": "MHXY_BA",   # 工作目录
+    "MG": "MHXY_MG",   # 被拒时 MessageBox 的正文
+    "TI": "MHXY_TI",   # 被拒时 MessageBox 的标题
+}
+
 
 def _is_admin():
     """当前进程是否拥有管理员权限。"""
@@ -44,14 +54,41 @@ def _pythonw_path():
 
 
 def _elevate(executable):
-    """以管理员权限用 executable 重启自己。成功发起返回 True（本进程应立即退出）。
-    在发起前先打提权标记进环境，子进程据此不再重复提权。"""
+    """以管理员权限用 executable 重启自己；本进程**立即返回并退出**，UAC 交给后台辅助进程。
+
+    ShellExecuteW 的 "runas" 会【同步阻塞】到用户点完 UAC 才返回（本机实测默认档下能卡 8 秒以上）。
+    若直接在带控制台的进程里调它，UAC 弹窗期间整个 DOS 会一直挂在那不关（用户反馈的原 bug）。
+    故拆两段：
+      1. 当前进程先打提权标记（环境变量传给子链），再 spawn 一个隐藏 pythonw 辅助进程，随后马上返回 →
+         控制台立刻关闭，DOS 不再残留；
+      2. 辅助进程里执行 runas（阻塞就堵在它那，看不见也不影响用户），提权出来的 pythonw 实例接管 GUI。
+    弹窗被拒/发起失败（返回值 <=32 或 ERROR_CANCELLED=1223，注意 1223>32 不能当成功）时，
+    辅助进程弹一次提示框说明（此时控制台已关，只能走 MessageBox 兜底）。
+
+    ⚠ 参数全部塞进【环境变量】传给辅助进程、`-c` 骨架只留纯 ASCII（无 " 无 \\）：
+    runas 的目标路径/中文文案带有引号和反斜杠，若直接拼进 -c 代码，经 Windows 命令行
+    （list2cmdline 的转义 + CommandLineToArgvW 解析）往返后会被改坏（实测报 SyntaxError）。"""
+    env = _ELEVATE_ENV
     os.environ[_ELEVATED_FLAG] = "1"
+    os.environ[env["EP"]] = executable
+    os.environ[env["PA"]] = '"{}"'.format(os.path.abspath(__file__))
+    os.environ[env["BA"]] = BASE
+    os.environ[env["MG"]] = ("未获得管理员权限：切换到游戏窗口后鼠标可能无法移动/点击。\n"
+                             "建议右键『启动.bat』→『以管理员身份运行』，或在 UAC 弹窗点『是』。")
+    os.environ[env["TI"]] = "梦幻 · 时空 助手"
+    code = (
+        "import os, ctypes\n"
+        "h = int(ctypes.windll.shell32.ShellExecuteW(None, 'runas', "
+        "os.environ[%r], os.environ[%r], os.environ[%r], 1))\n"
+        "if h == 1223 or h <= 32:\n"
+        "    ctypes.windll.user32.MessageBoxW(0, os.environ[%r], os.environ[%r], 0x40)\n"
+    ) % (env["EP"], env["PA"], env["BA"], env["MG"], env["TI"])
+    helper = _pythonw_path() or sys.executable
+    # 用 python.exe 兜底（无 pythonw）时必须藏掉它自己的控制台，否则会冒出第二个 DOS。
+    flags = 0x08000000 if helper == sys.executable else 0   # CREATE_NO_WINDOW
     try:
-        params = '"{}"'.format(os.path.abspath(__file__))
-        # ShellExecuteW + "runas" 触发 UAC；返回值 >32 表示成功发起。
-        r = ctypes.windll.shell32.ShellExecuteW(None, "runas", executable, params, BASE, 1)
-        return int(r) > 32
+        subprocess.Popen([helper, "-c", code], cwd=BASE, close_fds=True, creationflags=flags)
+        return True
     except Exception:
         return False
 

@@ -185,23 +185,28 @@ def _mk_dungeon_shared():
 def _mk_login():
     """登录游戏（tasks.login）的默认配置块。
 
-    流程（每个号各起一个客户端进程，user 2026-09-29 拍板「每个号单独启动一次客户端」）：
+    流程（每个号各起一个客户端进程，user 2026-09-29 拍板「每个号单独启动一次客户端」；
+流程顺序 2026-10-09 按用户实测改版）：
       启动客户端 → 等它的窗口出现（按 hwnd 差集认「刚弹出来那个」，不碰已开好的号）
-      → 点「用户」→ 点「切换账号」→ 点「选择账号」标签页
-      → 在账号列表区滚动查找该号模板并点它 → 点「登录」→ 点「进入游戏」→ 等进游戏完成。
-    账号本身不在这逐项标定：账号库（core/account_history.py，最多 LOGIN_ACCOUNT_SLOTS 个账号图）
-    由「日常」页登录区的「账号库」弹窗维护；从库里挑最多 LOGIN_MAX_ACCOUNTS 个存进 accounts
-    （有序=挑的先后=登录先后）。"""
+      → 点「切换账号」（直连入口，不再经「用户」菜单）→ 在账号列表区滚动查找该号账号卡片并点它
+      → 点「进入游戏」→ 点「更换角色」→ 1 秒内没见到「已有角色」标签就再点一次「更换角色」
+      （最多 loop.switch_role_retry_max 次）→ 点该号的角色卡片 → 等进游戏完成。
+    账号本身不在这逐项标定：账号卡片 + **角色卡片**都归账号库（core/account_history.py，每号两张图、
+    最多 LOGIN_ACCOUNT_SLOTS 个账号）由「日常」页登录区的「账号库」弹窗维护；从库里挑最多
+    LOGIN_MAX_ACCOUNTS 个存进 accounts（有序=挑的先后=登录先后）。"""
     return {
         "client_path": "",          # 客户端 exe 路径（任务配置页「浏览」选；不存在则 preflight 拒跑）
         "client_args": "",          # 启动参数（可选，空=不带参数；按空格切分）
         "account_library": [],      # 账号库 [{slot, name}, ...]（由账号库弹窗写，slot 0~LOGIN_ACCOUNT_SLOTS-1）
         "accounts": [],             # 登录队列 = 有序账号槽位号（最多 LOGIN_MAX_ACCOUNTS 个；由账号库弹窗写）
         "loop": {
-            "match_threshold": 0.85,        # 模板匹配阈值
+            "match_threshold": 0.98,        # 模板匹配阈值（账号卡/流程模板共用，默认高阈值防认错号）
             "client_launch_timeout_sec": 180,  # 启动客户端后等它的窗口出现的超时
             "client_between_sec": 3.0,      # 一个号进完游戏到起下一个客户端之间的间隔
             "step_timeout_sec": 30,         # 等「用户/切换账号/选择账号/登录/进入游戏」出现的单步超时
+            "switch_role_retry_max": 5,     # 点「更换角色」后最多点几次（含首次）：每次等 switch_role_tab_wait_sec
+                                            #   没见到「已有角色」标签就再点一次「更换角色」
+            "switch_role_tab_wait_sec": 1.0, # 每次点完「更换角色」等「已有角色」标签出现的时长（没等到=再点一次）
             "enter_game_wait_sec": 300,     # 点「进入游戏」后等真正进游戏的上限
             "enter_game_settle_sec": 8.0,   # 未标「商城图标」判不了主界面时，进游戏后固定等这么久
             "poll_sec": 0.3,                # 等按钮出现的轮询间隔
@@ -215,15 +220,14 @@ def _mk_login():
             "scroll_reset_max": 20,         # 「滚到顶」最多上滚几屏的防死循环上限
         },
         "regions": {
-            LOGIN_REQUIRED_REGION: None,   # 「选择账号」界面里那片账号列表区（滚轮在此翻找账号卡片）
+            LOGIN_REQUIRED_REGION: None,   # 点「切换账号」后那片账号列表区（滚轮在此翻找账号卡片）
         },
         "templates": {              # 模板一律由标定向导写入（存 templates/tm_<key>.png）
-            "user_menu": None,            # 客户端主界面上的「用户」菜单入口
-            "switch_account": None,       # 「用户」菜单里的「切换账号」
-            "select_account_tab": None,   # 切号界面里的「选择账号」标签页
-            "login": None,                # 选好号之后要点的「登录」按钮
-            "enter_game": None,           # 登录后选区里的「进入游戏」按钮
-        },                          # 账号卡片/头像【不在这里标】→ 见 core/account_history.py（账号库）
+            "switch_account": None,       # 客户端界面上的「切换账号」（直连入口，不再经「用户」菜单）
+            "enter_game": None,           # 选好该号账号卡片后要点的「进入游戏」
+            "switch_role": None,          # 「更换角色」按钮（进游戏后点它打开角色列表）
+            "existing_role_tab": None,    # 「已有角色」标签页（角色列表里点它才显示已有角色）
+        },                          # 账号卡片/角色卡片【不在这里标】→ 见 core/account_history.py（账号库）
     }
 
 
@@ -298,10 +302,9 @@ SINGLE_TASK_ORDER = ["treasure_map", "secret_realm", "appreciation", "sanjie",
 LOGIN_ACCOUNT_SLOTS = 10      # 账号库容量（最多标定几个账号）
 LOGIN_MAX_ACCOUNTS = 5        # 登录队列上限（最多挑几个去登录）
 # 登录流程必标模板（仍走普通标定向导；它们与账号库无关）
-LOGIN_FLOW_TPL_KEYS = ("user_menu", "switch_account", "select_account_tab", "login", "enter_game")
-LOGIN_FLOW_TPL_LABELS = {"user_menu": "「用户」菜单", "switch_account": "「切换账号」",
-                         "select_account_tab": "「选择账号」标签页", "login": "「登录」按钮",
-                         "enter_game": "「进入游戏」按钮"}
+LOGIN_FLOW_TPL_KEYS = ("switch_account", "enter_game", "switch_role", "existing_role_tab")
+LOGIN_FLOW_TPL_LABELS = {"switch_account": "「切换账号」", "enter_game": "「进入游戏」",
+                         "switch_role": "「更换角色」按钮", "existing_role_tab": "「已有角色」标签"}
 LOGIN_REQUIRED_REGION = "account_list"
 
 DEFAULT_CONFIG = {

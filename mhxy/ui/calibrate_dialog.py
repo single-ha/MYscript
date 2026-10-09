@@ -134,17 +134,20 @@ def grab_roi_on_app(app, cfg, prompt, with_crop=False, toast=None, alpha_windows
 
 
 def calibrate_template_direct(app, task_name, key, name, toast=None, out_rel=None, prompt=None,
-                              require_window=True):
+                              require_window=True, alpha_windows=None):
     """无向导直接框选一张模板图，写进 cfg.tasks.<task_name>.templates[key] 并返回 True=已保存
     （如组队队长ID：直接标定就指向 task_name="teaming", key="leader_id"）。
 
     out_rel: 指定落盘相对路径时用它存图，且**不写** config 的 templates[key]——给「账号库」这类
         自管物理槽的调用方用（存完自己复制进槽，config 里不该留一个指不到的点位）。None=默认行为。
     require_window: 传 out_rel 时应一并传 False——只要像素图，不该因为「先没找到游戏窗口」而
-        静默失败（表现为界面闪一下、框选层不弹）。"""
+        静默失败（表现为界面闪一下、框选层不弹）。
+    alpha_windows: 框选期间一并隐身（透明度 0）的窗口，默认仅 app；弹窗类调用方应把自身也传进来
+        （如账号库/标定对话框），否则它自己不透明、会被冻结截图收进去。"""
     cfg = cfg_mod.load_config()
     rel, crop = grab_roi_on_app(app, cfg, prompt or f"请选{name}，点击后拖动框选",
-                                with_crop=True, toast=toast, require_window=require_window)
+                                with_crop=True, toast=toast, require_window=require_window,
+                                alpha_windows=alpha_windows)
     if rel is None:
         return False
     if crop is None or crop.size == 0:
@@ -610,10 +613,11 @@ class CalibrateDialog(ctk.CTkToplevel):
             r, col = divmod(i, self.n_cols)
             rel = saved.get(key)
             thumb = load_thumb(rel, self._thumbs, max_h=46) if rel else None
+            btn_cmd = (lambda k=key, n=name: self._calibrate_template(k, n))
             self._thumb_card(self.template_grid, r, col, name=name,
                              thumb=thumb, has_path=bool(rel), rel=rel,
                              btn_text=("重新标定" if thumb is not None else "去标定"),
-                             btn_cmd=lambda k=key, n=name: self._calibrate_template(k, n),
+                             btn_cmd=btn_cmd,
                              optional=bool(len(_x) and _x[0]))
 
     # ---- 装备缩略图画廊（watchlist）----

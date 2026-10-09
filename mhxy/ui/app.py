@@ -40,7 +40,7 @@ class App(ctk.CTk):
     # general 也在内：它的「一键组队」会跑后台任务，需要 pump 抽日志、关闭时停 runner。
     # weekly/tools 是分类页，App 下标只是顶层项；其内嵌任务页靠分类页的
     # pump() 下钻转发（见 pages/category.py）。config 是纯配置页，无 runner，不进此列。
-    RUNNABLE_KEYS = ("general", "weekly", "daily", "tools")
+    RUNNABLE_KEYS = ("start", "general", "weekly", "daily", "tools")
 
     def __init__(self):
         super().__init__()

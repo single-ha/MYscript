@@ -39,8 +39,9 @@ class LoginConfig(ctk.CTkFrame):
         btns.grid(row=0, column=1, sticky="e")
         # 说明文字单独占一整行、跨两列（columnspan=2）：与标题/按钮同一行时，3 个按钮会把文字列
         # 挤到只剩几十像素、说明被压成左边一条细柱（bind_wraplength 越换越窄）。同约束 8。
-        sub = ctk.CTkLabel(head, text="逐号启动客户端：用户→切换账号→选择账号→选号→登录→进入游戏；"
-                                     "账号本身在「账号库」里标定与挑选（最多 %d 个，挑 %d 个去登录）。"
+        sub = ctk.CTkLabel(head, text="逐号启动客户端：切换账号→翻找账号卡并点→进入游戏→更换角色→"
+                                     "选「已有角色」角色卡→进主界面；账号卡片+角色卡片都在「账号库」里标定与"
+                                     "挑选（最多 %d 个，挑 %d 个去登录）。"
                                      % (ah.MAX_SLOTS, LOGIN_MAX_ACCOUNTS),
                          font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
@@ -163,15 +164,23 @@ class LoginConfig(ctk.CTkFrame):
         tpl_done = sum(1 for k in LOGIN_FLOW_TPL_KEYS if templates.get(k))
         lib = ah.get_library(self.app.cfg)
         sel = ah.get_selection(self.app.cfg)
+        char_done = sum(1 for s in sel if ah.char_slot_exists(s))
         ready = (path_ok and reg_ok and tpl_done == len(LOGIN_FLOW_TPL_KEYS)
-                 and bool(lib) and bool(sel))
+                 and bool(lib) and bool(sel) and char_done == len(sel))
         seg = [path_txt, f"账号列表区域 {'✓' if reg_ok else '未标'}",
                f"必要模板 {tpl_done}/{len(LOGIN_FLOW_TPL_KEYS)}",
                f"账号库 {len(lib)}/{ah.MAX_SLOTS} 个",
-               f"已挑 {len(sel)}/{LOGIN_MAX_ACCOUNTS} 个号"]
+               f"已挑 {len(sel)}/{LOGIN_MAX_ACCOUNTS} 个号",
+               f"角色卡 {char_done}/{len(sel)} 个"]
         text = "　".join(seg) + ("　✓ 可运行（在「日常」页顶部登录区点开始）" if ready
                                  else "　（还需设置/标定）")
-        if 0 < len(lib) < ah.MAX_SLOTS:
+        if not sel:
+            text += "；挑好号后记得每号各标一张「角色卡」（登录流程最后一步选角色要用）"
+        elif char_done < len(sel):
+            missing = "、".join(ah.get_names(self.app.cfg).get(s, "槽%d" % (s + 1))
+                                for s in sel if not ah.char_slot_exists(s))
+            text += f"；以下号还没标角色卡：「{missing}」—— 去账号库点它们的「标角色」"
+        elif 0 < len(lib) < ah.MAX_SLOTS:
             text += f"；账号不必全标，已标 {len(lib)} 个就能挑 {len(lib)} 个"
         return ready, text, (T.SUCCESS if ready else T.WARN)
 

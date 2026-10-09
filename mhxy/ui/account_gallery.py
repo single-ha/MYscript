@@ -72,7 +72,8 @@ class AccountGallery(ctk.CTkToplevel):
         top.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(top, text="账号库", font=self.fonts["title"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w")
-        sub = ctk.CTkLabel(top, text="框选账号在「选择账号」列表里的那张卡片/头像存进库里（最多 %d 个）；"
+        sub = ctk.CTkLabel(top, text="每号两张图：账号卡片 + 角色卡片（登录流程：切换账号→点账号卡→进入游戏→"
+                                     "更换角色→选「已有角色」里的角色卡）。框选存进库里（最多 %d 个）；"
                                      "点「加入登录」挑最多 %d 个去登录，按点选先后依次登录。"
                                      % (ah.MAX_SLOTS, ah.MAX_PICK),
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
@@ -143,9 +144,13 @@ class AccountGallery(ctk.CTkToplevel):
         # 底部缩略图条：登录顺序（点选先后）用图排，文字状态只报数量
         self.order.set_items([(queue.index(s) + 1, by_slot[s]["name"], ah.slot_rel(s))
                               for s in queue if s in by_slot])
-        self._toast("账号库 %d/%d 个　已选 %d/%d 个（下图即登录顺序）" % (
-            len(lib), ah.MAX_SLOTS, len(queue), ah.MAX_PICK),
-            T.ACCENT if queue else T.TEXT_DIM)
+        char_done = sum(1 for s in queue if ah.char_slot_exists(s))
+        status = "账号库 %d/%d 个　已选 %d/%d 个（下图即登录顺序）" % (
+            len(lib), ah.MAX_SLOTS, len(queue), ah.MAX_PICK)
+        if queue and char_done < len(queue):
+            status += "　⚠ 角色卡缺 %d 个" % (len(queue) - char_done)
+        self._toast(status, (T.WARN if queue and char_done < len(queue)
+                             else T.ACCENT if queue else T.TEXT_DIM))
 
     def _card(self, r, col, item, pos, load_thumb):
         slot = item["slot"]
@@ -183,7 +188,7 @@ class AccountGallery(ctk.CTkToplevel):
         Tooltip(ent, "账号名（只用于日志显示；登录时按卡片图识别，与名字无关）", self.fonts)
 
         btns = ctk.CTkFrame(card, fg_color="transparent")
-        btns.grid(row=3, column=0, sticky="ew", padx=8, pady=(6, 8))
+        btns.grid(row=3, column=0, sticky="ew", padx=8, pady=(6, 2))
         btns.grid_columnconfigure(0, weight=1)
         btns.grid_columnconfigure(1, weight=1)
         ctk.CTkButton(btns, text=("移出登录" if pos else "加入登录"), font=self.fonts["small"], height=28,
@@ -197,8 +202,33 @@ class AccountGallery(ctk.CTkToplevel):
                       corner_radius=T.RADIUS_SM, fg_color="transparent",
                       hover_color=T.BTN_HOVER, text_color=T.TEXT, border_width=1, border_color=T.BORDER,
                       command=lambda s=slot: self._recal(s)).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+        # 角色卡片（登录流程「选择角色」一步用；与账号卡片各标各的）
+        ctk.CTkFrame(card, fg_color=T.BORDER, height=1).grid(row=4, column=0, sticky="ew",
+                                                              padx=10, pady=(2, 2))
+        charf = ctk.CTkFrame(card, fg_color="transparent")
+        charf.grid(row=5, column=0, sticky="ew", padx=10, pady=(2, 4))
+        charf.grid_columnconfigure(0, weight=1)
+        ch = load_thumb(ah.char_slot_rel(slot), self._thumbs, max_h=34)
+        cbtn = ctk.CTkButton(charf, corner_radius=T.RADIUS_SM,
+                             fg_color=T.BTN, hover_color=T.BTN_HOVER,
+                             text_color=T.TEXT,
+                             border_width=1, border_color=T.BORDER, width=96, height=38,
+                             command=lambda s=slot: self._char(s))
+        if ch is not None:
+            cbtn.configure(text="", image=ch, width=ch.cget("size")[0] + 14,
+                           height=ch.cget("size")[1] + 6)
+            Tooltip(cbtn, "该号已标角色卡；点击可重标", self.fonts)
+        else:
+            # 未标时用实底强调色，确保从外观上就是「可点击的按钮」而不是一段提示文字
+            cbtn.configure(text="角色卡未标", fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+                           text_color=T.ON_ACCENT)
+            Tooltip(cbtn, "还没标角色卡：点击框选该号在「更换角色→已有角色」里的角色卡"
+                          "（登录流程最后一步用）", self.fonts)
+        cbtn.grid(row=0, column=0, sticky="w")
+
         del_row = ctk.CTkFrame(card, fg_color="transparent")
-        del_row.grid(row=4, column=0, sticky="ew", padx=8, pady=(0, 8))
+        del_row.grid(row=6, column=0, sticky="ew", padx=8, pady=(0, 8))
         ctk.CTkButton(del_row, text="删除该账号", font=self.fonts["small"], height=24,
                       corner_radius=T.RADIUS_SM, fg_color="transparent", hover_color=T.DANGER,
                       text_color=T.TEXT_DIM, border_width=1, border_color=T.BORDER,
@@ -214,32 +244,29 @@ class AccountGallery(ctk.CTkToplevel):
     # ------------------------------------------------------------------
     # 标定（框选期间整窗隐身，只留游戏画面）
     # ------------------------------------------------------------------
-    def _pick(self, prompt):
-        """框选一张账号图：落盘到账号库的暂存图（不写 config 的 templates——账号图由
-        core/account_history 自管物理槽，config 里不该留一个指不到的点位）。
+    def _pick(self, prompt, stage_rel):
+        """框选一张图：写进 stage_rel 暂存路径（账号卡片 ah.PICK_REL / 角色卡片 ah.CHAR_PICK_REL，
+        不写 config 的 templates——账号/角色图由 core/account_history 自管物理槽）。
 
-        require_window=False：账号图只是**像素模板**、不存相对坐标，所以不该要求「先找到游戏
+        框选期间本窗与主窗口一起设**透明度 0**（与标定对话框同款机制，alpha_windows=(app, self)
+        全量隐身），保证冻结截图里只剩游戏画面；不 withdraw——CTk 弹窗 withdraw 在某些环境下
+        不彻底、窗口仍会被收进截图里（已踩）。
+
+        require_window=False：账号/角色图只是**像素模板**、不存相对坐标，所以不该要求「先找到游戏
         窗口」——否则窗口没在前台/标题对不上时只会界面闪一下、框选层不弹（已踩）。"""
         from .calibrate_dialog import calibrate_template_direct
         self._pick_error = None
-        self.withdraw()
         ok = False
         try:
-            ok = calibrate_template_direct(self.app, ah.TASK, "login_account_pick",
-                                           "账号卡片/头像", toast=self._toast,
-                                           out_rel=ah.PICK_REL, prompt=prompt,
-                                           require_window=False)
+            ok = calibrate_template_direct(self.app, ah.TASK, "login_pick",
+                                           "卡片/角色图", toast=self._toast,
+                                           out_rel=stage_rel, prompt=prompt,
+                                           require_window=False,
+                                           alpha_windows=(self.app, self))
         except Exception as e:
             # 绝不静默：回调里抛异常在 GUI 里没人看得见，用户只会觉得「点了没反应」
             ok = False
             self._pick_error = f"框选失败：{e}"
-        finally:
-            try:
-                self.deiconify()
-                self.lift()
-                self.focus_force()
-            except Exception:
-                pass
         if not ok:
             self._toast(getattr(self, "_pick_error", None) or "已取消（框选层里按 Esc 或松开即可）",
                         T.WARN)
@@ -249,7 +276,8 @@ class AccountGallery(ctk.CTkToplevel):
         if ah.is_full(self.app.cfg):
             self._toast("账号库已满（最多 %d 个），先删一个再标定。" % ah.MAX_SLOTS, T.WARN)
             return
-        if not self._pick("请框选要加入账号库的账号卡片/头像（要独特，别框会变的部分）"):
+        if not self._pick("请框选要加入账号库的**账号卡片**（「选择账号」列表里那张卡/头像，"
+                          "要独特，别框会变的部分）", ah.PICK_REL):
             return
         self.app.cfg = cfg_mod.load_config()      # calibrate 自己写过盘，必须 reload 再收编
         ok, msg = ah.add_account(self.app.cfg)
@@ -257,10 +285,20 @@ class AccountGallery(ctk.CTkToplevel):
 
     def _recal(self, slot):
         name = ah.get_names(self.app.cfg).get(slot, "")
-        if not self._pick("请框选「%s」的新卡片/头像（保持与库里同一个账号）" % name):
+        if not self._pick("请框选「%s」的新**账号卡片**（保持与库里同一个账号）" % name, ah.PICK_REL):
             return
         self.app.cfg = cfg_mod.load_config()
         ok, msg = ah.recalibrate(self.app.cfg, slot)
+        self._after_change(msg, T.SUCCESS if ok else T.WARN)
+
+    def _char(self, slot):
+        """标/重标某个账号的**角色卡片**（登录流程最后一步「选择角色」要用）。"""
+        name = ah.get_names(self.app.cfg).get(slot, "该账号")
+        if not self._pick("请框选「%s」的**角色卡片**：点「进入游戏」后点「更换角色」、"
+                          "点「已有角色」，列表里那张角色卡" % name, ah.CHAR_PICK_REL):
+            return
+        self.app.cfg = cfg_mod.load_config()
+        ok, msg = ah.save_char(self.app.cfg, slot)
         self._after_change(msg, T.SUCCESS if ok else T.WARN)
 
     # ---- 选择 / 改名 / 删除 ----

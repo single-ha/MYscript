@@ -119,8 +119,14 @@ class StartPage(ctk.CTkFrame):
             text = ("点「账号库」挑最多 %d 个要登录的号 —— 挑一个进一个，"
                     "下面缩略图的先后就是登录顺序。" % LOGIN_MAX_ACCOUNTS)
         else:
+            miss = sum(1 for s in queue if not ah.char_slot_exists(s))
             badge, color = "已选 %d/%d" % (len(queue), LOGIN_MAX_ACCOUNTS), T.ACCENT
-            text = "按下面缩略图的先后依次登录，每个号各开一次客户端。"
+            if miss:
+                badge, color = "已选 %d/%d · 角色卡缺 %d" % (len(queue), LOGIN_MAX_ACCOUNTS, miss), T.WARN
+                text = ("有 %d 个号还没标「角色卡」（登录流程最后一步选角色要用）——"
+                        "点「账号库」给它们各标一张。" % miss)
+            else:
+                text = "按下面缩略图的先后依次登录，每个号各开一次客户端。"
         self.lbl_login_badge.configure(text=badge, text_color=color)
         self.lbl_login_order.configure(text=text, text_color=T.TEXT_DIM)
         self._sync_login_btn()
@@ -142,9 +148,11 @@ class StartPage(ctk.CTkFrame):
 
     def _sync_login_btn(self):
         if self.login_runner and self.login_runner.is_running():
-            self.btn_login.configure(text="■  停止登录", fg_color=T.DANGER, hover_color=T.DANGER_HOVER)
+            if self.btn_login.cget("text") != "■  停止登录":
+                self.btn_login.configure(text="■  停止登录", fg_color=T.DANGER, hover_color=T.DANGER_HOVER)
             return
-        self.btn_login.configure(text="▶  开始登录", fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER)
+        if self.btn_login.cget("text") != "▶  开始登录":
+            self.btn_login.configure(text="▶  开始登录", fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER)
 
     def _toggle_login_run(self):
         if self.login_runner and self.login_runner.is_running():
@@ -160,20 +168,15 @@ class StartPage(ctk.CTkFrame):
             return
 
         from ...tasks import get_task
-        from ...core.context import TaskContext
         from ...core.runner import TaskRunner
 
-        self.login_runner = TaskRunner(self.app)
-        ctx = TaskContext(
-            window=None,
-            mouse=None,
-            cfg=self.app.cfg,
-            log=lambda m, l="info": self.app.log_line(m, l, self.LOG_SOURCE),
-            stop_event=self.login_runner.stop_event,
-        )
-        task_cls = get_task(self.TASK_NAME)
-        task = task_cls(ctx)
-        self.login_runner.start(task)
+        self.login_runner = TaskRunner(get_task(self.TASK_NAME)(), self.app.cfg)
+        ok, problems = self.login_runner.start()
+        if not ok:
+            for p in problems:
+                self.app.log_line("无法启动：" + p, "error", self.LOG_SOURCE)
+            self.login_runner = None
+            return
         self._sync_login_btn()
 
     def _status(self, tc):
@@ -190,16 +193,22 @@ class StartPage(ctk.CTkFrame):
         tpl_done = sum(1 for k in LOGIN_FLOW_TPL_KEYS if templates.get(k))
         lib = ah.get_library(self.app.cfg)
         sel = ah.get_selection(self.app.cfg)
+        char_done = sum(1 for s in sel if ah.char_slot_exists(s))
         ready = (path_ok and reg_ok and tpl_done == len(LOGIN_FLOW_TPL_KEYS)
-                 and bool(lib) and bool(sel))
+                 and bool(lib) and bool(sel) and char_done == len(sel))
         seg = [path_txt, f"账号列表区域 {'✓' if reg_ok else '未标'}",
                f"必要模板 {tpl_done}/{len(LOGIN_FLOW_TPL_KEYS)}",
                f"账号库 {len(lib)}/{ah.MAX_SLOTS} 个",
-               f"已挑 {len(sel)}/{LOGIN_MAX_ACCOUNTS} 个号"]
+               f"已挑 {len(sel)}/{LOGIN_MAX_ACCOUNTS} 个号",
+               f"角色卡 {char_done}/{len(sel)} 个"]
         text = "　".join(seg) + ("　✓ 可运行（点「开始登录」运行）" if ready
                                   else "　（还需设置/标定）")
-        if 0 < len(lib) < ah.MAX_SLOTS:
+        if 0 < len(lib) < ah.MAX_SLOTS and not sel:
             text += f"；账号不必全标，已标 {len(lib)} 个就能挑 {len(lib)} 个"
+        elif char_done < len(sel):
+            missing = "、".join(ah.get_names(self.app.cfg).get(s, "槽%d" % (s + 1))
+                                for s in sel if not ah.char_slot_exists(s))
+            text += f"；「{missing}」还没标角色卡——去账号库点它们的「标角色」"
         return ready, text, (T.SUCCESS if ready else T.WARN)
 
     def refresh(self):
@@ -207,4 +216,12 @@ class StartPage(ctk.CTkFrame):
         self._refresh_login()
 
     def pump(self):
-        pass
+        """被 App._tick 周期调用（RUNNABLE_KEYS 含 start）：抽干日志队列、跑完复位按钮。"""
+        if not self.login_runner:
+            return
+        q = self.login_runner.log_queue
+        while not q.empty():
+            level, msg = q.get()
+            self.app.log_line(msg, level, self.LOG_SOURCE)
+        if not self.login_runner.is_running():
+            self._sync_login_btn()
