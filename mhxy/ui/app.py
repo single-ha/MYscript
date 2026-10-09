@@ -199,6 +199,17 @@ class App(ctk.CTk):
                                   text_color=T.TEXT, corner_radius=T.RADIUS_SM, wrap="word")
         self.log.grid(row=4, column=0, sticky="nsew", padx=12, pady=(0, 14))
         T.apply_log_tags(self.log._textbox)
+        # 贴底跟随开关 + 滚动条用户操作的监听（两者配合说明见 _on_log_text_resize）。
+        # 必须在首条日志之前装好：滚动条是这个日志框唯一能让用户滚动的入口
+        # （文本 state=disabled 吃不了键，也没绑鼠标滚轮），所以包住它的 command 就够了。
+        self._log_follow = True
+        self._log_sb_cmd = None
+        try:
+            self._log_sb_cmd = self.log._y_scrollbar._command
+            self.log._y_scrollbar._command = self._on_log_user_scroll
+        except Exception:
+            pass
+        self.log.bind("<Configure>", self._on_log_text_resize)
         self.log.configure(state="disabled")
         self.log_line("界面就绪。各功能的日志都会汇总到这里。", "info")
 
@@ -261,6 +272,43 @@ class App(ctk.CTk):
             return True               # 还没布局出真实高度/空文本 → 当作到底，别拦着吸底
         return int(tb.index("@0,%d" % (h - 1)).split(".")[0]) >= total
 
+    def _on_log_user_scroll(self, *args):
+        """用户拖/点/滚滚动条（原样转发给 ctk 的 yview，再据此更新贴底跟随开关）。
+
+        用户是唯一会走这条路的人：`_log_follow` 在这里是唯一的「用户主动离开底部」信号，
+        拖到底=重新跟随，拖离底部=停止跟随。我们自己贴底走的是 `log.see()`，不经过这里。
+        """
+        cmd = getattr(self, "_log_sb_cmd", None)
+        if cmd is not None:
+            try:
+                cmd(*args)
+            except Exception:
+                pass
+        try:
+            self._log_follow = self._log_at_bottom()
+        except Exception:
+            self._log_follow = False
+
+    def _on_log_text_resize(self, _event=None):
+        """文本区尺寸变了（最典型：滚动条被 ctk 延迟显示出来、收窄了文本区）时按需补一次贴底。
+
+        为什么需要：滚动条的显隐不是插日志时同步发生的——customtkinter 每 200ms 才检查一次
+        是否需要滚动条，它一出现就收窄文本区，`wrap="word"` 随之重新换行成更多行，于是刚才
+        `see("end")` 贴好的底立刻被顶出可视区；更糟的是 `_log_at_bottom()` 从此判为「不在底部」，
+        后面的日志一条都不再自动跟随，只能手动滚回去——「滚动条刚出现时就卡在半截」的根因。
+        宽度/高度一变文本区就会收到 `<Configure>` 事件（含窗口缩放，视口变矮同样会把底顶出去），
+        在这里再贴一次底，正好卡在重新换行之后。只在跟随状态贴，用户正看历史时不打扰。
+        """
+        if not getattr(self, "_log_follow", False):
+            return
+        log = getattr(self, "log", None)
+        if log is None:
+            return
+        try:
+            log.see("end")
+        except Exception:
+            pass
+
     def _append_log_entry(self, entry, force_scroll=False):
         """把一条新日志增量插进文本框（只在通过筛选时走这里）；阅读时不在底部就不抢滚动。"""
         log = self.log
@@ -270,6 +318,9 @@ class App(ctk.CTk):
             scroll = force_scroll or self._log_at_bottom()
         except Exception:
             scroll = True
+        # 贴底跟随开关：在底部=继续跟，用户上翻了=不跟（用户自己拖滚动条时另有一路更新，
+        # 见 _on_log_user_scroll；尺寸变化要不要补贴底就看这个开关，见 _on_log_text_resize）
+        self._log_follow = bool(scroll)
         log.configure(state="normal")
         try:
             log._textbox.insert("end", f"[{ts}] ")
@@ -312,6 +363,9 @@ class App(ctk.CTk):
         log.configure(state="disabled")
         self._log_shown = shown
         self._update_log_count()
+        # 整体重绘会重排滚动条（显隐切换→文本区变宽窄→重新换行），所以贴底后置跟随态，
+        # 让紧随其后的 <Configure> 认出「还在跟」并补一次贴底
+        self._log_follow = True
         try:
             log.see("end")
         except Exception:

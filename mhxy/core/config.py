@@ -109,7 +109,7 @@ def _mk_dungeon_shared():
       skip / clock / enter         跳过剧情 / 小闹钟(寻路) / 进入战斗按钮
       enter_dungeon                选择副本对话框里的「进入」按钮（普通/侠士两标签区共用）
       xiashi_tab                   侠士进副本前先点的「侠士区」标签页
-      confirm                      侠士进副本后各号弹的「确认」按钮
+      confirm                      侠士进副本后各队员弹的「确认」按钮（队长不弹）
       settlement                   结算界面（副本结束信号，识别到即收尾）
     loop 各键同旧 _mk_dungeon；extra：enter_retry_*/confirm_sec 为侠士「进入+确认」重试参数、
     tuoying_* / enter_check_sec 为拓印临摹处理参数。
@@ -134,7 +134,7 @@ def _mk_dungeon_shared():
             "still_diff": 6.0,           # 平均帧差低于此值视为静止（战斗中画面一直在动，不会误判）
             "enter_retry_max": 3,        # 侠士「进入+确认」重试上限
             "enter_retry_pause": 1.2,    # 重试前回队长重点进入前的停顿
-            "confirm_sec": 40,           # 侠士各号点确认的总超时
+            "confirm_sec": 40,           # 侠士各队员点确认的总超时（队长不点、不计在内）
             "tuoying_detect_sec": 8.0,   # 点「进入」后轮询是否弹出「拓印」临摹界面的时长
             "tuoying_passes": 2,         # 拓印临摹：单遍内沿图案骨架描几轮（每轮各笔画重新随机，提升覆盖）；整个拓印可能需要多遍(=弹窗会再次弹出)，见 tuoying_max_rounds
             "tuoying_lateral": 3.0,      # 拓印临摹：随描轨迹垂直于笔画走向的横向偏移上限(像素)，笔迹加宽更易达标
@@ -173,7 +173,7 @@ def _mk_dungeon_shared():
             "enter": None,           # 副本内「进入战斗」按钮（寻路到位后点它发起本场）
             "enter_dungeon": None,   # 选择副本对话框里的「进入」按钮（普通/侠士共用）
             "xiashi_tab": None,      # 侠士进副本前先点的「侠士区」标签页（仅侠士用）
-            "confirm": None,         # 侠士进副本后各号弹的「确认」按钮
+            "confirm": None,         # 侠士进副本后各队员弹的「确认」按钮（队长不弹）
             "settlement": None,      # 结算界面（副本结束信号；每轮打完轮询它，识别到即收尾）
         },
         "selected": ["dt_70_common", "dt_60_common1", "dt_60_common2",
@@ -773,8 +773,8 @@ DEFAULT_CONFIG = {
         #   翻包裹找到用户标定的物品图，按各自动作逐个 使用/丢弃/出售。核心在 core.inventory.InventoryOrganizer。
         #   标定的区域/按钮模板/物品清单都放共享命名空间 tasks.organize_bag，与具体任务解耦。
         "organize_bag": {
-            "auto_organize": False,              # true=「自动整理背包」：任何走多开轮转的任务流程(运镖/宝图/秘境/副本)
-                                                 #   每轮检测一次背包满图标(bag_full_icon)，命中即自动整理一遍。
+            "auto_organize": False,              # true=「自动整理背包」：只在各任务交接处触发（daily 链任务切换时），
+                                                 #   检测到背包满图标(bag_full_icon)就自动整理一遍；单个任务执行中不触发。
             "loop": {
                 "match_threshold": 0.85,
                 "auto_check_interval_sec": 20,   # 自动整理：同一个号两次「检测背包满」之间的最小间隔(秒)，
@@ -813,7 +813,7 @@ DEFAULT_CONFIG = {
         #   点「进入」偶发的「拓印」临摹弹窗（队长窗）需按住鼠标沿随机图案描一遍再点「上传」。
         #   识别标题/上传按钮 + 标绘制区，存这份共享命名空间 tasks.tuoying，在「工具」页「拓印」里标定一次，
         #   所有副本共用（dungeon_base / 拓印页只读这份，旧 tasks.shared、tasks.dungeon 残留值一律不沿用）。
-        #   「拓印」页可单独「演练」描一遍。
+        #   「拓印」页可单独跑一遍完整临摹（沿图案描一遍 + 自动点「上传」）。
         "tuoying": {
             "regions": {
                 "tuoying_area": None,    # 「拓印」临摹界面的图案绘制区（留空=检测到拓印时无法自动描、转手动）

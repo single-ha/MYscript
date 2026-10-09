@@ -85,11 +85,13 @@ class TaskContext:
     def task_cfg(self, task_name):
         return cfg_mod.task_config(self.cfg, task_name)
 
-    # ---- 自动整理背包：任何任务流程在轮转节拍调用，检测到背包满则就地整理一遍 ----
+    # ---- 自动整理背包：只在任务交接时由 daily._organize_between 调用，检测到背包满则就地整理一遍 ----
     def maybe_auto_organize(self):
         """若开了 tasks.organize_bag.auto_organize，按节流间隔检测一次「背包满图标」，
         命中就在【当前前台号】上整理背包一遍。
-        由 core/rotation 在每个号切前台后调用，故覆盖所有多开轮转任务（运镖/宝图/秘境/副本）。
+        user 2026-10-08 拍板：只在「各任务之间」触发——日常串跑的任务交接处由
+        daily._organize_between 调用（上一个任务完/被跳过、开下一个任务之前）；单个任务执行过程中
+        绝不触发（曾每 tick / 每次切前台都检测，反复开包整理会打断任务的静止/战斗判定）。
         未开开关 / 未标定满图标 / 没满 → 静默返回，不打扰任务流程。"""
         ob = self.task_cfg("organize_bag")
         if not ob.get("auto_organize"):

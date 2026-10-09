@@ -187,10 +187,6 @@ class DailyTask(Task):
                 if is_seq:
                     seq_holder = c     # 窗口可用才授予「顺序任务唯一推进者」持有权
                 c["gone_warned"] = c["fg_warned"] = False
-                try:
-                    wctx.maybe_auto_organize()
-                except Exception as e:
-                    wctx.log(f"自动整理背包检测异常（已忽略，继续）：{e}", level="warn")
                 self._drive_chain_until_yield(ctx, c, steps, blocking=is_seq)
                 if seq_holder is c:
                     seq_holder = None
@@ -250,6 +246,17 @@ class DailyTask(Task):
             c["done"] = True
 
     @staticmethod
+    def _organize_between(c):
+        """任务间清扫（user 2026-10-08 拍板：自动整理背包只在「各任务之间」触发，单个任务
+        执行中绝不触发）：上一个任务刚完成/被跳过、马上要开下一个任务时，自动整理一次背包。
+        开关 tasks.organize_bag.auto_organize；未标定满图标/没满 → maybe_auto_organize 静默返回。"""
+        wctx = c["wctx"]
+        try:
+            wctx.maybe_auto_organize()
+        except Exception as e:
+            wctx.log(f"自动整理背包检测异常（已忽略，继续）：{e}", level="warn")
+
+    @staticmethod
     def _end_step(c):
         c["sub_rec"] = None
         c["sub_step"] = None
@@ -273,6 +280,9 @@ class DailyTask(Task):
                     return
                 if steps[c["idx"]] in MULTI_BARRIER:
                     return                              # 停靠集体屏障，交回主循环
+                # 任务交接点（上一个任务完成/被跳过 → 开下一个）：此时才允许自动整理背包。
+                # 单个任务执行过程中绝不触发（user 2026-10-08 拍板）。
+                self._organize_between(c)
                 if self._begin_step(ctx, c, steps[c["idx"]]) != "ready":
                     c["idx"] += 1                       # 跳过该步（未就绪/演练/不支持），接着下一步
                     continue

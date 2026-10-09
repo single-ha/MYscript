@@ -118,7 +118,7 @@ class Task:
     #   只影响日常的链推进，任务自己单独跑的行为不变（见各任务 _run）。
     CHAIN_SEQUENTIAL = False
     # True=开跑前先把目标窗口带回主界面（run() 入口统一做；找不到主界面只打日志不拦任务）。
-    #   特殊任务（如拓印「演练」需拓印弹窗已在前台）覆盖为 False，启动时绝不 ESC 关它。
+    #   特殊任务（如拓印单跑需拓印临摹界面已在前台）覆盖为 False，启动时绝不 ESC 关它。
     ENSURE_MAIN_ON_START = True
     # True=挂起弹窗守卫（_defuse_popup 直接跳过）：任务的主画面本身就是「带×的弹窗式界面」
     #   （如秒装备停在商城/摆摊，右上角就有「×」），守卫会把界面自带的×误当弹窗点掉。该类任务置 True。
@@ -474,19 +474,10 @@ class Task:
             rec["dead_logged"] = False
             step_fn(rec)
 
-        def between_steps(rec):
-            # 每号切前台后、推进前：检测背包满则自动整理（开关在 tasks.organize_bag.auto_organize）。
-            # 所有走 _make_rotation 的任务（运镖/宝图/秘境/副本）由此统一获得「背包满自动整理」。
-            try:
-                rec["ctx"].maybe_auto_organize()
-            except Exception as e:
-                rec["ctx"].log(f"自动整理背包检测异常（已忽略，继续任务）：{e}", level="warn")
-
         return rotation.RotationConfig(
             records=records, step_once=step_once,
             should_stop=ctx.should_stop, log=ctx.log,
             on_window_gone=on_window_gone, on_activate_fail=on_activate_fail,
-            between_steps=between_steps,
             multi=multi, switch_delay=switch_delay, tick=tick,
             overall_timeout=(time_limit * 60 if time_limit > 0 else 0),
             timeout_msg=(f"已达时间上限 {time_limit} 分钟，停止。" if time_limit > 0 else None),

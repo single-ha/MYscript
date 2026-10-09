@@ -85,7 +85,7 @@ class DailyPage(ctk.CTkFrame):
         self._drag = None         # 拖动中的状态 {"group": 区, "idx": 区内下标}
         self._group_vars = {}     # group -> 整组启用开关 BooleanVar
         self._group_on = {g: True for g in _GROUPS}   # group -> 整组启用（未存配置默认全开）
-        self.switch_auto_organize = None      # 「自动整理背包」开关（任何任务检测到背包满自动整理）
+        self.switch_auto_organize = None      # 「自动整理背包」开关（各任务交接时检测背包满自动整理）
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(4, weight=1)
@@ -202,8 +202,8 @@ class DailyPage(ctk.CTkFrame):
             Tooltip(w, "开启后，点「开始日常」不会立即执行，而是等到设定时刻才真正开始；"
                        "若设定时刻已过（如定时 10:00、下午点开始）则立即执行。等待中再点一次按钮可取消。", self.fonts)
 
-        # «自动整理背包»（从「工具 › 整理背包」页移到这里的控制区，因为它影响运镖/宝图/秘境/副本
-        # 等日常任务运行中的行为；配置仍存共享 tasks.organize_bag.auto_organize）。
+        # «自动整理背包»（从「工具 › 整理背包」页移到这里的控制区，因为它影响日常串跑中任务交接时的
+        # 行为；配置仍存共享 tasks.organize_bag.auto_organize）。
         auto = _opt_row(2, 0)
         auto_lbl = ctk.CTkLabel(auto, text="自动整理背包", font=self.fonts["body"], text_color=T.TEXT)
         auto_lbl.pack(side="left")
@@ -211,9 +211,9 @@ class DailyPage(ctk.CTkFrame):
             auto, text="", width=44, progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
             command=self._toggle_auto_organize)
         self.switch_auto_organize.pack(side="left", padx=(8, 0))
-        Tooltip(auto_lbl, "开启后，运镖 / 宝图 / 秘境 / 副本等任务运行中会每隔一会儿检测一次背包"
-                          "「满」图标，满了就自动整理一遍 —— 需先在「工具 › 整理背包」页「标定」里"
-                          "框选『背包满图标』，否则无从判断、不会触发。", self.fonts)
+        Tooltip(auto_lbl, "开启后，日常串跑会在「上一个任务刚结束、下一个任务即将开始」的交接处检测"
+                          "背包「满」图标，满了就自动整理一遍 —— 单个任务执行过程中不检测、不打断。"
+                          "需先在「工具 › 整理背包」页「标定」里框选『背包满图标』，否则无从判断、不会触发。", self.fonts)
 
         # «已组队»（原在「任务配置」页顶部组队设置卡 / 周常页共用卡，随「跑完解散」一并迁到本页设置区；
         # 存共享 tasks.teaming.skip_team）。勾上=号已在游戏里自行组好队：刷副本/抓鬼等多人步跳过自动组队、
@@ -958,7 +958,7 @@ class DailyPage(ctk.CTkFrame):
                         if on else "已关闭：多人任务运行前会先自动组队。"), "info")
 
     def _toggle_auto_organize(self):
-        """「自动整理背包」开关：存共享 tasks.organize_bag.auto_organize（任何日常任务检测到背包满自动整理）。"""
+        """「自动整理背包」开关：存共享 tasks.organize_bag.auto_organize（在各任务交接处检测背包满自动整理）。"""
         on = bool(self.switch_auto_organize.get())
         cfg = cfg_mod.load_config()
         ob_tc = cfg_mod.task_config(cfg, "organize_bag")
@@ -968,7 +968,7 @@ class DailyPage(ctk.CTkFrame):
         self.app.cfg = cfg
         if on:
             tpl_ok = bool((ob_tc.get("templates", {}) or {}).get("bag_full_icon"))
-            self._log_line("已开启「自动整理背包」：日常任务运行中检测到背包满会自动整理。"
+            self._log_line("已开启「自动整理背包」：日常串跑在任务交接时会检测背包满、满则自动整理。"
                            + ("" if tpl_ok else " ⚠ 但还没标定『背包满图标』，请先去「工具 › 整理背包」页「标定」框选，否则不会触发。"),
                            "warn" if not tpl_ok else "info")
         else:

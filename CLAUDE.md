@@ -63,7 +63,10 @@ mhxy/
     runner.py   TaskRunner：后台线程跑 Task + 线程安全日志队列
     rotation.py 多开轮转推进器：连续推进到等待点才让出；详见 docstring + memory rotation-engine
     teaming.py  TeamFormation：跨窗口组队握手编排 + run_disband() 解散队伍（每号同一套退队流程）
-    inventory.py InventoryOrganizer：整理背包（翻包裹逐物使用/丢弃/出售）的可复用编排，只依赖 ctx；详见 memory organize-bag-task
+    inventory.py InventoryOrganizer：整理背包（翻包裹逐物使用/丢弃/出售）的可复用编排，只依赖 ctx；详见 memory organize-bag-task。
+                      自动整理入口 ctx.maybe_auto_organize()（user 2026-10-08 拍板：**只在日常串跑的任务交接处触发**，
+                      daily._organize_between 在换下一个任务前调用；单个任务执行中绝不触发，曾每 tick/切前台检测被打断）——rotation 的
+                      between_steps 钩子已不再挂这功能
     account_history.py 账号库（登录游戏用）：10 个固定物理槽 + 有序登录队列（最多 5 个），纯逻辑零 GUI；详见文件 docstring
   tasks/  可插拔任务
     base.py     Task 基类 + 注册表（register/get_task/all_tasks）+ _make_rotation()（包多开轮转）+ dungeon_tasks()
@@ -96,13 +99,16 @@ mhxy/
                       复用 teaming.run_disband；通用页「一键解散」跑它，副本勾「跑完解散队伍」也调它
     dungeon_base.py  DungeonBaseTask 通用副本基类：子类只写 name/title/cat(侠士 xiashi / 普通 common)；
                      进副本「进入」按钮普通/侠士共用，侠士先进副本前先点「侠士区」标签页(cat 区分)，再用
-                     vision.match_multi 多命中点按(行,列)取同标签区第 N 个「进入」；侠士进副本后轮询各号点「确认」；
+                      vision.match_multi 多命中点按(行,列)取同标签区第 N 个「进入」；侠士进副本后轮询各队员点「确认」，
+                      **队长不弹该按钮、绝不等他**（详见文件头④）；
+
                      副本内每轮=点跳过剧情→点小闹钟寻路→点进入战斗→等战斗，循环到副本结束
     dt_70_xiashi.py / dt_60_xiashi.py / dt_70_common.py / dt_60_common1.py / dt_60_common2.py
                       五副本薄子类（侠士×2 / 普通×3，is_dungeon=True）；已删 taohaiqu.py（蹈海去被这 5 个取代）
     organize_bag.py     OrganizeBagTask（整理背包）：工具页(OrganizeBagPage)可单独跑的共享能力封装，逐号 activate→core/inventory 整理；详见 memory organize-bag-task
-    tuoying.py          TuoyingTask（拓印）：刷副本偶发「拓印」临摹弹窗的自动描摹能力封装，工具页「拓印」可单独「演练」描一遍
-                        （标定存 tasks.tuoying；演练=只描不点上传，手感与副本内自动一致）；完整自动流程（描→上传→确认不再重现）仍在 dungeon_base
+    tuoying.py          TuoyingTask（拓印）：刷副本偶发「拓印」临摹弹窗的自动描摹能力封装，工具页「拓印」可单独跑一遍完整临摹
+                        （标定存 tasks.tuoying；描→自动点「上传」→确认界面不再重现，与 dungeon_base 判据一致）；
+                        完整自动流程（探测→描→上传→确认）参照 server 在 dungeon_base._auto_trace（本文件是『手动把临摹界面调到前台再跑』的单窗版）
   tools/
     calibrate.py 旧的命令行标定（已不被 GUI 调用，仅留作 CLI 备用）
   ui/
@@ -127,7 +133,7 @@ mhxy/
     pages/login.py        LoginConfig：登录游戏的配置卡（客户端路径/启动参数/等待参数 + 标定入口 + 账号库按钮，共享 tasks.login）；
                           就绪度自绘（账号库里标几个用几个，账号本身不在这标）。日常页登录区**不设标定入口**，
                           只留「账号库…/开始登录」+「⚙ 设置」按钮跳转来这里（daily._goto_login_config）
-    pages/tuoying.py       TuoyingPage：拓印独立页（工具分类页「拓印」tab）——标定/就绪状态/一键拓印演练；
+    pages/tuoying.py       TuoyingPage：拓印独立页（工具分类页「拓印」tab）——标定/就绪状态/一键跑完整临摹；
                           共享命名空间 tasks.tuoying（原在通用页公共标定，迁到这里）
     pages/tools.py      工具分类页（Tab: 秒装备 / 整理背包 / 拓印）
     ui_state.py         界面状态判定（与玩法无关）：is_main_screen 主界面判定 + is_present 标志判定（战斗标识等）
@@ -179,8 +185,10 @@ mhxy/
     （以 GUI 该区展示顺序当基准，**不能用勾选队列算序号**——只勾一个时队列序=0，但物理位置未必是列表第一个，曾进错副本）。
     「当前副本是第几个」= 该副本在其标签区展示顺序的序号（`tasks.base.enter_target_for`，与 GUI 勾选区同基准；
     日常引擎 `_run_collective_dungeons` 开跑前写入内存 `tasks.dungeon.enter_target={cat,pos}`，不落盘）。
-    侠士副本在点完「进入」后多一段入本步骤：轮询所有选中窗口、用共用「确认」模板把各号确认点掉，
-    **确认超时 → 返回队长窗口重新点「进入」**（enter+confirm 外套 `enter_retry_max` 次重试）。
+    侠士副本在点完「进入」后多一段入本步骤：轮询**各队员**窗口、用共用「确认」模板把队员确认点掉，
+    **队长不弹「确认」也绝不等他**（user 2026-09-28：曾把队长放进等待队列 → 永远等不齐 → 必中止；
+    只剩队长一个号时直接算完成、连 `confirm` 模板都不用标）。
+    **队员确认超时 → 返回队长窗口重新点「进入」**（enter+confirm 外套 `enter_retry_max` 次重试）。
 **「拓印」临摹弹窗（user 2026-09-08 反馈、2026-09-09 升级）**：点「进入」后**队长窗口偶发**弹「拓印」临摹界面（队员不弹、
     无放弃按钮），需按住鼠标沿随机图案描一遍再点「上传」。处理：识别 `tuoying_title` → `core/scribble.py` **沿图案骨架描摹**
     （先截绘制区画面、形态学分离前景线条→Zhang-Suen 细化取骨架→确定性贪心拆成尽量少的连续笔画→每笔按住沿骨架走+横向

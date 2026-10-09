@@ -4,7 +4,7 @@
 
 需求背景：刷副本页要跑 5 个副本，分两个标签区：
   · 普通区（70级普通 / 60级普通1 / 60级普通2）
-  · 侠士区（70级侠士 / 60级侠士）：进副本后要轮询所有选中窗口点「确认」。
+  · 侠士区（70级侠士 / 60级侠士）：进副本后要轮询各队员窗口点「确认」（队长不点，见④）。
   进入副本前有差异，进入后流程完全一样——所以【标定共用一套】，只按普通/侠士区分。
 
 本轮确认的几个关键点（本基类实现）：
@@ -17,8 +17,11 @@
      取「当前这个副本在【同标签区】展示顺序里的第几个」命中点来点（以 GUI 该区展示顺序当基准，
      不能用勾选队列算——只勾一个它在队列里是 0，物理位置却未必是列表第一个）。
      「当前副本是第几个」由刷副本页在启动时写入 tasks.dungeon.enter_target 运行时字段。
-  ④ 侠士「确认」轮询：队长点完「进入」后，轮询所有选中窗口，用共用「确认」模板把各号弹的确认点掉；
-     全确认完再继续。某号确认超时 → 返回队长窗口重新点「进入」（本基类在 enter+confirm 外套一层重试）。
+   ④ 侠士「确认」轮询：队长点完「进入」后，轮询各队员窗口，用共用「确认」模板把各队员弹的确认点掉；
+      全确认完再继续。**队长窗口不弹「确认」（他点的「进入」）、绝不等它**——曾把队长也放进等待队列，
+      导致永远等不齐 → 每次都超时重试 → 最后一律中止（user 2026-09-28 反馈修复）。
+      某队员确认超时 → 返回队长窗口重新点「进入」（本基类在 enter+confirm 外套一层重试）；
+      只有队长一个号时直接算确认完成（连「确认」模板都不用标）。
   ⑤ 「拓印」临摹弹窗（user 2026-09-08 反馈）：点「进入」后队长窗口【偶发】弹「拓印」临摹界面
      （只有队长弹、队员不弹），需按住鼠标沿随机图案描一遍再点「上传」才能继续进本、且无放弃/跳过按钮。
      处理：识别「拓印」标题 → 在标定的绘制区做拟人化区域填扫（core/scribble，图案随机但位置固定）→ 点上传；
@@ -83,7 +86,8 @@ DUNGEON_CALIBRATION = {
         ("select", "选择副本按钮", "「选择副本」对话框里的按钮（所有副本共用）"),
         ("xiashi_tab", "侠士区标签页", "「选择副本」里的「侠士区」标签页，侠士副本先进副本前先点到它（仅侠士用）"),
         ("enter_dungeon", "「进入」按钮", "选择副本对话框里的「进入」按钮（普通/侠士两标签区共用）"),
-        ("confirm", "侠士「确认」按钮", "侠士进副本后各号弹的「确认」按钮（仅侠士用）"),
+        ("confirm", "侠士「确认」按钮", "侠士进副本后各队员弹的「确认」按钮（仅侠士用；队长不弹这个、"
+                                        "不等他点）"),
         ("skip", "跳过剧情按钮", "副本内每轮先点的「跳过剧情」按钮（共用）"),
         ("enter", "进入战斗按钮", "寻路到位后点它发起本场的「进入战斗」按钮（共用）"),
         ("settlement", "结算界面", "副本结束时的结算画面（识别到即判结束收尾，共用）"),
@@ -261,13 +265,13 @@ class DungeonBaseTask(Task):
             ctx.log("组队完成，队长开始跑副本流程…", level="hit")
         self._team_formed = True   # 队伍可用（新建成功或本就已在队中）——供「日常」跨多人步复用
 
-        # —— 队长跑副本流程（侠士进副本后还要轮询各号点确认）——
+        # —— 队长跑副本流程（侠士进副本后还要轮询各**队员**点确认；队长不点）——
         self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
         self._run_dungeon(cap_child, assignments, loop, regions, threshold)
         # 跑完解散已迁至「日常」页集中控制（见 _disband_after_multi），副本跑完不再自动解散。
 
     # ==================================================================
-    # 副本流程（普通=蹈海去线性；侠士进副本后多一段确认轮询）
+    # 副本流程（普通=蹈海去线性；侠士进副本后多一段确认轮询，只等各队员）
     # ==================================================================
     def _run_dungeon(self, ctx, assignments, loop, regions, threshold):
         self._focus(ctx)
@@ -281,7 +285,7 @@ class DungeonBaseTask(Task):
             return
 
         # —— 进副本：点「进入」（多命中点定位）→ 偶发「拓印」临摹弹窗处理（队长窗）→
-        #      侠士轮询各号确认 / 普通验证已进本；进+确认/进本 外套重试 ——
+        #      侠士轮询各队员确认 / 普通验证已进本；进+确认/进本 外套重试 ——
         if not self._enter_with_tuoying(ctx, assignments, loop, regions, threshold, step_to):
             return
 
@@ -524,15 +528,25 @@ class DungeonBaseTask(Task):
             self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
         return False
 
-    # ---- 侠士：轮询所有选中窗口点「确认」----
+    # ---- 侠士：轮询所有**队员**窗口点「确认」（队长不点，user 2026-09-28）----
+    # 队长窗口进侠士本不弹「确认」（他点的「进入」），把它算进去会永远等不齐 →
+    # 每次都超时重试、最后一律中止。故按 role 只等队员；只剩队长时直接算确认完成。
     def _confirm_all_windows(self, ctx, assignments, regions, threshold, timeout):
+        remaining = [(w, r) for (w, r) in assignments if r != TeamFormation.ROLE_CAPTAIN]
+        if not remaining:
+            ctx.log("只有队长在队列里（队长不弹「确认」），直接确认完成。", level="info")
+            return True
         tpl = self.flags.get("confirm")
         if tpl is None:
             ctx.log("侠士「确认」模板未标定。", level="error")
             return False
-        remaining = list(assignments)
         deadline = time.time() + timeout
         while remaining and not ctx.should_stop():
+            if time.time() > deadline:
+                names = "、".join(w.label for w, _ in remaining)
+                ctx.log(f"等「确认」超时 {timeout:.0f}s，还没点到的是：{names} → "
+                        "交回队长重新点「进入」。", level="warn")
+                break
             for wctx, role in list(remaining):
                 if wctx.window.rect() is None:
                     remaining.remove((wctx, role))
@@ -577,7 +591,7 @@ class DungeonBaseTask(Task):
                                                       loop.get("confirm_sec", 40))
                 if confirmed:
                     return True
-                ctx.log(f"各号确认未收齐（第 {attempt} 次），返回队长重新点「进入」…", level="warn")
+                ctx.log(f"各队员确认未收齐（第 {attempt} 次），返回队长重新点「进入」…", level="warn")
                 self._focus(ctx)
                 self._interruptible_sleep(ctx, self._jitter(retry_pause, ctx))
             ctx.log("侠士进副本确认多次未完成，中止。", level="error")

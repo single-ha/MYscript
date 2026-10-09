@@ -6,14 +6,13 @@ import customtkinter as ctk
 
 from .. import theme as T
 from ...core import config as cfg_mod
-from ...core.config import TUOYING_TPL_KEYS
 from ...core.runner import TaskRunner
 from ...tasks import get_task
 from ..common import Card, bind_wraplength
 
 
 class TuoyingPage(ctk.CTkFrame):
-    """拓印：刷副本点「进入」偶发的「拓印」临摹弹窗的自动描摹能力，这里可单独标定/演练。
+    """拓印：刷副本点「进入」偶发的「拓印」临摹弹窗的自动描摹能力，这里可单独标定 / 跑一遍完整临摹。
     标定资产存共享命名空间 tasks.tuoying（所有副本共用，只读这份）。"""
 
     TASK_NAME = "tuoying"
@@ -42,12 +41,13 @@ class TuoyingPage(ctk.CTkFrame):
         ctk.CTkLabel(bar, text="拓印", font=self.fonts["title"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w")
         sub = ctk.CTkLabel(bar, text="刷副本点「进入」后，队长窗口偶发弹「拓印」临摹界面：需按住鼠标沿随机图案"
-                                     "描一遍再点「上传」。这里标一次、所有副本共用；也可以单独「演练」看描摹效果。",
+                                     "描一遍再点「上传」。这里标一次、所有副本共用；也可以单独跑一遍完整临摹"
+                                     "（描一遍+自动点上传）验证手感。",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
         sub.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         bind_wraplength(sub)
 
-    # ---- 控制区：演练按钮 + 工具（标定/刷新配置）----
+    # ---- 控制区：运行按钮 + 工具（标定/刷新配置）----
     def _build_control(self):
         card = Card(self)
         card.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 14))
@@ -85,10 +85,11 @@ class TuoyingPage(ctk.CTkFrame):
         txt.grid(row=0, column=0, sticky="ew")
         self.lbl_ready = ctk.CTkLabel(txt, text="", font=self.fonts["body"], text_color=T.TEXT_DIM, anchor="w")
         self.lbl_ready.pack(fill="x", anchor="w", pady=(4, 0))
-        sub = ctk.CTkLabel(txt, text="就绪要求：框选好「拓印描摹绘制区」即可自动描摹；「界面标题」「上传按钮」"
-                                     "用于自动识别弹窗与收尾，不标=遇拓印弹窗只能转手动临摹。"
-"演练只对所选窗口里的第一个号操作：把拓印临摹界面调到前台再点「开始拓印」，"
-                                      "脚本会沿图案描一遍（不点上传）。",
+        sub = ctk.CTkLabel(txt, text="就绪要求：框选好「拓印描摹绘制区」+ 标定「上传」按钮即可全自动"
+                                     "（描→上传→确认界面关闭）；「界面标题」可选但建议标，用于上传后自动"
+                                     "确认界面已关闭（还会重现就多描多传几遍）。"
+                                     "对所选窗口里的第一个号操作：把拓印临摹界面调到前台再点「开始拓印」，"
+                                     "脚本会沿图案描一遍并自动点「上传」、确认界面关闭。",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub.pack(fill="x", anchor="w", pady=(2, 0))
         bind_wraplength(sub)
@@ -111,11 +112,13 @@ class TuoyingPage(ctk.CTkFrame):
         tpl = (tuo_tc.get("templates") or {}) or {}
         reg = (tuo_tc.get("regions") or {}) or {}
         area_ok = bool(reg.get("tuoying_area"))
-        done = sum(1 for k in TUOYING_TPL_KEYS if tpl.get(k))
-        ready = area_ok and done == len(TUOYING_TPL_KEYS)
+        up_ok = bool(tpl.get("tuoying_upload"))
+        title_ok = bool(tpl.get("tuoying_title"))
+        ready = area_ok and up_ok
         self.lbl_ready.configure(
-            text=f"绘制区：{'● 已框选' if area_ok else '○ 未标定'}；模板 {done}/{len(TUOYING_TPL_KEYS)}"
-                 + ("　✓ 已就绪" if ready else "　（需框选绘制区 + 模板）"),
+            text=f"绘制区：{'● 已框选' if area_ok else '○ 未标定'}；上传按钮：{'● 已标定' if up_ok else '○ 未标定'}"
+                 + (f"；标题模板：{'●' if title_ok else '○'}(可选建议)" if title_ok else "；标题模板：○(可选建议)")
+                 + ("　✓ 可全自动临摹" if ready else "　（需框选绘制区 + 上传按钮）"),
             text_color=T.SUCCESS if ready else T.WARN)
 
     def _open_tuoying_calibrate(self):
