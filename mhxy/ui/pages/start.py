@@ -10,7 +10,7 @@ from ..account_gallery import AccountGallery
 from ...core import account_history as ah
 from ...core import config as cfg_mod
 from ...core.config import (LOGIN_FLOW_TPL_KEYS, LOGIN_MAX_ACCOUNTS, LOGIN_REQUIRED_REGION,
-                            SHARED_REGION_KEYS, SHARED_TPL_KEYS)
+                            LOGIN_CHAR_REGION, SHARED_REGION_KEYS, SHARED_TPL_KEYS)
 from ..common import (Card, OrderThumbs, Tooltip, bind_wraplength, open_calibrate)
 from ..calibrate_dialog import calibrate_template_direct
 
@@ -189,14 +189,15 @@ class StartPage(ctk.CTkFrame):
             path_txt, path_ok = "客户端路径 ✓", True
         regions = tc.get("regions") or {}
         templates = tc.get("templates") or {}
-        reg_ok = bool(regions.get(LOGIN_REQUIRED_REGION))
+        reg_ok = bool(regions.get(LOGIN_REQUIRED_REGION)) and bool(regions.get(LOGIN_CHAR_REGION))
         tpl_done = sum(1 for k in LOGIN_FLOW_TPL_KEYS if templates.get(k))
         lib = ah.get_library(self.app.cfg)
         sel = ah.get_selection(self.app.cfg)
         char_done = sum(1 for s in sel if ah.char_slot_exists(s))
         ready = (path_ok and reg_ok and tpl_done == len(LOGIN_FLOW_TPL_KEYS)
                  and bool(lib) and bool(sel) and char_done == len(sel))
-        seg = [path_txt, f"账号列表区域 {'✓' if reg_ok else '未标'}",
+        seg = [path_txt, f"账号列表区域 {'✓' if regions.get(LOGIN_REQUIRED_REGION) else '未标'}",
+               f"角色列表区域 {'✓' if regions.get(LOGIN_CHAR_REGION) else '未标'}",
                f"必要模板 {tpl_done}/{len(LOGIN_FLOW_TPL_KEYS)}",
                f"账号库 {len(lib)}/{ah.MAX_SLOTS} 个",
                f"已挑 {len(sel)}/{LOGIN_MAX_ACCOUNTS} 个号",

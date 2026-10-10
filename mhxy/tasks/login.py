@@ -7,9 +7,9 @@
     → 先调整到基准尺寸 targets.base_size（模板/区域坐标按它标定，各号同尺寸才好点）
     → 点「切换账号」（直连入口）→ 在账号列表区滚轮翻找该号的账号卡片模板并点它
     → 点「进入游戏」→ 点「更换角色」→ 等「已有角色」标签：1 秒（loop.switch_role_tab_wait_sec）
-    内没出现就再点一次「更换角色」，最多 loop.switch_role_retry_max 次 → 点该号的角色卡片
-    → 等进游戏完成：主界面（商城图标）判定到即放行；判不到则边清挡图标弹窗边等，
-      enter_game_settle_sec 兜底带截图放行（见 _wait_entered），单个号绝不卡死整条链。
+    内没出现就再点一次「更换角色」，最多 loop.switch_role_retry_max 次 → 在角色列表区滚轮
+    翻找该号的角色卡片并点它 → 等进游戏完成：主界面（商城图标）判定到即放行；判不到则边清挡
+    图标弹窗边等，enter_game_settle_sec 兜底带截图放行（见 _wait_entered），单号绝不卡死整条链。
 
 与其它任务的三处刻意不同（别照抄到别的任务）：
   · ENSURE_MAIN_ON_START=False：启动时游戏还没开，基类那步「先带回主界面」只会空转/误关界面。
@@ -19,8 +19,8 @@
     ui/account_gallery.py 画面），本任务只读「挑好的有序队列」+ 按账号名去取对应槽的两张图。
 
 preflight 不要求桌面上已有游戏窗口（号是本任务自己开的），但要求：客户端路径存在、四个流程模板
-（切换账号/进入游戏/更换角色/已有角色标签）与账号列表区已标、队列里每个账号的账号卡**和角色卡**
-图都真实存在。
+（切换账号/进入游戏/更换角色/已有角色标签）与两个列表区域（账号列表区/角色列表区）已标、队列里
+每个账号的账号卡**和角色卡**图都真实存在。
 """
 
 import os
@@ -32,7 +32,7 @@ from ..core import scan
 from ..core import vision
 from ..core import window as win_mod
 from ..core.config import (LOGIN_FLOW_TPL_KEYS, LOGIN_FLOW_TPL_LABELS, LOGIN_MAX_ACCOUNTS,
-                           LOGIN_REQUIRED_REGION)
+                           LOGIN_REQUIRED_REGION, LOGIN_CHAR_REGION)
 from .base import Task, register
 
 _NS = "login"
@@ -51,6 +51,8 @@ class LoginTask(Task):
             (LOGIN_REQUIRED_REGION, "账号列表区域",
              "点「切换账号」后那片账号列表（滚轮在此翻找账号卡片）。建议只框列表本身，"
              "框太宽会连带滚到别处。"),
+            (LOGIN_CHAR_REGION, "角色列表区域",
+             "「已有角色」标签页下方那片角色列表（滚轮在此翻找角色卡片）。建议只框角色卡列表本身。"),
         ],
         "templates": [
             ("switch_account", "「切换账号」",
@@ -100,6 +102,8 @@ class LoginTask(Task):
         regions = tc.get("regions") or {}
         if not regions.get(LOGIN_REQUIRED_REGION):
             problems.append("区域『账号列表区域』未标定 —— 请到「任务配置」页「登录游戏」卡点「标定」框选")
+        if not regions.get(LOGIN_CHAR_REGION):
+            problems.append("区域『角色列表区域』未标定 —— 请到「任务配置」页「登录游戏」卡点「标定」框选")
         templates = tc.get("templates") or {}
         for key in LOGIN_FLOW_TPL_KEYS:
             if not templates.get(key):
@@ -115,13 +119,14 @@ class LoginTask(Task):
         args = [a for a in str(tc.get("client_args") or "").split() if a]
         slots = self.selected_slots(ctx.cfg)
         names = {s: self.slot_name(ctx.cfg, s) for s in slots}
-        threshold = float(loop.get("match_threshold", 0.98))
+        threshold = float(loop.get("match_threshold", 0.85))
         templates = tc.get("templates") or {}
         flags = {k: (vision.load_template(templates.get(k)) if templates.get(k) else None)
                  for k in LOGIN_FLOW_TPL_KEYS}
         acc_flags = {s: vision.load_template(ah.slot_rel(s)) for s in slots}
         char_flags = {s: vision.load_template(ah.char_slot_rel(s)) for s in slots}
         list_region = (tc.get("regions") or {}).get(LOGIN_REQUIRED_REGION)
+        char_region = (tc.get("regions") or {}).get(LOGIN_CHAR_REGION)
 
         if args:
             ctx.log(f"启动参数：{' '.join(args)}")
@@ -137,7 +142,7 @@ class LoginTask(Task):
             try:
                 ok = self._login_one(ctx, slot, i, names[slot], client, args, loop, threshold,
                                      flags, acc_flags.get(slot), char_flags.get(slot),
-                                     list_region)
+                                     list_region, char_region)
             except Exception as e:
                 ctx.log(f"{names[slot]} 登录异常，跳过该号（其余号继续）：{e}", level="error")
                 ok = False
@@ -156,13 +161,13 @@ class LoginTask(Task):
     # 单号流程
     # ------------------------------------------------------------------
     def _login_one(self, ctx, slot, arr_index, name, client, args, loop, threshold, flags,
-                   acc_tpl, char_tpl, list_region):
+                   acc_tpl, char_tpl, list_region, char_region):
         """起一个客户端、走完切号登录、进游戏。成功 True / 失败 False。
 
         流程（2026-10-09 用户实测改版）：窗口出现 → 先调基准尺寸并按 2×2 网格落座
         （targets.base_size；位置按登录队列序号 arr_index，第1个上左/第2个上右…第5个居中）
-        → 切换账号 → 翻账号卡并点 → 进入游戏 → 更换角色（1 秒没见「已有角色」标签就再点一次，
-        见 _role_tab_step）→ 点该号角色卡。"""
+        → 切换账号 → 在账号列表区翻账号卡并点 → 进入游戏 → 更换角色（1 秒没见「已有角色」
+        标签就再点一次，见 _role_tab_step）→ 在角色列表区翻角色卡并点。"""
         ctx.log(f"{name}：启动客户端…", level="hit")
         before = win_mod.snapshot_hwnds()
         try:
@@ -245,9 +250,10 @@ class LoginTask(Task):
         if not self._role_tab_step(wctx, flags, threshold, loop, step_t, poll, settle):
             wctx.log(f"「{LOGIN_FLOW_TPL_LABELS['existing_role_tab']}」一直没出现，{name} 跳过。", "warn")
             return False
-        if not self._wait_click(wctx, char_tpl, f"{name}的角色卡", threshold, step_t, poll, settle):
-            wctx.log(f"「已有角色」列表里没找到 {name} 的角色卡（角色卡图没标或样子变了），"
-                     "该号跳过。", level="warn")
+        if not self._pick_in_list(wctx, name, char_tpl, threshold, loop, char_region,
+                                  "角色列表", "角色卡",
+                                  "角色卡图没标或样式变了（到账号库点该号的「标角色」重框）"):
+            wctx.log(f"「已有角色」列表里没找到 {name} 的角色卡，该号跳过。", level="warn")
             return False
         return self._wait_entered(wctx, loop)
 
@@ -334,31 +340,48 @@ class LoginTask(Task):
         return _click_tab()
 
     def _pick_account(self, ctx, name, acc_tpl, threshold, loop, list_region):
-        """在「选择账号」的账号列表区滚轮翻找该账号的卡片模板，找到就点它。返回是否点到。
+        """在「选择账号」的账号列表区滚轮翻找该账号的卡片模板，找到就点它。返回是否点到。"""
+        return self._pick_in_list(ctx, name, acc_tpl, threshold, loop, list_region,
+                                  "账号列表", "账号卡",
+                                  "账号图与本局账号卡样式不符（到账号库重标该号的账号图）")
+
+    def _pick_in_list(self, ctx, name, tpl, threshold, loop, list_region,
+                      list_label, card_kind, miss_hint):
+        """在指定列表区（list_region）滚轮翻找某模板（账号卡/角色卡），找到就点它。返回是否点到。
 
         走 core/scan.scroll_search：先滚到顶再向下逐屏找，帧差判「滚到底」才算翻完整段——
-        账号多/列表长都不漏（不靠固定翻屏数猜）。"""
-        if acc_tpl is None:
-            ctx.log(f"{name} 的账号图读不出来（图片丢失？），无法定位。", level="warn")
+        列表长/角色多都不漏（不靠固定翻屏数猜）。
+        list_label: 日志里的区域名（如「账号列表」）；card_kind: 目标名（如「账号卡」）；
+        miss_hint: 翻完没找到时，对「图不对」情形的针对性建议。"""
+        if tpl is None:
+            ctx.log(f"{name} 的{card_kind}图读不出来（图片丢失？），无法定位。", level="warn")
+            return False
+        if not list_region:
+            ctx.log(f"{list_label}区域未标定，无法滚动查找{card_kind}——"
+                    "请到「任务配置」页「登录游戏」卡点「标定」框选。", level="warn")
             return False
 
+        best = [0.0]                     # 全程该卡的最高匹配分（不卡阈值，用于失败诊断）
+
         def grab_rect():
-            return (ctx.window.region_to_screen_rect(list_region) if list_region
-                    else ctx.window.rect())
+            return ctx.window.region_to_screen_rect(list_region)
 
         def probe(scene, rect):
             if scene is None:
                 return scan.SCROLL, None
-            m = vision.match(scene, acc_tpl, threshold)
+            m = vision.match(scene, tpl, threshold)
             if m is None:
+                s, _ = vision.best_score(scene, tpl)   # 没到阈值时记最高分（诊断用，判断是「图不对」还是「阈值太高」）
+                if s > best[0]:
+                    best[0] = s
                 return scan.SCROLL, None
             x, y = rect[0] + m[0], rect[1] + m[1]
             if not (ctx.window.is_foreground() or ctx.window.activate()):
-                ctx.log("切前台失败，不点账号卡片（宁缺勿错，原地重试）。", level="warn")
+                ctx.log(f"切前台失败，不点{card_kind}（宁缺勿错，原地重试）。", level="warn")
                 return scan.STAY, None
             ctx.mouse.human_move(x, y)
             ctx.mouse.click(x, y)
-            ctx.log(f"在账号列表里点到 {name}（{m[2]:.3f}）。", level="hit")
+            ctx.log(f"在{list_label}里点到 {name}（{m[2]:.3f}）。", level="hit")
             return scan.ACCEPT, (x, y, m[2])
 
         res = scan.scroll_search(
@@ -372,7 +395,11 @@ class LoginTask(Task):
             end_diff=float(loop.get("scroll_end_diff", 2.0)),
             reset_max=int(loop.get("scroll_reset_max", 20)),
             grab_fn=ctx.window.grab_screen,
-            log=lambda m: ctx.log(m), label="账号列表")
+            log=lambda m: ctx.log(m), label=list_label)
+        if not res.found and best[0] > 0:
+            ctx.log(f"{name} 的{card_kind}在{list_label}里最高匹配分只有 {best[0]:.3f}（当前阈值 {threshold:.2f}）——"
+                    "接近阈值=阈值偏严（到「任务配置」页登录卡把 match_threshold 调低一点）；"
+                    f"远低于阈值(如 <0.7)={miss_hint}。", level="warn")
         return res.found
 
     def _wait_entered(self, ctx, loop):

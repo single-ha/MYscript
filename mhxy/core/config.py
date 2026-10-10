@@ -190,7 +190,7 @@ def _mk_login():
       启动客户端 → 等它的窗口出现（按 hwnd 差集认「刚弹出来那个」，不碰已开好的号）
       → 点「切换账号」（直连入口，不再经「用户」菜单）→ 在账号列表区滚动查找该号账号卡片并点它
       → 点「进入游戏」→ 点「更换角色」→ 1 秒内没见到「已有角色」标签就再点一次「更换角色」
-      （最多 loop.switch_role_retry_max 次）→ 点该号的角色卡片 → 等进游戏完成。
+      （最多 loop.switch_role_retry_max 次）→ 在角色列表区滚动查找该号角色卡片并点它 → 等进游戏完成。
     账号本身不在这逐项标定：账号卡片 + **角色卡片**都归账号库（core/account_history.py，每号两张图、
     最多 LOGIN_ACCOUNT_SLOTS 个账号）由「日常」页登录区的「账号库」弹窗维护；从库里挑最多
     LOGIN_MAX_ACCOUNTS 个存进 accounts（有序=挑的先后=登录先后）。"""
@@ -200,7 +200,7 @@ def _mk_login():
         "account_library": [],      # 账号库 [{slot, name}, ...]（由账号库弹窗写，slot 0~LOGIN_ACCOUNT_SLOTS-1）
         "accounts": [],             # 登录队列 = 有序账号槽位号（最多 LOGIN_MAX_ACCOUNTS 个；由账号库弹窗写）
         "loop": {
-            "match_threshold": 0.98,        # 模板匹配阈值（账号卡/流程模板共用，默认高阈值防认错号）
+            "match_threshold": 0.85,        # 模板匹配阈值（账号卡/流程模板共用）
             "client_launch_timeout_sec": 180,  # 启动客户端后等它的窗口出现的超时
             "client_between_sec": 3.0,      # 一个号进完游戏到起下一个客户端之间的间隔
             "step_timeout_sec": 30,         # 等「用户/切换账号/选择账号/登录/进入游戏」出现的单步超时
@@ -212,8 +212,8 @@ def _mk_login():
             "poll_sec": 0.3,                # 等按钮出现的轮询间隔
             "settle_sec": 0.6,              # 每点一下之后的画面落定等待
             "accept_any_new_window": True,  # 新窗口标题不含 window_title 时也认它（客户端登录窗标题可能与游戏窗口不同）
-            "scroll_step": -3,              # 账号列表每次滚轮格数（负=向下翻）
-            "scroll_max_tries": 10,         # 翻账号列表最多翻几屏
+            "scroll_step": -3,              # 账号/角色列表每次滚轮格数（负=向下翻）
+            "scroll_max_tries": 10,         # 翻账号/角色列表最多翻几屏
             "scroll_settle_sec": 0.35,      # 每滚一屏后等画面落定再重找的间隔
             "scroll_reset_top": True,       # 翻找前先滚到顶，保证向下扫一遍能覆盖整段(不漏上半截)
             "scroll_end_diff": 2.0,         # 滚一屏后该区域帧差<此值=滚不动了，据此判「整段翻完」
@@ -221,6 +221,7 @@ def _mk_login():
         },
         "regions": {
             LOGIN_REQUIRED_REGION: None,   # 点「切换账号」后那片账号列表区（滚轮在此翻找账号卡片）
+            LOGIN_CHAR_REGION: None,       # 「已有角色」列表区（滚轮在此翻找角色卡片）
         },
         "templates": {              # 模板一律由标定向导写入（存 templates/tm_<key>.png）
             "switch_account": None,       # 客户端界面上的「切换账号」（直连入口，不再经「用户」菜单）
@@ -306,6 +307,7 @@ LOGIN_FLOW_TPL_KEYS = ("switch_account", "enter_game", "switch_role", "existing_
 LOGIN_FLOW_TPL_LABELS = {"switch_account": "「切换账号」", "enter_game": "「进入游戏」",
                          "switch_role": "「更换角色」按钮", "existing_role_tab": "「已有角色」标签"}
 LOGIN_REQUIRED_REGION = "account_list"
+LOGIN_CHAR_REGION = "char_list"     # 「已有角色」列表区（选角色时滚轮在此翻找角色卡，同账号列表区）
 
 DEFAULT_CONFIG = {
     # ---- 跨任务共享 ----

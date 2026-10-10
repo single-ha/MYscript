@@ -81,7 +81,7 @@ mhxy/
                       新流程（user 2026-10-09 按实测改版）：切换账号→滚轮翻账号卡并点→进入游戏→更换角色→「已有角色」标签
                       →点该号角色卡→等主界面；每个号各起一次客户端（user 2026-09-29 拍板），窗口靠 hwnd 差集认新弹的那个
                       (core/window.wait_new_game_window，不碰已开好的号)。账号卡片+**角色卡片**两张图都归 core/account_history
-                      的物理槽（登录标定只管 4 个流程模板+账号列表区，账号/角色图不进标定向导）；「更换角色」点完 1 秒
+                      的物理槽（登录标定只管 4 个流程模板+账号/角色两个列表区域，账号/角色图不进标定向导）；「更换角色」点完 1 秒
                       （loop.switch_role_tab_wait_sec）没见「已有角色」标签就再点一次（最多 loop.switch_role_retry_max 次，见 _role_tab_step）。
                       ⚠ 它**不在 daily 链里**（无 ENSURE_MAIN_ON_START / POPUP_GUARD_OFF 两处关开关，见文件 docstring），运行入口只有日常页登录区
     weekly_base.py   WeeklyBaseTask 周常基类（门派闯关/海底世界/迷魂塔共用）：多人先自动组队（tasks.teaming，

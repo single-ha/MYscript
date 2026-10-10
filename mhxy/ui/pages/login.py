@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """登录游戏「配置/标定」卡：客户端路径 + 参数改动即保存，标定/重新加载即点即做。
-只管「流程模板 + 账号列表区」这几样；账号本身在「日常」页顶部的「账号库」弹窗里标定与挑选
+只管「流程模板 + 账号/角色两个列表区域」这几样；账号本身在「日常」页顶部的「账号库」弹窗里标定与挑选
 （ui/account_gallery.py）。运行唯一入口也在那儿（挑好号 → 点开始）。由 ConfigPage 统一组装。"""
 
 import os
@@ -12,7 +12,7 @@ from ..account_gallery import AccountGallery
 from ...core import account_history as ah
 from ...core import config as cfg_mod
 from ...core.config import (LOGIN_FLOW_TPL_KEYS, LOGIN_MAX_ACCOUNTS, LOGIN_REQUIRED_REGION,
-                            SHARED_REGION_KEYS, SHARED_TPL_KEYS)
+                            LOGIN_CHAR_REGION, SHARED_REGION_KEYS, SHARED_TPL_KEYS)
 from ..common import (Card, Tooltip, bind_wraplength, open_calibrate)
 
 
@@ -160,14 +160,15 @@ class LoginConfig(ctk.CTkFrame):
             path_txt, path_ok = "客户端路径 ✓", True
         regions = tc.get("regions") or {}
         templates = tc.get("templates") or {}
-        reg_ok = bool(regions.get(LOGIN_REQUIRED_REGION))
+        reg_ok = bool(regions.get(LOGIN_REQUIRED_REGION)) and bool(regions.get(LOGIN_CHAR_REGION))
         tpl_done = sum(1 for k in LOGIN_FLOW_TPL_KEYS if templates.get(k))
         lib = ah.get_library(self.app.cfg)
         sel = ah.get_selection(self.app.cfg)
         char_done = sum(1 for s in sel if ah.char_slot_exists(s))
         ready = (path_ok and reg_ok and tpl_done == len(LOGIN_FLOW_TPL_KEYS)
                  and bool(lib) and bool(sel) and char_done == len(sel))
-        seg = [path_txt, f"账号列表区域 {'✓' if reg_ok else '未标'}",
+        seg = [path_txt, f"账号列表区域 {'✓' if regions.get(LOGIN_REQUIRED_REGION) else '未标'}",
+               f"角色列表区域 {'✓' if regions.get(LOGIN_CHAR_REGION) else '未标'}",
                f"必要模板 {tpl_done}/{len(LOGIN_FLOW_TPL_KEYS)}",
                f"账号库 {len(lib)}/{ah.MAX_SLOTS} 个",
                f"已挑 {len(sel)}/{LOGIN_MAX_ACCOUNTS} 个号",

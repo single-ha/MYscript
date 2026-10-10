@@ -498,7 +498,8 @@
                 0
             ],
             "regions": {
-                "account_list": null
+                "account_list": null,
+                "char_list": null
             },
             "templates": {
                 "switch_account": null,
