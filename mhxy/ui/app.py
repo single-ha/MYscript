@@ -69,7 +69,7 @@ class App(ctk.CTk):
         self._build_sidebar()
         self._build_log_panel()   # 先建日志面板：各页 _log_line 都往这写，必须先于建页
         self._build_pages()
-        self._show("daily")
+        self._show("start")
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(150, self._tick)

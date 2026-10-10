@@ -135,7 +135,7 @@ class LoginTask(Task):
             if i > 0:
                 self._interruptible_sleep(ctx, self._jitter(float(loop.get("client_between_sec", 3.0)), ctx))
             try:
-                ok = self._login_one(ctx, slot, names[slot], client, args, loop, threshold,
+                ok = self._login_one(ctx, slot, i, names[slot], client, args, loop, threshold,
                                      flags, acc_flags.get(slot), char_flags.get(slot),
                                      list_region)
             except Exception as e:
@@ -155,11 +155,12 @@ class LoginTask(Task):
     # ------------------------------------------------------------------
     # 单号流程
     # ------------------------------------------------------------------
-    def _login_one(self, ctx, slot, name, client, args, loop, threshold, flags,
+    def _login_one(self, ctx, slot, arr_index, name, client, args, loop, threshold, flags,
                    acc_tpl, char_tpl, list_region):
         """起一个客户端、走完切号登录、进游戏。成功 True / 失败 False。
 
-        流程（2026-10-09 用户实测改版）：窗口出现 → 先调基准尺寸（targets.base_size）
+        流程（2026-10-09 用户实测改版）：窗口出现 → 先调基准尺寸并按 2×2 网格落座
+        （targets.base_size；位置按登录队列序号 arr_index，第1个上左/第2个上右…第5个居中）
         → 切换账号 → 翻账号卡并点 → 进入游戏 → 更换角色（1 秒没见「已有角色」标签就再点一次，
         见 _role_tab_step）→ 点该号角色卡。"""
         ctx.log(f"{name}：启动客户端…", level="hit")
@@ -198,11 +199,12 @@ class LoginTask(Task):
             bw, bh = int(base[0]), int(base[1])
             sx = sy = None
             if wctx.window.activate():
-                # 落座到同款 2×2 网格槽位（与「调整窗口」同一套算法，window.arrange_slot）：
-                # 该号是当前第几个游戏窗口就坐第几个槽（第1个上左、第2个上右…第5个居中）。
-                idx = max(0, win_mod.global_no(wctx.window, 0) - 1)
+                # 落座到「调整窗口」同款 2×2 网格槽位（window.arrange_slot）：
+                # 槽位号 = 该号在登录队列里的序号（第1个上左、第2个上右…第5个居中）。
+                # 不能按 locate_all 的全局枚举号——新窗口通常还停在客户端默认位置，枚举号随
+                # 已有窗口的位置/数量漂移，账号2~5 曾全被排进同一槽堆到右上角。
                 sx, sy = win_mod.arrange_slot(
-                    idx, bw, bh, margin=int((ctx.cfg or {}).get("arrange_left_margin", 100)))
+                    arr_index, bw, bh, margin=int((ctx.cfg or {}).get("arrange_left_margin", 100)))
                 if wctx.window.resize_to(bw, bh, move_to=(sx, sy)):
                     self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
             r2 = wctx.window.rect()
