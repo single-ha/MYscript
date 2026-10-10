@@ -191,16 +191,24 @@ class LoginTask(Task):
         wctx.log(f"客户端窗口已出现（{rect[2]}×{rect[3]}）。", level="hit")
 
         # 先调整到基准尺寸再走登录：模板/区域坐标都按 targets.base_size 标定，各号窗口同尺寸
-        # 才点得准（多开同尺寸铁律）。只调尺寸不动位置——多开排布归「通用/日常」页的「调整窗口」。
+        # 才点得准（多开同尺寸铁律）。位置一并落到「调整窗口」同款 2×2 网格槽位（第几个游戏窗口
+        # 坐第几个槽），让多开各号开屏即按网格排开，不重叠。
         base = ((ctx.cfg or {}).get("targets") or {}).get("base_size")
         if base and len(base) >= 2:
             bw, bh = int(base[0]), int(base[1])
+            sx = sy = None
             if wctx.window.activate():
-                if wctx.window.resize_to(bw, bh):
+                # 落座到同款 2×2 网格槽位（与「调整窗口」同一套算法，window.arrange_slot）：
+                # 该号是当前第几个游戏窗口就坐第几个槽（第1个上左、第2个上右…第5个居中）。
+                idx = max(0, win_mod.global_no(wctx.window, 0) - 1)
+                sx, sy = win_mod.arrange_slot(
+                    idx, bw, bh, margin=int((ctx.cfg or {}).get("arrange_left_margin", 100)))
+                if wctx.window.resize_to(bw, bh, move_to=(sx, sy)):
                     self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
             r2 = wctx.window.rect()
+            pos_txt = f"，位置 ({sx}, {sy})" if sx is not None else ""
             if r2 and abs(r2[2] - bw) <= 4 and abs(r2[3] - bh) <= 4:
-                wctx.log(f"已调整窗口到基准尺寸 {bw}×{bh}（实际 {r2[2]}×{r2[3]}）。", level="hit")
+                wctx.log(f"已调整窗口到基准尺寸 {bw}×{bh}（实际 {r2[2]}×{r2[3]}{pos_txt}）。", level="hit")
             else:
                 sz = f"（实际 {r2[2]}×{r2[3]}）" if r2 else "（窗口已失效）"
                 wctx.log(f"调整窗口到基准尺寸 {bw}×{bh} 未完全生效{sz}——多半锁了分辨率档位，"

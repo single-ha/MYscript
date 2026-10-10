@@ -549,6 +549,30 @@ def restore_targets_size(title_substr, offset, targets, base_size):
     return (ok, len(wins), actual)
 
 
+def arrange_slot(index, bw, bh, work=None, margin=100):
+    """第 index 个窗口（0 起）在基准排布网格里的左上角 (x, y)。
+
+    排布＝用户拍板：2列×2行（第1排贴屏幕/工作区顶、最后1排贴任务栏、第5个屏幕上/工作区正中）。
+    index≥4 一律用第 5 个的居中位。
+    work: work_area() 的结果（可不传，默认现取）；margin: 最左列距左边缘空白（arrange_left_margin）。
+    这是「调整窗口」与「登录自动落座」共用的唯一槽位算法——两处若各自另算一套，窗口落位会漂移。"""
+    wa = work if work is not None else work_area()
+    wx, wy, ww, wh = wa[0], wa[1], wa[2], wa[3]
+    col1 = wx + int(margin)          # 最左列距左侧留 margin 空白
+    col2 = wx + ww - bw              # 右列贴工作区右
+    row1y = wy                       # 第一排上边贴屏幕/工作区顶
+    row2y = wy + wh - bh             # 第二排（最后一行）下边贴任务栏(=工作区底)
+    cx, cy = wx + ww // 2, wy + wh // 2
+    slots = [
+        (col1, row1y),               # 号1 上左
+        (col2, row1y),               # 号2 上右
+        (col1, row2y),               # 号3 下左
+        (col2, row2y),               # 号4 下右
+        (cx - bw // 2, cy - bh // 2),  # 号5 屏幕正中
+    ]
+    return slots[max(0, min(int(index), 4))]
+
+
 def work_area():
     """返回可用工作区（排除任务栏）矩形 [left, top, width, height]；取不到回退全屏。
     供「调整窗口」按屏幕可用区域排布多开号：第一排贴屏幕顶、最后一行贴任务栏、第5个居中。"""
@@ -589,24 +613,11 @@ def arrange_windows(cfg, app):
         app.toast(f"没检测到游戏窗口（标题含「{title}」），请先打开游戏")
         return 0
     wa = work_area()
-    wx, wy, ww, wh = wa[0], wa[1], wa[2], wa[3]
     margin = int(cfg.get("arrange_left_margin", 100))
-    col1 = wx + margin             # 最左列距左侧留 margin 空白（config.arrange_left_margin 可调）
-    col2 = wx + ww - bw            # 右列贴工作区右
-    row1y = wy                   # 第一排上边贴屏幕/工作区顶
-    row2y = wy + wh - bh         # 第二排（最后一行）下边贴任务栏(=工作区底)
-    cx = wx + ww // 2
-    cy = wy + wh // 2
-    slots = [
-        (col1, row1y),           # 号1 上左
-        (col2, row1y),           # 号2 上右
-        (col1, row2y),           # 号3 下左
-        (col2, row2y),           # 号4 下右
-        (cx - bw // 2, cy - bh // 2),   # 号5 屏幕正中
-    ]
     ok = 0
-    for w, (x, y) in zip(wins, slots):
+    for i, w in enumerate(wins):
         w.activate()
+        x, y = arrange_slot(i, bw, bh, work=wa, margin=margin)
         if w.resize_to(bw, bh, move_to=(x, y)):
             ok += 1
     app._game_connected = None     # 尺寸/位置变了，强制下次 tick 刷新药丸
