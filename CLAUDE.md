@@ -70,7 +70,7 @@ mhxy/
     account_history.py 账号库（登录游戏用）：10 个固定物理槽 + 有序登录队列（最多 5 个），纯逻辑零 GUI；详见文件 docstring
   tasks/  可插拔任务
     base.py     Task 基类 + 注册表（register/get_task/all_tasks）+ _make_rotation()（包多开轮转）+ dungeon_tasks()
-    sniper.py   SniperTask（秒装备）：preflight() 自检 + run() 主循环；刷新=每轮重进货架 _enter_shelf()
+    sniper.py   SniperTask（抢关注；内部名仍叫 sniper，tasks.sniper 不改名）：preflight() 自检 + run() 主循环；刷新=每轮重进货架 _enter_shelf()
     escort.py        EscortTask（运镖）：开活动→参加→押送普通镖银→循环押满次数
     treasure_map.py  TreasureMapTask（宝图）：开活动→自动判是否已有宝图(找不到「参加」或翻完全列表没认出卡片=已有,
                       跳过领取直接挖)→收图/挖宝 领奖 两阶段状态机
@@ -114,13 +114,16 @@ mhxy/
     calibrate.py 旧的命令行标定（已不被 GUI 调用，仅留作 CLI 备用）
   ui/
     theme.py            配色/字体/圆角令牌（改这里整体换肤）+ bind_wraplength 换行助手（见约束 8）
-    app.py              主窗口：侧边导航（日常置顶/默认）+ 通用页/任务配置页(ConfigPage)/工具页/SettingsPage/AboutPage
+    app.py              主窗口：侧边导航（起始页置顶/默认）+ 通用页/任务配置页(ConfigPage)/工具页/SettingsPage/AboutPage
     roi_overlay.py      全屏框选组件（纯 tk，冻结截图上拖框，返回屏幕绝对 ROI）
     calibrate_dialog.py GUI 内标定对话框（区域 + 模板缩略图画廊 + 加装备），按任务 CALIBRATION spec 驱动
     leader_gallery.py   队长ID 库画廊（见下「队长ID 库」约束）
     account_gallery.py  账号库弹窗（登录游戏用）：每号框**两张图**（账号卡片 + 角色卡片）入库 + 挑最多 5 个进登录队列，
                       仿队长ID 库；数据/槽文件见 core/account_history.py
     inventory_items_dialog.py 整理背包「物品清单」管理弹窗（缩略图+名字+动作下拉+框选添加，写 tasks.organize_bag.items）
+    daily_card.py       起始页「日常任务卡」：把「日常」页的运行控制（开始/停止 · 调整窗口/刷新 · 各设置开关）
+                        +「已勾选任务」只读清单搬到起始页；整卡可折叠；设置各写自己的命名空间、与「日常」页同源，
+                        运行由 DailyPage 单例 runner 承载（本卡只是入口 + 状态镜像，见文件 docstring）
     pages/organize_bag.py  OrganizeBagPage：整理背包独立页（工具分类页「整理背包」tab）——一键整理/标定/管理物品；
                           原在通用页卡片，迁到工具页；共享命名空间 tasks.organize_bag。「自动整理背包」开关
                           已迁到「日常」页控制区（影响日常运行中自动清背包）
@@ -135,9 +138,10 @@ mhxy/
     pages/login.py        LoginConfig：登录游戏的配置卡（客户端路径/启动参数/等待参数 + 标定入口 + 账号库按钮，共享 tasks.login）；
                           就绪度自绘（账号库里标几个用几个，账号本身不在这标）。日常页登录区**不设标定入口**，
                           只留「账号库…/开始登录」+「⚙ 设置」按钮跳转来这里（daily._goto_login_config）
+    pages/start.py       StartPage：起始页（导航「🏠 起始」，启动默认页）——登录游戏卡 + 日常任务卡（daily_card.DailyRunCard）
     pages/tuoying.py       TuoyingPage：拓印独立页（工具分类页「拓印」tab）——标定/就绪状态/一键跑完整临摹；
                           共享命名空间 tasks.tuoying（原在通用页公共标定，迁到这里）
-    pages/tools.py      工具分类页（Tab: 秒装备 / 整理背包 / 拓印）
+    pages/tools.py      工具分类页（Tab: 商城(抢关注) / 整理背包 / 拓印）
     ui_state.py         界面状态判定（与玩法无关）：is_main_screen 主界面判定 + is_present 标志判定（战斗标识等）
 ```
 
@@ -154,8 +158,12 @@ mhxy/
 - **日志统一到「全局日志面板」（约束，别再各页造日志框）**：日志框只此一处——常驻主窗口右侧（`App._build_log_panel`），
   统一出口 `App.log_line(msg, level, source)`。新页面**不要**自建日志框：设个类属性 `LOG_SOURCE = "短名"`，
   页内 `_log_line` 照范式写成一行转发 `self.app.log_line(msg, level, getattr(self,"LOG_SOURCE",None))`，
-  全局面板会按 source 打来源标签（如「秒装备 ›」）。一页里有多种来源（如通用页的组队/解散）就在
+  全局面板会按 source 打来源标签（如「抢关注 ›」）。一页里有多种来源（如通用页的组队/解散）就在
   `pump`/各消息处显式把第三个参 source 传成对应短名覆盖。
+  **日志来源可随任务动态变**：`TaskRunner._log` 会带上 `task.current_log_source`（无则 None）入队，
+  GUI 侧统一走 `runner.drain_logs()` 取 `(level,msg,source)`、source 为空才回退本页 `LOG_SOURCE`。
+  「日常」链即靠它把每步日志的来源标签显示成当前子任务（`DailyTask.current_log_source` 每步改写，
+  `DailyPage._SINGLE_SOURCE` 把任务名映射成短名如「宝图/刷副本」，非任务日志回退「日常」）。
 - **副本中枢（「刷副本」页 = DungeonPage）**：副本统一收进该页用**勾选框多选**、点「开始」**按展示顺序一个个顺序刷**
   （一个跑完自动接下一个；某副本 preflight/异常失败**跳过继续下一个**，最后汇总；「停止」即停整个队列）。
   **加新副本只需写个 `is_dungeon = True` 的 Task**、在 `tasks/__init__.py` import——
@@ -187,19 +195,30 @@ mhxy/
     （以 GUI 该区展示顺序当基准，**不能用勾选队列算序号**——只勾一个时队列序=0，但物理位置未必是列表第一个，曾进错副本）。
     「当前副本是第几个」= 该副本在其标签区展示顺序的序号（`tasks.base.enter_target_for`，与 GUI 勾选区同基准；
     日常引擎 `_run_collective_dungeons` 开跑前写入内存 `tasks.dungeon.enter_target={cat,pos}`，不落盘）。
-    侠士副本在点完「进入」后多一段入本步骤：轮询**各队员**窗口、用共用「确认」模板把队员确认点掉，
-    **队长不弹「确认」也绝不等他**（user 2026-09-28：曾把队长放进等待队列 → 永远等不齐 → 必中止；
-    只剩队长一个号时直接算完成、连 `confirm` 模板都不用标）。
+    侠士副本在点完「进入」后多一段入本步骤，**⚠ 2026-10-11 重构后流程**（`_xiashi_enter_popups`）：
+    **队长点「进入」→ 留下来在【队长窗口】等「确认弹窗」或「拓印弹窗」二选一**（互斥，弹一不弹二）——
+    · **确认弹窗** → 轮询各队员窗口、用共用「确认」按钮模板把队员确认点掉，继续进本。
+      **队长绝不当等待对象**（user 2026-09-28：曾把队长放进等待队列 → 永远等不齐 → 必中止；
+      只剩队长一个号时直接算完成、连 `confirm` 模板都不用标）。⚠ **队长窗口的确认弹窗里没有「确认」
+      按钮**（user 2026-10-11 拍板）：识别「确认已弹出」用**弹窗本身的标志** `confirm_popup`（可选标定，
+      标弹窗标题/边框等任何独特区域，不是按钮）——它只作信号、不点任何人；不标则没这信号、靠队员
+      确认轮询兜底（照样能进本）。**2026-10-11 文案统一改「准备」**：按钮/弹窗模板键改
+      `ready`/`ready_popup`、图标明「侠士本准备按钮 / 侠士本准备弹窗」（旧 `confirm`/`confirm_popup`
+      键有一次性迁移自动搬路径，不用重标）。
+    · **拓印弹窗** → `_auto_trace` 临摹两遍+上传（描→上传→再描→再传）→ **队长重新点「进入」**
+      （第一次进入被拓印拦截，描完回到列表再点一次；重进封顶 `tuoying_reenter_max` 次）→ 再等弹窗。
+    · **都没弹** → 队员窗口可能弹了确认（队长窗不一定弹）→ 确认轮询兜底。
     **队员确认超时 → 返回队长窗口重新点「进入」**（enter+confirm 外套 `enter_retry_max` 次重试）。
 **「拓印」临摹弹窗（user 2026-09-08 反馈、2026-09-09 升级）**：点「进入」后**队长窗口偶发**弹「拓印」临摹界面（队员不弹、
-    无放弃按钮），需按住鼠标沿随机图案描一遍再点「上传」。处理：识别 `tuoying_title` → `core/scribble.py` **沿图案骨架描摹**
+    无放弃按钮；与侠士「确认弹窗」互斥、弹其一不弹另一，见上），需按住鼠标沿随机图案描一遍再点「上传」。处理：识别 `tuoying_title` → `core/scribble.py` **沿图案骨架描摹**
     （先截绘制区画面、形态学分离前景线条→Zhang-Suen 细化取骨架→确定性贪心拆成尽量少的连续笔画→每笔按住沿骨架走+横向
     锯齿加宽笔迹；只描图案本身，**不盖满整区**——拓印判「完成度>60%」，描到图案外会拉低完成度）→ 点 `tuoying_upload` → 等界面消失；
     **资产全可选、不标不拖累就绪度**（人不标=遇弹窗转手动，描完脚本自动续跑；3 种触发见
     `tasks/dungeon_base.py` `_auto_trace`）。识别不出图案/截图失败 → 转手动兜底（等界面消失自动续跑），绝不盲目乱描。
     ⚠ **拓印要描两遍（user 2026-09-11 反馈）**：一次「上传」后**图案相同的界面会再次弹出**，须再描一遍+再传一次才算过——
     `_auto_trace` 已做成「描→上传→**确认界面不再重现**（`tuoying_gone_confirm_sec` 窗口内持续观察）→ 还弹就再来一轮」，
-    轮数上限 `tuoying_max_rounds`（默认3）；确认窗口防「界面一闪即误判通过」。
+    轮数上限归**拓印工具自己**：`tasks.tuoying.loop.tuoying_max_rounds`（默认2，在「工具」页「拓印」里改），
+    进本侧 `dungeon_base._auto_trace` 直接读这份、不再自设（旧 `tasks.dungeon.loop.tuoying_max_rounds` 有一次性迁移搬过来）；确认窗口防「界面一闪即误判通过」。
     `scribble.trace_pattern` 是通用能力：任何「沿图案描一遍」类校验都能复用。
     ⚠ **标定位置（user 2026-09-08 拍板、2026-09-18 迁工具页、同日拍板只读新值）**：`tuoying_title`/`tuoying_upload`/`tuoying_area` 在**「工具」页「拓印」**里标，
     存 `tasks.tuoying`（模板键集 `TUOYING_TPL_KEYS`），一次标定覆盖全部副本；读取 = `dungeon_base._load_flags` +
@@ -279,4 +298,6 @@ mhxy/
 ## 环境备注
 - Windows 11，PowerShell 主 shell；也有 Bash 工具。
 - git 推送走 Clash 代理端口 7897（见全局 CLAUDE.md），本项目已是 git 仓库。
+- 日志除全局面板外逐行同步写 `logs/日志-YYYYMMDD_HHMMSS.log`（每次启动一个，崩溃/强杀不丢；
+  `config.log_to_file` 可关、`log_keep_files` 自动清理保留 N 份，设置页「基础」区可调）。
 - 记忆目录有更详细背景：game-mhxy-shikong / sniper-design-decisions / project-architecture。

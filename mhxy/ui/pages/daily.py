@@ -1000,7 +1000,9 @@ class DailyPage(ctk.CTkFrame):
     # ------------------------------------------------------------------
     # 运行控制
     # ------------------------------------------------------------------
-    def _toggle_run(self):
+    def _toggle_run(self, save=True):
+        """开始/停止日常。save=False：调用方（起始页的日常卡）已在点击瞬间自行落盘设置，
+        这里就不再 _save()，免得用本页内存里可能过期的开关值（如时间上限）回写覆盖。"""
         if self.runner and self.runner.is_running():
             self.runner.stop()
             self._log_line("正在停止…", "warn")
@@ -1014,7 +1016,8 @@ class DailyPage(ctk.CTkFrame):
             self._log_line("已取消定时等待，本次不执行。", "warn")
             return
         # 正常启动路径：先看有没有设置定时延迟执行
-        self._save()
+        if save:
+            self._save()
         self.app.cfg = cfg_mod.load_config()
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         sched = (tc.get("loop", {}) or {}).get("schedule", "") or ""
@@ -1186,10 +1189,12 @@ class DailyPage(ctk.CTkFrame):
     # ---- 日志（由 App._tick 驱动）----
     def pump(self):
         if self.runner:
-            q = self.runner.log_queue
-            while not q.empty():
-                level, msg = q.get()
-                self._log_line(msg, level)
+            default_tag = getattr(self, "LOG_SOURCE", None)
+            for level, msg, src in self.runner.drain_logs():
+                # 来源短标签：日常链每步把当前子任务名随日志带出来（src=任务名），
+                # 映射成单跑同款短标签（src 为空=流程/收尾类日志 → 回退「日常」）。
+                tag = self._SINGLE_SOURCE.get(src, default_tag) if src else default_tag
+                self.app.log_line(msg, level, tag)
             if not self.runner.is_running() and self.btn_run.cget("text") != self.RUN_LABEL:
                 self._on_runner_finished()
         elif self._wait_until is not None:
@@ -1199,10 +1204,8 @@ class DailyPage(ctk.CTkFrame):
                 self._log_line("⏰ 定时时刻到，开始日常…", "warn")
                 self._start_runner()
         if self.single_runner:
-            q = self.single_runner.log_queue
             tag = self._single_tag or getattr(self, "LOG_SOURCE", None)
-            while not q.empty():
-                level, msg = q.get()
+            for level, msg, _src in self.single_runner.drain_logs():
                 self.app.log_line(msg, level, tag)
             if not self.single_runner.is_running():
                 self._single_finished()

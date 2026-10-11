@@ -8,7 +8,7 @@ from .. import theme as T
 from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
-from ..common import Card, bind_wraplength
+from ..common import Card, bind_wraplength, param_entry
 
 
 class TuoyingPage(ctk.CTkFrame):
@@ -25,6 +25,7 @@ class TuoyingPage(ctk.CTkFrame):
         self.runner = None
         self._tuo_cal_dialog = None   # 「标定（拓印）」去重槽
         self.lbl_ready = None         # 就绪状态标签
+        self.var_rounds = None        # 「临摹多少遍」输入框 StringVar
 
         self.grid_columnconfigure(0, weight=1)
 
@@ -96,6 +97,11 @@ class TuoyingPage(ctk.CTkFrame):
 
         ctk.CTkFrame(c, fg_color=T.BORDER, height=1).pack(fill="x", padx=16, pady=(10, 0))
 
+        self.var_rounds, _ = param_entry(
+            c, self.fonts, "临摹多少遍", "2", self._on_max_rounds,
+            tooltip="一次「上传」后图案相同的临摹界面可能再次弹出、要再描一次才算过；这里设最多描几遍，"
+                    "超了转手动。刷副本点「进入」偶遇的拓印弹窗也读这份设置（不另设）。")
+
         tip = ctk.CTkLabel(c, text="说明：拓印只由刷副本的队长窗口触发，队员不弹；自动临摹会认图案、描两遍并点上传，"
                                    "是全部副本共用的共享能力。它和整理背包一样是「共享能力」，平时不用特意来这个页——"
                                    "只有首次标定、或想验证描摹手感时才需要这里。",
@@ -111,6 +117,8 @@ class TuoyingPage(ctk.CTkFrame):
         tuo_tc = cfg_mod.task_config(self.app.cfg, "tuoying")
         tpl = (tuo_tc.get("templates") or {}) or {}
         reg = (tuo_tc.get("regions") or {}) or {}
+        if self.var_rounds is not None:
+            self.var_rounds.set(str((tuo_tc.get("loop") or {}).get("tuoying_max_rounds", 2)))
         area_ok = bool(reg.get("tuoying_area"))
         up_ok = bool(tpl.get("tuoying_upload"))
         title_ok = bool(tpl.get("tuoying_title"))
@@ -120,6 +128,26 @@ class TuoyingPage(ctk.CTkFrame):
                  + (f"；标题模板：{'●' if title_ok else '○'}(可选建议)" if title_ok else "；标题模板：○(可选建议)")
                  + ("　✓ 可全自动临摹" if ready else "　（需框选绘制区 + 上传按钮）"),
             text_color=T.SUCCESS if ready else T.WARN)
+
+    def _on_max_rounds(self, raw):
+        """「临摹多少遍」改动即保存到 tasks.tuoying.loop.tuoying_max_rounds（进本遇拓印弹窗同读这份）。"""
+        try:
+            val = max(1, int(float(raw)))
+        except (TypeError, ValueError):
+            val = None
+        cfg = cfg_mod.load_config()
+        loopc = cfg.setdefault("tasks", {}).setdefault(self.TASK_NAME, {}).setdefault("loop", {})
+        if val is None:
+            loopc.setdefault("tuoying_max_rounds", 2)
+            val = loopc["tuoying_max_rounds"]
+        else:
+            loopc["tuoying_max_rounds"] = val
+        cfg_mod.save_config(cfg)
+        self.app.cfg = cfg
+        try:
+            self.var_rounds.set(str(val))
+        except Exception:
+            pass
 
     def _open_tuoying_calibrate(self):
         """打开拓印标定（共享命名空间 tuoying），按 _tuo_cal_dialog 去重。"""
@@ -170,9 +198,7 @@ class TuoyingPage(ctk.CTkFrame):
     def pump(self):
         """被 App._tick 周期调用：抽干日志队列、检测运行结束。"""
         if self.runner:
-            q = self.runner.log_queue
-            while not q.empty():
-                level, msg = q.get()
+            for level, msg, _src in self.runner.drain_logs():
                 self._log_line(msg, level)
             if not self.runner.is_running() and self.btn_run.cget("text") != "▶  开始拓印":
                 self.btn_run.configure(text="▶  开始拓印", fg_color=T.ACCENT,

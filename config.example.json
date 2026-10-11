@@ -10,6 +10,8 @@
     "failsafe_corner": "top_right",
     "appearance": "dark",
     "debug_log": false,
+    "log_to_file": true,
+    "log_keep_files": 20,
     "targets": {
         "multi": false,
         "single_index": 0,
@@ -210,7 +212,8 @@
                 "shelf_load_wait_sec": 1.2,
                 "shelf_load_min_sec": 0.15,
                 "match_threshold": 0.85,
-                "after_buy_cooldown_sec": 2.0
+                "after_buy_cooldown_sec": 2.0,
+                "confirm_timeout_sec": 1.5
             },
             "regions": {
                 "listing": [
@@ -356,6 +359,10 @@
                 "leave_confirm_sec": 15.0,
                 "dungeon_select_wait_sec": 6,
                 "step_timeout_sec": 20,
+                "nav_debug_cooldown_sec": 5.0,
+                "nav_debug_max_shots": 8,
+                "nav_debug_postclick_sec": 1.0,
+                "nav_debug_postclick_diff": 2.0,
                 "battle_timeout_sec": 1800,
                 "dungeon_enter_box": [
                     0.0,
@@ -477,6 +484,9 @@
             "items": []
         },
         "tuoying": {
+            "loop": {
+                "tuoying_max_rounds": 2
+            },
             "regions": {
                 "tuoying_area": null
             },
@@ -543,7 +553,6 @@
                 "card_match_threshold": 0.9,
                 "npc_dialog_sec": 60,
                 "step_timeout_sec": 30,
-                "enter_clock_retries": 3,
                 "entry_skip_sec": 60,
                 "battle_timeout_sec": 600,
                 "max_rounds": 24,
@@ -554,6 +563,8 @@
                 "enter_retry_max": 3,
                 "enter_retry_pause": 1.2,
                 "confirm_sec": 40,
+                "captain_confirm_probe_sec": 5.0,
+                "tuoying_reenter_max": 3,
                 "scroll_step": -3,
                 "scroll_max_tries": 8,
                 "scroll_settle_sec": 0.35,
@@ -574,7 +585,8 @@
                 "select": null,
                 "xiashi_tab": null,
                 "enter_dungeon": null,
-                "confirm": null,
+                "ready": null,
+                "ready_popup": null,
                 "skip": null,
                 "clock": null,
                 "enter": null,

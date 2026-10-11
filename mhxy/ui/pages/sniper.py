@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""秒装备页。独立页面类，由 App 统一导入（App.PAGE_CLASSES）。"""
+"""抢关注页。独立页面类，由 App 统一导入（App.PAGE_CLASSES）。"""
+
+from datetime import datetime, timedelta
 
 import customtkinter as ctk
 
@@ -7,18 +9,19 @@ from .. import theme as T
 from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
-from ..common import Card, Pill, load_thumb, bind_wraplength
+from ..common import Card, Pill, load_thumb, bind_wraplength, Tooltip
 
 
 class SniperPage(ctk.CTkFrame):
     TASK_NAME = "sniper"
-    LOG_SOURCE = "秒装备"
+    LOG_SOURCE = "抢关注"
 
     def __init__(self, master, app):
         super().__init__(master, fg_color="transparent")
         self.app = app
         self.fonts = app.fonts
         self.runner = None
+        self._wait_until = None      # 延迟执行：晚于该时刻才真正启动（None=不在等待）
         self._cal_dialog = None
         self._thumbs = []  # 防止缩略图被 GC
 
@@ -36,10 +39,10 @@ class SniperPage(ctk.CTkFrame):
         bar.grid(row=0, column=0, sticky="ew", padx=4, pady=(2, 14))
         bar.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(bar, text="秒装备", font=self.fonts["title"], text_color=T.TEXT).grid(
+        ctk.CTkLabel(bar, text="抢关注", font=self.fonts["title"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w")
 
-        sub = ctk.CTkLabel(bar, text="盯市场列表，目标装备一出现立刻秒下单",
+        sub = ctk.CTkLabel(bar, text="盯关注/市场列表，目标装备一出现立刻秒下单",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
         sub.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         bind_wraplength(sub)
@@ -54,7 +57,7 @@ class SniperPage(ctk.CTkFrame):
         top = ctk.CTkFrame(card, fg_color="transparent")
         top.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 10))
         top.grid_columnconfigure(1, weight=1)
-        self.btn_run = ctk.CTkButton(top, text="▶  开始秒装备", font=self.fonts["btn"],
+        self.btn_run = ctk.CTkButton(top, text="▶  开始抢关注", font=self.fonts["btn"],
                                      height=46, width=200, corner_radius=T.RADIUS_SM,
                                      fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, text_color=T.ON_ACCENT,
                                      command=self._toggle_run)
@@ -69,6 +72,30 @@ class SniperPage(ctk.CTkFrame):
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
                       command=self.refresh).pack(side="left")
+
+        # 第二行：延迟执行（点「开始」后先等设定时长，到点才真正启动）
+        sch = ctk.CTkFrame(card, fg_color="transparent")
+        sch.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 14))
+        sched_lbl = ctk.CTkLabel(sch, text="延迟执行", font=self.fonts["body"], text_color=T.TEXT)
+        sched_lbl.pack(side="left")
+        self.var_delay_on = ctk.BooleanVar(value=False)
+        ctk.CTkSwitch(sch, text="", variable=self.var_delay_on, width=44,
+                      progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
+                      command=self._on_delay_toggle).pack(side="left", padx=(8, 0))
+        self.var_delay_hours = ctk.StringVar(value="0")
+        hours = ctk.CTkEntry(sch, textvariable=self.var_delay_hours, width=52,
+                             font=self.fonts["body"], fg_color=T.SURFACE_2, border_color=T.BORDER)
+        hours.pack(side="left", padx=(6, 0))
+        ctk.CTkLabel(sch, text="小时", font=self.fonts["body"], text_color=T.TEXT_DIM).pack(side="left", padx=(4, 0))
+        self.var_delay_minutes = ctk.StringVar(value="0")
+        mins = ctk.CTkEntry(sch, textvariable=self.var_delay_minutes, width=52,
+                            font=self.fonts["body"], fg_color=T.SURFACE_2, border_color=T.BORDER)
+        mins.pack(side="left", padx=(6, 0))
+        ctk.CTkLabel(sch, text="分钟", font=self.fonts["body"], text_color=T.TEXT_DIM).pack(side="left", padx=(4, 0))
+        for w in (sched_lbl, hours, mins):
+             Tooltip(w, "开启后，点「开始抢关注」不会立即执行，而是先等「小时 + 分钟」设定的时长，"
+                       "到点才真正开始（如设 0小时5分钟＝等 5 分钟）。等待中再点一次按钮可取消。",
+                    self.fonts)
 
     # ---- 主体：监控清单（铺满；日志已移到全局右栏）----
     def _build_body(self):
@@ -103,6 +130,14 @@ class SniperPage(ctk.CTkFrame):
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         # 清单
         self._render_watchlist(tc.get("watchlist", []))
+        # 延迟执行（开关/时长取自 tasks.sniper.loop.delay_hours / delay_minutes）
+        loopc = tc.get("loop", {}) or {}
+        dh = loopc.get("delay_hours", 0) or 0
+        dm = loopc.get("delay_minutes", 0) or 0
+        if getattr(self, "var_delay_on", None) is not None:
+            self.var_delay_on.set(bool(dh) or bool(dm))
+            self.var_delay_hours.set(str(dh))
+            self.var_delay_minutes.set(str(dm))
 
     def _render_watchlist(self, items):
         # 内容没变就别重建：切页时 refresh 会反复调到这里，整段拆了重画是「切页卡顿」的来源之一。
@@ -169,8 +204,32 @@ class SniperPage(ctk.CTkFrame):
             self._log_line("正在停止…", "warn")
             self.btn_run.configure(text="停止中…", state="disabled")
             return
-        # 启动
+        if self._wait_until is not None:
+            # 正在等待延迟 → 再点一次=取消
+            self._wait_until = None
+            self.btn_run.configure(text="▶  开始抢关注", fg_color=T.ACCENT,
+                                   hover_color=T.ACCENT_HOVER, state="normal")
+            self._log_line("已取消延迟等待，本次不执行。", "warn")
+            return
+        # 正常启动路径：先把当前开关/时长落盘，再看有没有设置延迟执行
+        self._save_delay()
         self.app.cfg = cfg_mod.load_config()
+        tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
+        loopc = tc.get("loop", {}) or {}
+        dh = loopc.get("delay_hours", 0) or 0
+        dm = loopc.get("delay_minutes", 0) or 0
+        total_min = dh * 60 + dm
+        if total_min > 0:
+            # 设了延迟且还没到 → 进入等待
+            self._wait_until = datetime.now() + timedelta(minutes=total_min)
+            self._log_line(f"已设延迟执行：{dh:.0f} 小时 {dm:.0f} 分钟（约到 {self._wait_until:%H:%M:%S}）后开始（再点一次按钮可取消）。",
+                           "warn")
+            self._update_wait_button()
+            return
+        self._start_run()
+
+    def _start_run(self):
+        """真正启动抢关注 runner（供：立即执行 / 延迟到点执行）。"""
         task_cls = get_task(self.TASK_NAME)
         self.runner = TaskRunner(task_cls(), self.app.cfg)
         ok, problems = self.runner.start()
@@ -178,11 +237,71 @@ class SniperPage(ctk.CTkFrame):
             for p in problems:
                 self._log_line("无法启动：" + p, "error")
             self.runner = None
+            self.btn_run.configure(text="▶  开始抢关注", fg_color=T.ACCENT,
+                                   hover_color=T.ACCENT_HOVER, state="normal")
             return
         self.btn_run.configure(text="■  停止", fg_color=T.DANGER, hover_color=T.DANGER_HOVER, state="normal")
 
+    @staticmethod
+    def _fmt_remaining(secs):
+        """把剩余秒数格式化成「x小时x分x秒」，用于等待中按钮的倒计时显示。"""
+        secs = max(0, int(secs))
+        h, rem = divmod(secs, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h}小时{m}分"
+        if m:
+            return f"{m}分{s}秒"
+        return f"{s}秒"
+
+    def _update_wait_button(self):
+        """等待中：按钮实时显示剩余时长倒计时（再点一次=取消）。"""
+        if self._wait_until is None or self.runner and self.runner.is_running():
+            return
+        rem = (self._wait_until - datetime.now()).total_seconds()
+        if rem <= 0:
+            return
+        text = f"延迟 {self._fmt_remaining(rem)} 后开始…（再点取消）"
+        if self.btn_run.cget("text") != text:
+            self.btn_run.configure(text=text, fg_color=T.WARN, hover_color=T.WARN_HOVER, state="normal")
+
+    def _save_delay(self):
+        """把当前「延迟执行」开关/时长写入 tasks.sniper.loop（delay_hours / delay_minutes）。"""
+        cfg = cfg_mod.load_config()
+        tc = cfg_mod.task_config(cfg, self.TASK_NAME)
+        loopc = tc.setdefault("loop", {})
+        try:
+            loopc["delay_hours"] = max(0, min(720, int(self.var_delay_hours.get() or 0)))
+        except (ValueError, TypeError):
+            loopc["delay_hours"] = 0
+        try:
+            loopc["delay_minutes"] = max(0, min(59, int(self.var_delay_minutes.get() or 0)))
+        except (ValueError, TypeError):
+            loopc["delay_minutes"] = 0
+        if not self.var_delay_on.get():
+            loopc["delay_hours"] = 0
+            loopc["delay_minutes"] = 0
+        cfg_mod.set_task_config(cfg, self.TASK_NAME, tc)
+        cfg_mod.save_config(cfg)
+        self.app.cfg = cfg
+
+    def _on_delay_toggle(self):
+        self._save_delay()
+        if self.var_delay_on.get():
+            try:
+                dh = int(self.var_delay_hours.get() or 0)
+            except (ValueError, TypeError):
+                dh = 0
+            try:
+                dm = int(self.var_delay_minutes.get() or 0)
+            except (ValueError, TypeError):
+                dm = 0
+            self._log_line(f"已开启延迟执行：点「开始抢关注」会先等 {dh} 小时 {dm} 分钟后才真正执行。", "warn")
+        else:
+            self._log_line("已关闭延迟执行：点「开始抢关注」立即执行。", "info")
+
     def _on_runner_finished(self):
-        self.btn_run.configure(text="▶  开始秒装备", fg_color=T.ACCENT,
+        self.btn_run.configure(text="▶  开始抢关注", fg_color=T.ACCENT,
                                hover_color=T.ACCENT_HOVER, state="normal")
 
     def _open_calibrate(self):
@@ -214,12 +333,25 @@ class SniperPage(ctk.CTkFrame):
     def pump(self):
         """被 App._tick 周期调用：抽干日志队列、检测运行结束、刷新游戏连接药丸。"""
         if self.runner:
-            q = self.runner.log_queue
-            while not q.empty():
-                level, msg = q.get()
+            for level, msg, _src in self.runner.drain_logs():
                 self._log_line(msg, level)
-            if not self.runner.is_running() and self.btn_run.cget("text") != "▶  开始秒装备":
+            if not self.runner.is_running() and self.btn_run.cget("text") != "▶  开始抢关注":
                 self._on_runner_finished()
+        elif self._wait_until is not None:
+            # 延迟等待中：倒计时显示在按钮上，到点才启动
+            if datetime.now() >= self._wait_until:
+                self._wait_until = None
+                self._log_line("⏰ 延迟时间到，开始抢关注…", "warn")
+                self._start_run()
+            else:
+                self._update_wait_button()
+
+    def stop_pending(self):
+        """急停/全局停止钩子：取消正在进行的定时等待（尚未启动的任务也要能停）。"""
+        if self._wait_until is not None:
+            self._wait_until = None
+            self.btn_run.configure(text="▶  开始抢关注", fg_color=T.ACCENT,
+                                   hover_color=T.ACCENT_HOVER, state="normal")
 
     def _log_line(self, msg, level="info"):
         # 日志统一汇到 App 右侧全局面板，按本页 LOG_SOURCE 打来源标签。

@@ -17,11 +17,15 @@
      取「当前这个副本在【同标签区】展示顺序里的第几个」命中点来点（以 GUI 该区展示顺序当基准，
      不能用勾选队列算——只勾一个它在队列里是 0，物理位置却未必是列表第一个）。
      「当前副本是第几个」由刷副本页在启动时写入 tasks.dungeon.enter_target 运行时字段。
-   ④ 侠士「确认」轮询：队长点完「进入」后，轮询各队员窗口，用共用「确认」模板把各队员弹的确认点掉；
-      全确认完再继续。**队长窗口不弹「确认」（他点的「进入」）、绝不等它**——曾把队长也放进等待队列，
-      导致永远等不齐 → 每次都超时重试 → 最后一律中止（user 2026-09-28 反馈修复）。
-      某队员确认超时 → 返回队长窗口重新点「进入」（本基类在 enter+confirm 外套一层重试）；
-      只有队长一个号时直接算确认完成（连「确认」模板都不用标）。
+④ 侠士「准备/拓印」二选一（user 2026-10-11 拍板重构，见 _xiashi_enter_popups）：队长点完「进入」后
+       留在【队长窗口】等「准备弹窗」或「拓印弹窗」——二者互斥、弹一不弹二：
+       「准备弹窗」→ 轮询各队员窗口、用共用「准备」按钮模板把队员弹的准备点掉；**队长绝不当等待对象**
+       （曾把队长也放进等待队列 → 永远等不齐 → 每次都超时重试 → 最后一律中止，user 2026-09-28）；
+       ⚠ 队长窗口的准备弹窗里**没有「准备」按钮**（user 2026-10-11 拍板），识别「准备已弹出」靠
+       **弹窗本身的标志** `ready_popup`（可选标定），它只作信号、不点任何人。
+       「拓印弹窗」→ 临摹两遍+上传（`_auto_trace`）→ **队长重新点「进入」**（第一次进入被拓印拦截，
+       描完回到列表再点一次）→ 再等弹窗；都没弹 → 队员窗可能弹准备 → 准备轮询兜底。
+       某队员准备超时 → 返回队长窗口重新点「进入」（本基类在 enter+ready 外套一层重试）。
   ⑤ 「拓印」临摹弹窗（user 2026-09-08 反馈）：点「进入」后队长窗口【偶发】弹「拓印」临摹界面
      （只有队长弹、队员不弹），需按住鼠标沿随机图案描一遍再点「上传」才能继续进本、且无放弃/跳过按钮。
      处理：识别「拓印」标题 → 在标定的绘制区做拟人化区域填扫（core/scribble，图案随机但位置固定）→ 点上传；
@@ -64,9 +68,10 @@ DUNGEON_NS = "dungeon"                       # 共享配置命名空间（tasks.
 # 在「工具」页「拓印」里标定，见 TUOYING_TPL_KEYS；clock 存 tasks.shared.templates（「通用」页公共标定，
 # task_config 叠加注入本任务 templates）；battle_flag 同理存 shared。由 _load_flags 统一读入）。
 # 顺序按操作流程走，并作为标定向导里模板画廊的展示顺序（clock/battle_flag 已不在画廊，被 shared 取代）：
-#   卡片(普通/侠士) → 参加 → 选择副本 → 侠士区标签页(侠士进副本前) → 进入 → 侠士确认(侠士) → 跳过/进入战斗 → 结算界面。
+#   卡片(普通/侠士) → 参加 → 选择副本 → 侠士区标签页(侠士进副本前) → 进入 → 队员准备按钮(侠士) → 准备弹窗标志(可选) → 跳过/进入战斗 → 结算界面。
 SHARED_TPL_KEYS = ["entry_common", "entry_xiashi", "join", "select",
-                   "xiashi_tab", "enter_dungeon", "confirm", "skip", "clock", "enter",
+                   "xiashi_tab", "enter_dungeon", "ready", "ready_popup",
+                   "skip", "clock", "enter",
                    "settlement", "tuoying_title", "tuoying_upload", "battle_flag"]
 
 # 标定向导/就绪判据用的共享标定 spec（一次标定所有副本）
@@ -86,8 +91,13 @@ DUNGEON_CALIBRATION = {
         ("select", "选择副本按钮", "「选择副本」对话框里的按钮（所有副本共用）"),
         ("xiashi_tab", "侠士区标签页", "「选择副本」里的「侠士区」标签页，侠士副本先进副本前先点到它（仅侠士用）"),
         ("enter_dungeon", "「进入」按钮", "选择副本对话框里的「进入」按钮（普通/侠士两标签区共用）"),
-        ("confirm", "侠士「确认」按钮", "侠士进副本后各队员弹的「确认」按钮（仅侠士用；队长不弹这个、"
-                                        "不等他点）"),
+("ready", "侠士准备按钮", "队员窗口准备弹窗里可点的「准备」按钮（连按钮一起框，仅侠士用，必标）："
+                                  "轮询队员时点它。⚠ 队长窗口的准备弹窗里**没有**这个按钮，"
+                                  "识别队长是否弹出准备弹窗请用『侠士本准备弹窗』，别用本项"),
+        ("ready_popup", "侠士本准备弹窗", "准备弹窗**本身的特征**（如弹窗标题/边框/文字，框弹窗任何一块独特区域；"
+                                   "**不是「准备」按钮**——队长窗口的准备弹窗里没有准备按钮，只能靠这个标志认出"
+                                   "「准备已弹出」从而立即开始点队员准备）。可选：不标则等不到该信号、靠队员准备轮询"
+                                   "兜底，照样能进本", True),
         ("skip", "跳过剧情按钮", "副本内每轮先点的「跳过剧情」按钮（共用）"),
         ("enter", "进入战斗按钮", "寻路到位后点它发起本场的「进入战斗」按钮（共用）"),
         ("settlement", "结算界面", "副本结束时的结算画面（识别到即判结束收尾，共用）"),
@@ -173,7 +183,7 @@ class DungeonBaseTask(Task):
         templates = tc.get("templates", {})
         req_keys = [(k, label) for (k, label, _d, *_x) in DUNGEON_CALIBRATION["templates"]
                     if not (_x and _x[0])                                    # 第4元组=可选资产（拓印等），不参与就绪与 preflight
-                    and not ((k in ("confirm", "xiashi_tab")) and self.cat != "xiashi")
+                    and not ((k in ("ready", "xiashi_tab")) and self.cat != "xiashi")
                     and k != "entry_xiashi"]               # 侠士卡可选：侠士本兜底用普通卡（见 probe）
         for k, label in req_keys:
             p = templates.get(k)
@@ -332,16 +342,13 @@ class DungeonBaseTask(Task):
         still_diff = float(loop.get("still_diff", 6.0))
         grace = max(0.0, min(0.25, float(loop.get("settle_grace", 0.05))))
         settle_th = threshold - grace
-        clock_retry_max = max(0, int(loop.get("enter_clock_retries", 3)))
         poll_sec = max(0.2, float(loop.get("poll_sec", 1.0)))   # 轮询间隔：空闲/等战斗的空转节奏，可配，默认 1s
         stpl = self.flags.get("settlement")
 
         fights = 0                    # 已点「进入战斗」发起的场次（达 max_rounds 强制收尾）
         stage_at = time.time()        # 当前阶段起点（开局=刚进副本）
         stage_to = entry_to           # 当前阶段空闲超时
-        awaiting_enter = False        # 已点过小闹钟、处于寻路「等进入战斗」等待窗口
         clock_cool_until = 0.0        # 小闹钟冷却截止：冷却期内小闹钟再次出现不再重复点
-        clock_retry = clock_retry_max  # 寻路等待超时后点小闹钟重新寻路的剩余次数
         bl_warned = False             # battle_flag 未标定只告警一次
         last_diag = 0.0
         # 静止画面兜底状态（结算界面一闪而过/副本已结束的静止场景）
@@ -385,7 +392,7 @@ class DungeonBaseTask(Task):
                     if stage_to != battle_to:
                         stage_at = now
                         stage_to = battle_to
-                        awaiting_enter = False
+                        clock_cool_until = 0.0
                     self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
                     continue
 
@@ -396,10 +403,8 @@ class DungeonBaseTask(Task):
                 ctx.log(f"点「跳过剧情」（{hit[2]:.3f}）。", level="hit")
                 stage_at = now
                 stage_to = step_to
-                awaiting_enter = False
                 clock_cool_until = 0.0
-                clock_retry = clock_retry_max
-                self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
+                self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
                 continue
 
             # ⑤ 进入战斗：点它发起本场，进入战斗等待（等打完由战斗标识/跳过/结算承接）。
@@ -411,23 +416,20 @@ class DungeonBaseTask(Task):
                 ctx.log(f"第 {fights} 场：点「进入战斗」（{hit[2]:.3f}），等它打完…", level="hit")
                 stage_at = now
                 stage_to = battle_to
-                awaiting_enter = False
                 clock_cool_until = 0.0
-                self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
+                self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
                 continue
 
             # ⑥ 小闹钟：点它寻路（不在冷却期才点，防寻路动画期间画面里图标未消失被反复重寻路；
-            #    真没寻到位时由下方超时兜底点它重寻路）
+            #    真没寻到位时由冷却机制自然重试）
             hit = self._match_scene(cur, rect, "clock", threshold)
-            if hit is not None and now >= clock_cool_until and not awaiting_enter:
+            if hit is not None and now >= clock_cool_until:
                 ctx.mouse.click(hit[0], hit[1])
                 ctx.log(f"点「小闹钟」寻路（{hit[2]:.3f}）。", level="hit")
                 stage_at = now
                 stage_to = step_to
-                awaiting_enter = True
-                clock_cool_until = now + step_to
-                clock_retry = clock_retry_max
-                self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
+                clock_cool_until = now + 3.0  # 固定 3s 冷却
+                self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
                 continue
 
             # —— 阶段空闲超时兜底：长时间既无动作也无状态变化 → 副本可能卡住或已结束，进收尾 ——
@@ -438,31 +440,6 @@ class DungeonBaseTask(Task):
                 self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
                 continue
 
-            if awaiting_enter:
-                # 寻路等待超时：小闹钟仍在画面 → 点它重新寻路再等（最多 enter_clock_retries 次）；
-                # 小闹钟没了 → 副本可能已结束；重试耗尽 → 无法推进。
-                if clock_retry > 0:
-                    ch = self._match_scene(cur, rect, "clock", threshold)
-                    if ch is not None:
-                        ctx.log(f"等「进入战斗」超时({stage_to:.0f}s)，小闹钟仍在，点它重新寻路（还剩 {clock_retry} 次）。",
-                                level="warn")
-                        ctx.mouse.click(ch[0], ch[1])
-                        clock_retry -= 1
-                        stage_at = now
-                        stage_to = step_to
-                        clock_cool_until = now + step_to
-                        self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
-                        continue
-                if clock_retry <= 0:
-                    ctx.log(f"等「进入战斗」超时({stage_to:.0f}s)，已重寻路多次小闹钟仍在，判定副本可能已结束。",
-                            level="warn")
-                else:
-                    ctx.log(f"等「进入战斗」超时({stage_to:.0f}s)且小闹钟已不在，判定副本可能已结束。", level="warn")
-                    if self.flags.get("battle_flag") is None and not bl_warned:
-                        bl_warned = True
-                        ctx.log("可能因战斗已开始而未现「进入战斗」按钮（自动开战副本）；若反复超时，请到 "
-                                "「通用」页「标定（公共区域）」补标『战斗标识』。", level="warn")
-                return True
             if self.flags.get("battle_flag") is None and not bl_warned:
                 bl_warned = True
                 ctx.log("等副本推进超时且未标定共享 battle_flag（自动开战副本用它判战斗是否已开始）。",
@@ -528,23 +505,23 @@ class DungeonBaseTask(Task):
             self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
         return False
 
-    # ---- 侠士：轮询所有**队员**窗口点「确认」（队长不点，user 2026-09-28）----
-    # 队长窗口进侠士本不弹「确认」（他点的「进入」），把它算进去会永远等不齐 →
-    # 每次都超时重试、最后一律中止。故按 role 只等队员；只剩队长时直接算确认完成。
-    def _confirm_all_windows(self, ctx, assignments, regions, threshold, timeout):
+    # ---- 侠士：轮询所有**队员**窗口点「准备」按钮。队长窗口的「准备弹窗」里没有「准备」按钮，
+    # 只靠 ready_popup 作识别信号（见 _wait_captain_enter_popup），无需也不去点；队长绝不当等待对象——
+    # 曾因等他而永远等不齐 → 每次都超时重试、最后一律中止（user 2026-09-28 / 2026-10-11 拍板）。
+    def _ready_all_windows(self, ctx, assignments, regions, threshold, timeout):
         remaining = [(w, r) for (w, r) in assignments if r != TeamFormation.ROLE_CAPTAIN]
         if not remaining:
-            ctx.log("只有队长在队列里（队长不弹「确认」），直接确认完成。", level="info")
+            ctx.log("只有队长一个号（队长准备弹窗无「准备」按钮、无需点），直接准备完成。", level="info")
             return True
-        tpl = self.flags.get("confirm")
+        tpl = self.flags.get("ready")
         if tpl is None:
-            ctx.log("侠士「确认」模板未标定。", level="error")
+            ctx.log("侠士「准备」按钮模板未标定。", level="error")
             return False
         deadline = time.time() + timeout
         while remaining and not ctx.should_stop():
             if time.time() > deadline:
                 names = "、".join(w.label for w, _ in remaining)
-                ctx.log(f"等「确认」超时 {timeout:.0f}s，还没点到的是：{names} → "
+                ctx.log(f"等「准备」超时 {timeout:.0f}s，还没点到的是：{names} → "
                         "交回队长重新点「进入」。", level="warn")
                 break
             for wctx, role in list(remaining):
@@ -557,17 +534,51 @@ class DungeonBaseTask(Task):
                 rect = self._scene_rect(wctx, regions)
                 # 必须用**该队员自己的**窗口对象抓（rect 也是它的）：若用队长对象，
                 # _occluded 会拿队员矩形去比对队长的 GA_ROOT → 恒判「被遮」→ 反把队长切前台，
-                # 随后点击落到已失去焦点的队员号上，确认点不进。user 2026-10-09 修。
+                # 随后点击落到已失去焦点的队员号上，准备点不进。user 2026-10-09 修。
                 cur = wctx.window.grab_screen(rect) if rect else None
                 hit = vision.match(cur, tpl, threshold) if cur is not None else None
                 if hit is not None:
                     sx, sy = (rect[0] if rect else 0), (rect[1] if rect else 0)
                     wctx.mouse.click(sx + hit[0], sy + hit[1])
-                    wctx.log(f"（{wctx.label}）已点确认。", level="hit")
+                    wctx.log(f"（{wctx.label}）已点准备。", level="hit")
                     remaining.remove((wctx, role))
             if remaining:
                 self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
         return not remaining
+
+    # ---- 点完「进入」后在【队长窗口】等两种弹窗二选一（user 2026-10-11 拍板：准备/拓印互斥）----
+    def _wait_captain_enter_popup(self, ctx, assignments, regions, threshold, wait_sec):
+        """轮询【队长窗口】画面：出现「准备弹窗」返回 "ready"、出现「拓印弹窗」返回 "tuoying"、
+        超时/无弹窗返回 None。互斥：准备与拓印弹了其一就不会弹另一个，返回的第一个即唯一的路。
+        只盯队长窗（点「进入」后弹窗第一道卡落在队长号上）；没标定对应模板=不会命中该路。
+        准备弹窗用 **弹窗本身标志 `ready_popup`**（不是「准备」按钮，队长弹窗里没有按钮）。"""
+        cap = next((w for w, r in assignments if r == TeamFormation.ROLE_CAPTAIN), None)
+        # 准备弹窗识别用**弹窗本身**的标志（ready_popup），不用「准备按钮」(ready)——队长窗口的
+        # 准备弹窗里没有准备按钮（user 2026-10-11 拍板）。ready_popup 未标 → 该路永不命中，
+        # 交给队员准备轮询兜底。
+        t_ready = self.flags.get("ready_popup")
+        t_tuoying = self.flags.get("tuoying_title")
+        if cap is None or cap.window.rect() is None:
+            return None
+        deadline = time.time() + wait_sec
+        while not ctx.should_stop():
+            if time.time() > deadline:
+                return None
+            if not cap.window.is_foreground():
+                if not cap.window.activate():
+                    self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
+                    continue
+            rect = self._scene_rect(cap, regions)
+            cur = cap.window.grab_screen(rect) if rect else None
+            if cur is None:
+                self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
+                continue
+            if t_ready is not None and vision.match(cur, t_ready, threshold) is not None:
+                return "ready"
+            if t_tuoying is not None and vision.match(cur, t_tuoying, threshold) is not None:
+                return "tuoying"
+            self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
+        return None
 
     def _tuoying_area(self, ctx):
         """有效拓印绘制区：读 tasks.tuoying（「工具」页「拓印」标定）；读不到返回 None。
@@ -576,17 +587,24 @@ class DungeonBaseTask(Task):
         tuo = (tasks.get("tuoying", {}) or {}).get("regions", {}) or {}
         return tuo.get("tuoying_area") or None
 
-    # ---- 进副本主入口：点「进入」 + 偶发「拓印」临摹弹窗处理 +（侠士）各队员确认 + 显式校验进本 ----
+    # ---- 进副本主入口：点「进入」 +（侠士）准备/拓印弹窗二选一 + 显式校验进本 ----
     def _enter_with_tuoying(self, ctx, assignments, loop, regions, threshold, step_to):
-        """点「进入」→ 处理拓印 →（侠士：轮询各队员点「确认」）→ 显式校验已进本；
-        任一环节没过则回队长重新点「进入」，重试 enter_retry_max 次。
+        """点「进入」→ 处理弹窗 → 显式校验已进本；任一环节没过则回队长重新点「进入」，
+        重试 enter_retry_max 次。
+
+        ⚠ 侠士本进本流程（user 2026-10-11 拍板重构，见 _xiashi_enter_popups）：
+          队长点「进入」后，留在【队长窗口】等「准备弹窗」或「拓印弹窗」二选一（互斥，弹一不弹二）——
+          · 「准备弹窗」（识别靠弹窗本身的标志 `ready_popup`，**不是「准备」按钮**——队长窗口的
+            准备弹窗里没有准备按钮）→ 轮询各队员窗口点侠士「准备」按钮 → 继续进本；
+          · 「拓印弹窗」→ 临摹图案→上传→临摹图案→上传（`_auto_trace` 描两遍）→ **队长重新点「进入」**
+            （第一次进入被拓印拦截，描完回到列表再点一次）→ 再等弹窗，直到走准备路或直接进本；
+          · 都没弹（队长窗没等到）→ 队员窗口可能弹了准备（队长窗不一定弹）→ 准备轮询兜底。
 
         普通/侠士进本后的判据统一为 _verify_entered（识别到 结算/跳过剧情/小闹钟 任一出现
-        才算进本）。唯一差异：侠士本多一段「轮询各队员窗口点确认」（队长不弹、不等，
-        见 _confirm_all_windows）。"""
+        才算进本）。唯一差异：侠士本多「准备轮询」——轮询各队员窗口点「准备」按钮，
+        队长窗口的准备弹窗不点（无按钮）。"""
         retries = max(1, int(loop.get("enter_retry_max", 3)))
         retry_pause = loop.get("enter_retry_pause", 1.2)
-        is_xiashi = self.cat == "xiashi"
         for attempt in range(1, retries + 1):
             if ctx.should_stop():
                 return False
@@ -594,18 +612,19 @@ class DungeonBaseTask(Task):
                 ctx.log(f"{self.title}「进入」未点到（第 {attempt} 次），中止。", level="error")
                 return False
             self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
-            if not self._handle_tuoying(ctx, loop, regions, threshold):
-                return False
-            if is_xiashi:
-                confirmed = self._confirm_all_windows(ctx, assignments, regions, threshold,
-                                                      loop.get("confirm_sec", 40))
-                # 确认阶段把各队员逐个切前台，此刻前台停在最后一个队员号；后面抓的是队长窗口、
-                # _run_rounds 也操作队长，故先切回队长，否则首批点击会被后台号吞掉。
-                self._focus(ctx)
-                if not confirmed:
-                    ctx.log(f"各队员确认未收齐（第 {attempt} 次），返回队长重新点「进入」…", level="warn")
+
+            if self.cat == "xiashi":
+                outcome = self._xiashi_enter_popups(ctx, assignments, loop, regions,
+                                                    threshold, step_to)
+                if outcome == "abort":
+                    return False
+                if outcome == "retry":
+                    ctx.log(f"侠士确认未收齐（第 {attempt} 次），返回队长重新点「进入」…", level="warn")
                     self._interruptible_sleep(ctx, self._jitter(retry_pause, ctx))
                     continue
+            elif not self._handle_tuoying(ctx, loop, regions, threshold):
+                return False
+
             if self._verify_entered(ctx, loop, regions, threshold,
                                     loop.get("enter_check_sec", 10.0)):
                 return True
@@ -615,6 +634,45 @@ class DungeonBaseTask(Task):
         ctx.log(f"{self.title}多次点「进入」仍未进本（可能被拓印/弹窗拦截且模板未标定，"
                 "或侠士确认后未验到进本），中止。", level="error")
         return False
+
+    # ---- 侠士：点「进入」后的「准备/拓印」弹窗处置循环（user 2026-10-11 重构）----
+    def _xiashi_enter_popups(self, ctx, assignments, loop, regions, threshold, enter_timeout):
+        """在【队长窗口】等「准备弹窗」或「拓印弹窗」二选一（互斥）依次处置：
+          · "ready" → 轮询各队员点「准备」按钮（准备弹窗识别靠 `ready_popup` 弹窗标志，见
+            _wait_captain_enter_popup）→ 返回 "ok"（可进 verify）；队员准备未收齐 → 返回 "retry"（外层重进）。
+          · "tuoying" → 临摹两遍+上传（_auto_trace 内部描两遍）→ **队长重新点「进入」**
+            → 再等弹窗，循环到走准备路或都没弹（队员准备兜底）。
+          · None（队长窗在 wait_sec 内没等到弹窗）→ 队员窗可能弹了准备 → 准备轮询兜底。
+        返回 "ok" / "retry" / "abort"（反复弹窗收不了口则中止）。"""
+        confirm_sec = loop.get("confirm_sec", 40)
+        popup_wait = float(loop.get("captain_confirm_probe_sec", 5.0))
+        # 防死循环：拓印偶发且描完重进可反复，封顶重进轮数（正常一次拓印即过）
+        for _ in range(max(1, int(loop.get("tuoying_reenter_max", 3)))):
+            if ctx.should_stop():
+                return "abort"
+            popup = self._wait_captain_enter_popup(ctx, assignments, regions,
+                                                   threshold, popup_wait)
+            if popup == "ready":
+                ok = self._ready_all_windows(ctx, assignments, regions, threshold, confirm_sec)
+                self._focus(ctx)
+                return "ok" if ok else "retry"
+            if popup == "tuoying":
+                if not self._handle_tuoying(ctx, loop, regions, threshold):
+                    return "abort"
+                # 两遍临摹+上传完成后，拓印界面已关：队长重新点「进入」再等弹窗（user 2026-10-11）
+                self._focus(ctx)
+                if not self._click_enter_multi(ctx, loop, regions, threshold, enter_timeout):
+                    ctx.log("拓印临摹完成后重新点「进入」失败，中止。", level="error")
+                    return "abort"
+                ctx.log("拓印临摹完成，队长重新点「进入」…", level="info")
+                self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+                continue
+            # 队长窗没等到弹窗 → 队员可能弹了准备（队长窗不一定弹）→ 准备轮询兜底
+            ok = self._ready_all_windows(ctx, assignments, regions, threshold, confirm_sec)
+            self._focus(ctx)
+            return "ok" if ok else "retry"
+        ctx.log("多次点「进入」后仍反复弹准备/拓印弹窗、收不了口，中止。", level="error")
+        return "abort"
 
     # ---- 拓印临摹弹窗：探测 + 自动描 + 手动兜底。返回 False=中止 ----
     def _handle_tuoying(self, ctx, loop, regions, threshold):
@@ -644,6 +702,13 @@ class DungeonBaseTask(Task):
         return False
 
     # ---- 自动临摹：沿图案描 + 点上传 + 等界面消失；一次上传后可能再弹（要拓印两遍）→ 循环到不再重现 ----
+    def _tuoying_max_rounds(self, ctx, loop):
+        """临摹「多少遍」的设置归拓印工具自己（tasks.tuoying.loop.tuoying_max_rounds，工具页可改）——
+        进本弹窗不再自己设。读不到时用旧 tasks.dungeon.loop 值兜底（迁移后一般不存在）。"""
+        tuo = ((ctx.cfg or {}).get("tasks", {}) or {}).get("tuoying", {}) or {}
+        v = ((tuo.get("loop", {}) or {}).get("tuoying_max_rounds")) or loop.get("tuoying_max_rounds", 2)
+        return max(1, int(v))
+
     def _auto_trace(self, ctx, loop, regions, threshold):
         area = regions.get("tuoying_area")
         up_key = self.flags.get("tuoying_upload")
@@ -653,7 +718,7 @@ class DungeonBaseTask(Task):
                     level="warn")
             ctx.log("想全自动就在「通用」页→标定（公共区域）里补标这两项。", level="warn")
             return self._wait_tuoying_gone(ctx, loop, regions, threshold)
-        max_rounds = max(1, int(loop.get("tuoying_max_rounds", 3)))
+        max_rounds = self._tuoying_max_rounds(ctx, loop)
         confirm_sec = loop.get("tuoying_gone_confirm_sec", 1.2)
         for rnd in range(1, max_rounds + 1):
             if ctx.should_stop():

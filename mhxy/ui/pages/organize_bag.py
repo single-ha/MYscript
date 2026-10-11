@@ -193,9 +193,7 @@ class OrganizeBagPage(ctk.CTkFrame):
     def pump(self):
         """被 App._tick 周期调用：抽干日志队列、检测运行结束。"""
         if self.runner:
-            q = self.runner.log_queue
-            while not q.empty():
-                level, msg = q.get()
+            for level, msg, _src in self.runner.drain_logs():
                 self._log_line(msg, level)
             if not self.runner.is_running() and self.btn_run.cget("text") != "▶  一键整理":
                 self.btn_run.configure(text="▶  一键整理", fg_color=T.ACCENT,

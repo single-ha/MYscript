@@ -95,24 +95,41 @@ class TaskContext:
         未开开关 / 未标定满图标 / 没满 → 静默返回，不打扰任务流程。"""
         ob = self.task_cfg("organize_bag")
         if not ob.get("auto_organize"):
+            self.log("自动整理·跳过：开关未开", level="debug")
             return
         loop = ob.get("loop", {}) or {}
         interval = loop.get("auto_check_interval_sec", 20)
         now = time.time()
         if now - self._last_bag_check < interval:
+            self.log(f"自动整理·节流：距上次 {now - self._last_bag_check:.0f}s < {interval}s", level="debug")
             return
         self._last_bag_check = now
         tpl_path = (ob.get("templates", {}) or {}).get("bag_full_icon")
         tpl = vision.load_template(tpl_path) if tpl_path else None
         if tpl is None:
+            self.log("自动整理·跳过：未标定「背包满图标」模板", level="debug")
             return                       # 没标定「背包满图标」→ 无从判断，静默跳过
         rect = self.window.rect()
         if rect is None:
+            self.log("自动整理·跳过：窗口未定位", level="debug")
             return
         scene = self.window.grab_screen(rect)
         if scene is None:
+            self.log("自动整理·跳过：抓屏失败", level="debug")
             return
-        if vision.match(scene, tpl, loop.get("match_threshold", 0.85)) is None:
+        threshold = loop.get("match_threshold", 0.85)
+        if vision.match(scene, tpl, threshold) is None:
+            score, pos = vision.best_score(scene, tpl)
+            self.log(f"自动整理·未满（best={score:.3f}，阈值={threshold}，位置={pos}）", level="debug")
+            if self.cfg.get("debug_log"):   # 调错用：把交接瞬间全窗图存下来（开「调试日志」才写）
+                try:
+                    vision.save_debug_image(
+                        scene, "captures/auto_organize_dbg.png",
+                        hits=[(int(pos[0]), int(pos[1]), score)] if pos else [],
+                        tpl_wh=(tpl.shape[1], tpl.shape[0]) if pos else None,
+                        note="auto_organize debug (bag-full best-score)")
+                except Exception:
+                    pass
             return                       # 背包没满
         self.log("检测到背包已满 → 自动整理背包。", level="hit")
         try:

@@ -121,13 +121,13 @@ class Task:
     #   特殊任务（如拓印单跑需拓印临摹界面已在前台）覆盖为 False，启动时绝不 ESC 关它。
     ENSURE_MAIN_ON_START = True
     # True=挂起弹窗守卫（_defuse_popup 直接跳过）：任务的主画面本身就是「带×的弹窗式界面」
-    #   （如秒装备停在商城/摆摊，右上角就有「×」），守卫会把界面自带的×误当弹窗点掉。该类任务置 True。
+    #   （如抢关注停在商城/摆摊，右上角就有「×」），守卫会把界面自带的×误当弹窗点掉。该类任务置 True。
     POPUP_GUARD_OFF = False
 
     # 标定向导（calibrate_dialog）按此 spec 驱动渲染。子类覆盖：
     #   {"regions":  [(key, 显示名, 说明), ...],     # 框选区域，写入 tc["regions"][key]
     #    "templates":[(key, 显示名, 说明), ...],     # 框选裁图存模板，写入 tc["templates"][key]
-    #    "watchlist": bool}                          # 是否显示「装备清单」卡片（秒装备专用）
+    #    "watchlist": bool}                          # 是否显示「装备清单」卡片（抢关注专用）
     CALIBRATION = {"regions": [], "templates": [], "watchlist": False}
 
     def run(self, ctx):
@@ -174,7 +174,7 @@ class Task:
         return True, []
 
     # ------------------------------------------------------------------
-    # 与玩法无关的共享工具（秒装备/刷副本等都用）
+    # 与玩法无关的共享工具（抢关注/刷副本等都用）
     # ------------------------------------------------------------------
     def _is_admin(self):
         try:

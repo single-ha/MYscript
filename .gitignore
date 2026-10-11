@@ -15,9 +15,11 @@ __pycache__/
 # /config.json 运行时生成：含本机标定坐标 + dry_run 实战开关（示例见 config.example.json）
 # /captures/   命中截图
 # /templates/  用户自己截的装备模板图
+# /logs/      每次启动的日志文件（自动清理，保留份数见设置）
 /config.json
 /captures/
 /templates/
+/logs/
 
 # ---- 本地个人设置（每台机不同，不入库）----
 .claude/settings.local.json

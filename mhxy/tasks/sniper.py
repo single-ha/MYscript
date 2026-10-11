@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-秒装备任务：循环刷新摆摊/市场列表，命中监控清单里的装备就立刻点它→购买→确认。
+抢关注任务（内部名仍叫 sniper）：循环刷新摆摊/关注列表，命中监控清单里的装备就立刻点它→购买→确认。
 
 设计取舍（用户已拍板）：命中即抢，不做 OCR 比价（模板匹配认不了“任意低于X价”）。
 所有点击走拟人化鼠标，间隔带抖动、偶尔走神。
@@ -16,15 +16,15 @@ from .base import Task, register
 @register
 class SniperTask(Task):
     name = "sniper"
-    title = "秒装备"
-    description = "盯市场列表，目标装备一出现就秒下单"
+    title = "抢关注"
+    description = "盯关注列表，目标装备一出现就秒下单"
 
-    # 秒装备停在商城/摆摊界面，开跑前绝不能 ESC 关面板回主界面（否则商城被关）；弹窗守卫同理——
+    # 抢关注停在商城/摆摊界面，开跑前绝不能 ESC 关面板回主界面（否则商城被关）；弹窗守卫同理——
     # 商城右上角自带「×」，会被当成弹窗点掉，一并挂起。
     ENSURE_MAIN_ON_START = False
     POPUP_GUARD_OFF = True
 
-# 标定向导用：区域项即原 REGION_ITEMS；秒装备有「装备清单」卡片，无标志模板。
+# 标定向导用：区域项即原 REGION_ITEMS；抢关注有「装备清单」卡片，无标志模板。
     CALIBRATION = {
         "regions": [
             ("listing", "货架/列表区域", "留空=整个窗口当检测区(推荐)；想提速/避免误识可框小一点", True),
@@ -191,8 +191,6 @@ class SniperTask(Task):
             cx, cy, score = hit
             screen_xy = (list_rect[0] + cx, list_rect[1] + cy)
             ctx.log(f"★ 命中【{it['name']}】相似度 {score:.3f} @ {screen_xy}", level="hit")
-            shot = self._save_capture(scene, it["name"])
-            ctx.log(f"  已存命中截图 captures/{shot}")
 
             if dry_run:
                 ctx.log("  [演练] 不下单。确认无误后到设置里切换为实战。")
@@ -332,9 +330,11 @@ class SniperTask(Task):
         self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
         return True
 
-    def _click_template(self, ctx, key, threshold=0.75, speed=None):
-        """在窗口内找某「标志模板」并拟人点击其中心。未标定/模板缺失/窗口失效/识别不到 → False。
-        供「坊/摊」标识刷新、购买/确认按钮这些会移动/变化的元素使用（不点固定坐标）。"""
+    def _click_template(self, ctx, key, threshold=0.75, speed=None, timeout=0.0):
+        """在窗口内找某「标志模板」并拟人点击其中心。
+        - timeout > 0：轮询匹配，命中即点击；被停止或超时返回是否已点击(True/False)。
+        - timeout <= 0：单次匹配（保持原行为），返回是否已点击(True/False)。
+        供「坊/摊」标识刷新、购买/确认按钮这些会移动/变化的元素使用。"""
         tc = ctx.task_cfg(self.name)
         tpl_path = (tc.get("templates") or {}).get(key)
         rect = ctx.window.rect()
@@ -343,13 +343,22 @@ class SniperTask(Task):
         img = vision.load_template(tpl_path)
         if img is None:
             return False
-        scene = ctx.window.grab_screen(rect)
-        hit = vision.match(scene, img, threshold) if scene is not None else None
-        if hit is None:
-            return False
-        cx, cy, _ = hit
-        ctx.mouse.click(rect[0] + cx, rect[1] + cy, speed=speed)
-        return True
+        start = time.time()
+        poll = 0.12
+        while True:
+            if ctx.should_stop():
+                return False
+            scene = ctx.window.grab_screen(rect)
+            hit = vision.match(scene, img, threshold) if scene is not None else None
+            if hit is not None:
+                cx, cy, _ = hit
+                ctx.mouse.click(rect[0] + cx, rect[1] + cy, speed=speed)
+                return True
+            if timeout <= 0.0:
+                return False
+            if time.time() - start > timeout:
+                return False
+            time.sleep(poll)
 
     def _enter_shelf(self, ctx):
         """刷新动作：依次点 标定的「「坊」标识」→「「摊」标识」（模板识别点击，不再点条目进货架）。
@@ -402,9 +411,29 @@ class SniperTask(Task):
         购买/确认按钮都是标志模板（会变化/弹窗），走 _click_template 视觉匹配点击。"""
         ctx.mouse.click(hit_xy[0], hit_xy[1], speed=speed)      # 点中装备
         self._snipe_sleep(0.18, speed)
-        self._click_template(ctx, "buy_button", speed=speed)     # 购买
+        # 购买：有时弹窗有微小延迟，先轮询 0.6s 尝试点到再继续
+        if not self._click_template(ctx, "buy_button", speed=speed, timeout=0.6):
+            ctx.log("未识别到『购买』按钮，跳过本次下单。", level="warn")
+            return False
+        ctx.log("已点「购买」。", level="info")
         self._snipe_sleep(0.18, speed)
-        self._click_template(ctx, "confirm_button", speed=speed) # 确认（可空标定）
+        confirm_timeout = (ctx.task_cfg(self.name).get("loop") or {}).get("confirm_timeout_sec", 1.5)
+        if self._click_template(ctx, "confirm_button", speed=speed, timeout=confirm_timeout):
+            ctx.log("已点「确认购买」。", level="info")
+            return True
+        # 确认超时：只告警，不做 Esc
+        if ctx.cfg.get("debug_log"):
+            try:
+                rect = ctx.window.rect()
+                if rect is not None:
+                    scene = ctx.window.grab_screen(rect)
+                    if scene is not None:
+                        vision.save_debug_image(scene, "captures/sniper_confirm_fail.png",
+                                               note="sniper: confirm button not found")
+            except Exception:
+                pass
+        ctx.log("未识别到『确认』按钮，本次购买可能未完成！", level="warn")
+        return False
 
     @staticmethod
     def _snipe_sleep(base, speed):

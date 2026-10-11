@@ -13,7 +13,7 @@ from ..common import (
 )
 
 
-# 「速度与节奏」滑块里 loop 那组落在秒装备命名空间；避免再 import SnperPage（跨页引用已移除）。
+# 「速度与节奏」滑块里 loop 那组落在抢关注（sniper）命名空间；避免再 import SniperPage（跨页引用已移除）。
 _SNIPER_TASK = "sniper"
 
 
@@ -72,7 +72,8 @@ class SettingsPage(ctk.CTkFrame):
 
         self._tab_scrolls = {}
         for name, builder in (("基础", self._build_basic_card),
-                              ("速度与节奏", self._build_speed_card)):
+                               ("速度与节奏", self._build_speed_card),
+                               ("关于", self._build_about_card)):
             tab = self.tabs.add(name)
             tab.grid_columnconfigure(0, weight=1)
             tab.grid_rowconfigure(0, weight=1)
@@ -117,6 +118,8 @@ class SettingsPage(ctk.CTkFrame):
         self.var_failsafe = ctk.StringVar(value=FAILSAFE_CORNERS.get(fc, "右上角"))
         self.var_threshold = ctk.DoubleVar(value=self._get_threshold())
         self.var_debug = ctk.BooleanVar(value=bool(cfg.get("debug_log", False)))
+        self.var_logfile = ctk.BooleanVar(value=bool(cfg.get("log_to_file", True)))
+        self.var_keepfiles = ctk.StringVar(value=str(cfg.get("log_keep_files", 20)))
 
         ctk.CTkLabel(card, text="基础", font=self.fonts["h2"], text_color=T.TEXT).grid(
             row=0, column=0, columnspan=2, sticky="w", padx=16, pady=(14, 4))
@@ -138,10 +141,23 @@ class SettingsPage(ctk.CTkFrame):
                                           command=self._sync_debug_text)
         self._row(card, 6, "调试日志", self.var_debug_sw)
         self._sync_debug_text()
+        self.var_logfile_sw = ctk.CTkSwitch(card, text="", variable=self.var_logfile,
+                                            font=self.fonts["body"], text_color=T.TEXT,
+                                            progress_color=T.ACCENT, fg_color=T.BTN,
+                                            button_color=T.ON_ACCENT,
+                                            command=self._sync_logfile_text)
+        self._row(card, 7, "日志写入文件", self.var_logfile_sw)
+        self._sync_logfile_text()
+        keep_box = ctk.CTkFrame(card, fg_color="transparent")
+        ctk.CTkEntry(keep_box, textvariable=self.var_keepfiles, font=self.fonts["body"],
+                     fg_color=T.SURFACE_2, border_color=T.BORDER, width=72).pack(side="left")
+        ctk.CTkLabel(keep_box, text="个（0=不清理）", font=self.fonts["small"],
+                     text_color=T.TEXT_DIM).pack(side="left", padx=(6, 0))
+        self._row(card, 8, "日志保留份数", keep_box)
 
         # 配置迁移：导出 / 导入（zip 打包 config.json + templates/，换机/换号搬标定）——用户拍板 2026-09-20。
         box = ctk.CTkFrame(card, fg_color="transparent")
-        box.grid(row=7, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 14))
+        box.grid(row=9, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 14))
         box.grid_columnconfigure(0, weight=1)
         btns = ctk.CTkFrame(box, fg_color="transparent")
         btns.grid(row=0, column=0, sticky="w")
@@ -163,6 +179,11 @@ class SettingsPage(ctk.CTkFrame):
         """把调试开关右侧文字同步成当前状态（开/关），toggle 时即时更新。"""
         state = "已开启" if bool(self.var_debug.get()) else "已关闭"
         self.var_debug_sw.configure(text=f"{state}（显示 debug 级日志）")
+
+    def _sync_logfile_text(self):
+        """把「日志写入文件」开关右侧文字同步成当前状态，toggle 时即时更新。"""
+        state = "已开启" if bool(self.var_logfile.get()) else "已关闭"
+        self.var_logfile_sw.configure(text=f"{state}（每次启动一个，逐行落盘）")
 
     def _build_hotkey(self, parent):
         box = ctk.CTkFrame(parent, fg_color="transparent")
@@ -195,6 +216,29 @@ class SettingsPage(ctk.CTkFrame):
         hint.pack(fill="x", pady=(4, 0))
         bind_wraplength(hint)
         return box
+
+    # ---- 关于卡片 ----
+    def _build_about_card(self, parent):
+        card = Card(parent)
+        card.grid(row=0, column=0, sticky="ew", padx=4, pady=(0, 14))
+        card.grid_columnconfigure(0, weight=1)
+
+        head = ctk.CTkFrame(card, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
+        ctk.CTkLabel(head, text="关于", font=self.fonts["h2"], text_color=T.TEXT).pack(anchor="w")
+
+        text = (
+            "梦幻西游 · 时空  辅助助手\n\n"
+            "· 原理：截屏 + 图像识别 + 拟人化模拟点击，不读内存、不注入进程。\n"
+            "· 输入走 Windows SendInput 底层接口，配合贝塞尔移动/随机抖动，尽量不像机器。\n"
+            "· 模块化架构：core 基础设施 / tasks 任务 / gui 界面，便于后续扩展。\n\n"
+            "⚠ 风险提示：使用任何第三方脚本都违反《梦幻西游》用户协议，可能被封号（含永封）。\n"
+            "   请务必用小号测试，自负风险。本工具仅供学习交流。"
+        )
+        lbl = ctk.CTkLabel(card, text=text, font=self.fonts["body"], text_color=T.TEXT,
+                           justify="left")
+        lbl.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 16))
+        bind_wraplength(lbl, padding=32)
 
     # ---- 速度与节奏卡片 ----
     def _build_speed_card(self, parent):
@@ -406,6 +450,21 @@ class SettingsPage(ctk.CTkFrame):
             self.var_hk_shift.get(), self.var_hk_key.get())
         cfg["failsafe_corner"] = FAILSAFE_VALUE_OF.get(self.var_failsafe.get(), DEFAULT_FAILSAFE)
         cfg["debug_log"] = bool(self.var_debug.get())
+        cfg["log_to_file"] = bool(self.var_logfile.get())
+        try:
+            keep = int(str(self.var_keepfiles.get()).strip() or "0")
+        except (TypeError, ValueError):
+            keep = 20
+        cfg["log_keep_files"] = max(0, keep)
+
+        # 日志写盘开关/保留份数改了立刻生效：关=停写、开=下次 log_line 续写本次会话文件；
+        # 保留数改小后马上清理一次旧日志（best-effort）。
+        try:
+            from ..core.config import LOGS_DIR
+            from ..app import prune_log_files
+            prune_log_files(LOGS_DIR, cfg["log_keep_files"])
+        except Exception:
+            pass
 
         hz = cfg.setdefault("humanize", {})
         tc = cfg_mod.task_config(cfg, _SNIPER_TASK)
@@ -438,6 +497,9 @@ class SettingsPage(ctk.CTkFrame):
         self.var_failsafe.set(FAILSAFE_CORNERS.get(fc, "右上角"))
         self.var_debug.set(bool(self.app.cfg.get("debug_log", False)))
         self._sync_debug_text()
+        self.var_logfile.set(bool(self.app.cfg.get("log_to_file", True)))
+        self.var_keepfiles.set(str(self.app.cfg.get("log_keep_files", 20)))
+        self._sync_logfile_text()
         thr = self._get_threshold()
         self.var_threshold.set(thr)
         if hasattr(self, "thr_value"):

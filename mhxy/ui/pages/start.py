@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""起始页：仅放「登录游戏」卡片。不属于日常任务链，独立运行。"""
+"""起始页：登录游戏卡片（独立于日常任务链）+ 日常任务卡（运行控制 + 已勾选任务，与「日常」页同一份配置）。"""
 
 import os
 
@@ -7,6 +7,7 @@ import customtkinter as ctk
 
 from .. import theme as T
 from ..account_gallery import AccountGallery
+from ..daily_card import DailyRunCard
 from ...core import account_history as ah
 from ...core import config as cfg_mod
 from ...core.config import (LOGIN_FLOW_TPL_KEYS, LOGIN_MAX_ACCOUNTS, LOGIN_REQUIRED_REGION,
@@ -16,7 +17,7 @@ from ..calibrate_dialog import calibrate_template_direct
 
 
 class StartPage(ctk.CTkFrame):
-    """起始页：登录游戏（独立于日常任务链）。"""
+    """起始页：登录游戏（独立于日常任务链）+ 日常任务卡（一键跑日常的入口面板）。"""
     TASK_NAME = "login"
     LOG_SOURCE = "登录"
 
@@ -27,17 +28,23 @@ class StartPage(ctk.CTkFrame):
         self._cal_dialog = None
         self.login_runner = None
 
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        # 内容整体可滚动：登录卡 + 日常卡叠起来可能高于窗口，窄窗口也不至于溢出截断。
+        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        scroll.grid(row=0, column=0, sticky="nsew")
+        scroll.grid_columnconfigure(0, weight=1)
+        T.tune_scroll_speed(scroll)
+        self._scroll = scroll
+
         # 顶部：登录游戏卡片（原日常页的登录区）
         self._build_login_card()
-
-        # 底部留白占位
-        ctk.CTkFrame(self, fg_color="transparent").grid(row=1, column=0, sticky="nsew")
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        # 下方：日常任务卡（运行控制 + 已勾选任务；与「日常」页共用一份配置）
+        self._build_daily_card()
 
     def _build_login_card(self):
         """登录游戏卡片：账号库/配置/开始登录 + 缩略图顺序条。"""
-        card = Card(self)
+        card = Card(self._scroll)
         card.grid(row=0, column=0, sticky="ew", padx=4, pady=(12, 12))
         card.grid_columnconfigure(0, weight=1)
         self._login_card = card
@@ -91,6 +98,15 @@ class StartPage(ctk.CTkFrame):
         bind_wraplength(self.lbl_login_order)
 
         self._login_open = True
+
+    def _build_daily_card(self):
+        """日常任务卡：运行控制（开始/停止 + 调整窗口/刷新 + 各设置开关）+ 已勾选任务清单。
+        运行/设置与「日常」页共用同一份配置（见 ui/daily_card.py），两边改哪边都同步。"""
+        card = Card(self._scroll)
+        card.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 12))
+        card.grid_columnconfigure(0, weight=1)
+        self.daily_card = DailyRunCard(card, self.app, self.fonts)
+        self.daily_card.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 14))
 
     def _toggle_login(self):
         self._login_open = not self._login_open
@@ -215,14 +231,25 @@ class StartPage(ctk.CTkFrame):
     def refresh(self):
         self.app.cfg = cfg_mod.load_config()
         self._refresh_login()
+        dc = getattr(self, "daily_card", None)
+        if dc is not None:
+            try:
+                dc.refresh()
+            except Exception:
+                pass
 
     def pump(self):
-        """被 App._tick 周期调用（RUNNABLE_KEYS 含 start）：抽干日志队列、跑完复位按钮。"""
+        """被 App._tick 周期调用（RUNNABLE_KEYS 含 start）：抽干日志队列、跑完复位按钮。
+        顺带把日常任务卡的开始/停止按钮状态从「日常」页 runner 镜像过来。"""
+        dc = getattr(self, "daily_card", None)
+        if dc is not None:
+            try:
+                dc.pump()
+            except Exception:
+                pass
         if not self.login_runner:
             return
-        q = self.login_runner.log_queue
-        while not q.empty():
-            level, msg = q.get()
+        for level, msg, _src in self.login_runner.drain_logs():
             self.app.log_line(msg, level, self.LOG_SOURCE)
         if not self.login_runner.is_running():
             self._sync_login_btn()

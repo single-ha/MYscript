@@ -167,7 +167,7 @@ def apply_log_tags(textbox):
             textbox.tag_config(lvl, foreground=resolve(token))
         except Exception:
             pass
-    # 来源标签（如「秒装备 ›」）走暗色，和正文级别色区分开
+    # 来源标签（如「抢关注 ›」）走暗色，和正文级别色区分开
     try:
         textbox.tag_config("src", foreground=resolve(TEXT_DIM))
     except Exception:

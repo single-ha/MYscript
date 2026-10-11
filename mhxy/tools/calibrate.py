@@ -103,7 +103,7 @@ def main():
     tc = cfg_mod.task_config(cfg, TASK)
 
     while True:
-        print("===== 秒装备 · 标定向导 =====")
+        print("===== 抢关注 · 标定向导 =====")
         print(" 1. 标定按钮与区域（列表/刷新/购买/确认）")
         print(" 2. 添加一件要抢的装备")
         print(" 3. 查看当前配置")
@@ -122,7 +122,7 @@ def main():
         elif c == "0":
             cfg_mod.set_task_config(cfg, TASK, tc)
             cfg_mod.save_config(cfg)
-            print("已保存。可关闭本窗口，回到主界面开始秒装备。")
+            print("已保存。可关闭本窗口，回到主界面开始抢关注。")
             break
         else:
             print("请输入菜单数字。\n")

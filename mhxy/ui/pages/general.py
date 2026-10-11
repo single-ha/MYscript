@@ -563,17 +563,13 @@ class GeneralPage(ctk.CTkFrame):
     def pump(self):
         self._drain_enum()   # 窗口列表枚举结果：worker 写字段、这里主线程取出渲染
         if self.runner:
-            q = self.runner.log_queue
-            while not q.empty():
-                level, msg = q.get()
+            for level, msg, _src in self.runner.drain_logs():
                 self._log_line(msg, level, "组队")
             if not self.runner.is_running() and self.btn_team is not None \
                     and self.btn_team.cget("text") != "▶  一键组队":
                 self._on_team_finished()
         if self.runner_db:
-            q = self.runner_db.log_queue
-            while not q.empty():
-                level, msg = q.get()
+            for level, msg, _src in self.runner_db.drain_logs():
                 self._log_line(msg, level, "解散")
             if not self.runner_db.is_running() and self.btn_disband is not None \
                     and self.btn_disband.cget("text") != "⏏  一键解散":

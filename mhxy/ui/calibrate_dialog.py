@@ -5,7 +5,7 @@
 按任务的 `CALIBRATION` spec 驱动渲染（见 tasks/base.py Task.CALIBRATION），三类卡片：
 1. 区域与按钮：框选区域 → 存为相对游戏窗口的 [x,y,w,h]，写入 tc["regions"][key]。
 2. 标志模板：框选并裁图 → 存成 templates/tm_<key>.png，写入 tc["templates"][key]。
-3. 监控清单（仅秒装备等 watchlist=True 的任务）：框选装备图标+名字加入清单。
+3. 监控清单（仅抢关注等 watchlist=True 的任务）：框选装备图标+名字加入清单。
 
 框选时把本助手窗口透明化，确保截图里只有游戏画面。新增任务无需改本文件，只要在 Task 上写 CALIBRATION。
 """

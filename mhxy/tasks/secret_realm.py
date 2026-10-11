@@ -30,11 +30,14 @@
 """
 
 import time
+import datetime
 
 from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
 from ..core import scan
+from ..core import input as input_mod
+from ..core.config import CAPTURES_DIR
 from ..ui import ui_state
 from .base import Task, register
 
@@ -368,18 +371,113 @@ class SecretRealmTask(Task):
         cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, "sr_nav", threshold)
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self._diag_nav(ctx, cur, scene_rect, loop, "命中", hit)   # [调试] 仅调试开关开时走
+            self._click_at_verified(ctx, hit[0], hit[1], "秘境条目")
             ctx.log(f"点右侧任务栏·秘境条目寻路到NPC（{hit[2]:.3f}）。", level="hit")
             gap = loop.get("nav_double_gap_sec", 0.3)
             if gap > 0:
                 self._interruptible_sleep(ctx, self._jitter(gap, ctx))
-                ctx.mouse.click(hit[0], hit[1])
+                self._click_at_verified(ctx, hit[0], hit[1], "秘境条目(补点)")
                 ctx.log(f"补点「秘境条目」（防首击被吞，间隔 {gap:.1f}s）。", level="hit")
+            self._diag_nav_postclick(ctx, loop, regions, threshold)   # [调试] 仅调试开关开时走
             self._enter_battle(rec)
             return
+        self._diag_nav(ctx, cur, scene_rect, loop, "未命中", None)     # [调试] 仅调试开关开时走
         if self._state_elapsed(rec) > loop.get("step_timeout_sec", 20):
             ctx.log("没点到右侧任务栏秘境条目，仍进入战斗监控（靠 进入战斗/失败 兜底）。", level="warn")
             self._enter_battle(rec)
+
+    # ---- [调试] 秘境寻路（S_NAV）诊断：仅 config.debug_log 打开时走；关时零开销 ----
+    def _click_at_verified(self, ctx, x, y, label):
+        """点一次 (x,y)；调试开关开时记录点击前后光标位置，确认 SendInput 是否真的移动了鼠标
+        （排除「日志已打但鼠标没动」）。关时行为与 ctx.mouse.click 完全一致、零额外开销。"""
+        if not self._debug_on(ctx):
+            ctx.mouse.click(x, y)
+            return
+        try:
+            before = input_mod.get_cursor()
+        except Exception:
+            before = None
+        ctx.mouse.click(x, y)
+        try:
+            after = input_mod.get_cursor()
+        except Exception:
+            after = None
+        moved = (before is not None and after is not None and before != after)
+        ctx.log(f"[调试] 点击「{label}」目标=({int(x)},{int(y)}) 光标 {before}→{after} "
+                f"{'✓已移动' if moved else '✗未移动（SendInput 被拦/坐标无效/被前台占用）'}", level="debug")
+
+    def _nav_debug_ready(self, ctx, loop):
+        """S_NAV 诊断是否该走：DEBUG 开关开、且未超本次运行存图上限。"""
+        if not self._debug_on(ctx):
+            return False
+        if getattr(self, "_nav_dbg_n", 0) >= int(loop.get("nav_debug_max_shots", 8)):
+            return False
+        return True
+
+    def _diag_nav(self, ctx, scene, scene_rect, loop, tag, hit):
+        """[调试] 记录 S_NAV 一步的匹配/窗口/光标状态并存一张标注截图，定位
+        「点了右侧任务栏秘境条目却不寻路」。只在调试开关开时执行（节流 + 每次运行限量存图）。
+        节流键 nav_debug_cooldown_sec(默认5s)、限量 nav_debug_max_shots(默认8张/次运行)。"""
+        if not self._nav_debug_ready(ctx, loop):
+            return
+        now = time.time()
+        if now - getattr(self, "_nav_dbg_ts", 0.0) < float(loop.get("nav_debug_cooldown_sec", 5.0)):
+            return
+        self._nav_dbg_ts = now
+        try:
+            wrect = ctx.window.rect()
+            try:
+                fg = ctx.window.is_foreground()
+            except Exception:
+                fg = None
+            try:
+                cursor = input_mod.get_cursor()
+            except Exception:
+                cursor = None
+            tpl = self.flags.get("sr_nav")
+            best = vision.best_score(scene, tpl) if (scene is not None and tpl is not None) else (0.0, None)
+            local = ((hit[0] - scene_rect[0], hit[1] - scene_rect[1]) if (hit and scene_rect) else None)
+            ctx.log(
+                f"[调试] S_NAV[{tag}] 前台={fg} 光标={cursor} 窗口rect={tuple(wrect) if wrect else None} "
+                f"scene={tuple(scene.shape[:2]) if scene is not None else None} "
+                f"scene_rect={tuple(scene_rect) if scene_rect else None} "
+                f"nav命中(屏幕)={hit} 局部={local} raw最高={best[0]:.3f}@{best[1]}", level="debug")
+            if scene is None:
+                return
+            self._nav_dbg_n = getattr(self, "_nav_dbg_n", 0) + 1
+            fname = (datetime.datetime.now().strftime("%Y%m%d_%H%M%S_")
+                     + f"dbg_nav_{self.name}_{tag}.png")
+            marks = [(local[0], local[1], hit[2])] if (hit and local) else []
+            note = f"S_NAV {tag} fg={fg} best={best[0]:.2f}"
+            if vision.save_debug_image(scene, str(CAPTURES_DIR / fname), card_xy=local,
+                                       hits=marks, tpl_wh=(tpl.shape[::-1] if tpl is not None else None),
+                                       note=note):
+                ctx.log(f"[调试] 已存 S_NAV 诊断截图 captures/{fname}", level="debug")
+        except Exception as e:
+            ctx.log(f"[调试] S_NAV 诊断异常（忽略）：{e}", level="debug")
+
+    def _diag_nav_postclick(self, ctx, loop, regions, threshold):
+        """[调试] 点完任务栏条目后，隔 nav_debug_postclick_sec 再截一帧比帧差，判断「点了之后画面
+        是否在动」（寻路会让角色移动/镜头变化）；并报告是否已出现「进入战斗」。只在调试开关开时执行。"""
+        if not self._debug_on(ctx):
+            return
+        try:
+            scene_rect = self._scene_rect(ctx, regions)
+            wait = float(loop.get("nav_debug_postclick_sec", 1.0))
+            a = ctx.window.grab_screen(scene_rect)
+            self._interruptible_sleep(ctx, self._jitter(wait, ctx))
+            b = ctx.window.grab_screen(scene_rect)
+            diff = self._frame_diff(a, b) if (a is not None and b is not None) else None
+            thresh = float(loop.get("nav_debug_postclick_diff", 2.0))
+            moved = (diff is not None and diff >= thresh)
+            eb = self._match_scene(b, scene_rect, "sr_enter_battle", threshold) if b is not None else None
+            diff_txt = "None" if diff is None else f"{diff:.2f}"
+            ctx.log(f"[调试] S_NAV 点击后 {wait:.1f}s 帧差={diff_txt} → "
+                    f"{'画面在动(疑似已寻路)' if moved else '画面几乎没动(疑似点击被吞/未寻路)'}"
+                    f"；进入战斗={'-' if eb is None else f'{eb[2]:.3f}'}", level="debug")
+        except Exception as e:
+            ctx.log(f"[调试] S_NAV 点击后诊断异常（忽略）：{e}", level="debug")
 
     def _enter_battle(self, rec):
         rec["entered_battle"] = True

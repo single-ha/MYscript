@@ -189,9 +189,7 @@ class WeeklyTabPage(ctk.CTkFrame):
     # ---- 日志（由 App._tick 驱动）----
     def pump(self):
         if self.runner:
-            q = self.runner.log_queue
-            while not q.empty():
-                level, msg = q.get()
+            for level, msg, _src in self.runner.drain_logs():
                 self._log_line(msg, level)
             if not self.runner.is_running() and self.btn_run.cget("text") != self.RUN_LABEL:
                 self._on_runner_finished()

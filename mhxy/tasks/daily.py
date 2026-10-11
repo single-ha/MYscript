@@ -30,7 +30,7 @@
     （演练只自检、永不结束，会卡死整条链）——要纳入实跑请到该任务页关掉「演练」；
   · 全程勤查 should_stop（停止/热键/鼠标甩角都能整条龙叫停）；整体时间上限只是安全网。
 
-为什么不含「秒装备」：它是【无限盯市场抢货】、不会自己跑完，串进来会一直卡住，后面的任务永远轮不到，
+为什么不含「抢关注」：它是【无限盯市场抢货】、不会自己跑完，串进来会一直卡住，后面的任务永远轮不到，
 不属于日常这种「跑通即进入下一个」的流程（用户拍板排除）。
 单开模式：只有一个窗口，自然就是顺序跑完一条链（同一套引擎，窗口数=1）。
 """
@@ -44,7 +44,7 @@ from .dungeon_base import DUNGEON_NS
 from ..core.config import SINGLE_TASK_ORDER
 from ..core.teaming import TeamFormation
 
-# 可进日常的任务（这些都有明确「完成条件」、会自动结束）。秒装备 sniper 不在此列。
+# 可进日常的任务（这些都有明确「完成条件」、会自动结束）。抢关注 sniper 不在此列。
 # 个人组：每窗口独立链（各自都能经 make_chain_driver 逐窗口跑）。
 # 默认顺序 = 单人任务页签顺序（与 config.SINGLE_TASK_ORDER 同源，改页签/默认序就改那一处）。
 CHAINABLE_SINGLE = list(SINGLE_TASK_ORDER)
@@ -66,6 +66,11 @@ class DailyTask(Task):
     title = "日常"
     description = "勾选已有任务按顺序跑完；单人任务每窗口独立跑、多人任务（刷副本/抓鬼）集体汇合后跑"
 
+    # 日志来源短标签（GUI 全局面板）：运行中由引擎更新为「当前正在跑的子任务名」，
+    # GUI 侧（DailyPage.pump）据此把来源标签显示成「宝图/运镖/刷副本…」而非笼统的「日常」。
+    # None=回退「日常」（流程开场/收尾/解散等非任务日志）。
+    current_log_source = None
+
     # 本任务没有自己的标定（全部沿用各子任务）；calibrate_dialog 据此不渲染任何标定项。
     CALIBRATION = {"regions": [], "templates": [], "watchlist": False}
 
@@ -83,6 +88,7 @@ class DailyTask(Task):
     def _run(self, ctx):
         self._any_real_run = False     # 本趟是否有任何任务真跑（演练/未就绪被跳过的都不算）
         self._team_ready = False       # 本趟是否已组好队：第一个多人步组好后，后续多人步复用（不重复组队）
+        self.current_log_source = None  # 开场/收尾日志先按「日常」；进子任务时由 _begin_step/_run_collective 改写
         steps = self._enabled_steps(ctx)
         if not steps:
             ctx.log("没有勾选任何任务，已停止。", level="error")
@@ -282,6 +288,7 @@ class DailyTask(Task):
                     return                              # 停靠集体屏障，交回主循环
                 # 任务交接点（上一个任务完成/被跳过 → 开下一个）：此时才允许自动整理背包。
                 # 单个任务执行过程中绝不触发（user 2026-10-08 拍板）。
+                self.current_log_source = steps[c["idx"]]   # 交接/整理日志按「即将开跑的任务」打标签
                 self._organize_between(c)
                 if self._begin_step(ctx, c, steps[c["idx"]]) != "ready":
                     c["idx"] += 1                       # 跳过该步（未就绪/演练/不支持），接着下一步
@@ -316,6 +323,7 @@ class DailyTask(Task):
         wctx = c["wctx"]
         title = self._title_of(name, ctx)
         c["cur_title"] = title
+        self.current_log_source = name       # 本步期间日志来源标签=该子任务（GUI 侧映射成短名）
         eff_name, task_cls = self._resolve(name, ctx)
         if task_cls is None:
             wctx.log(f"「{title}」无可跑任务（未选/未收录），跳过。", level="warn")
@@ -375,6 +383,7 @@ class DailyTask(Task):
         if step_name == "dungeon":
             self._run_collective_dungeons(ctx)
             return
+        self.current_log_source = step_name   # 集体步日志来源标签=该多人任务
         title = self._title_of(step_name, ctx)
         eff_name, task_cls = self._resolve(step_name, ctx)
         if task_cls is None:
@@ -400,6 +409,7 @@ class DailyTask(Task):
         然后普通本）逐一刷完（各自 run() 自带组队，但队伍由 _collective_run 保证整趟只组一次：
         第一个副本组好后，后面直接复用）。勾选只决定「刷不刷」，不决定顺序（见 _selected_dungeons）。
         某副本演练/未就绪/异常 → 跳过继续下一个，最后汇总（行为与「刷副本」页顺序队列一致）。"""
+        self.current_log_source = "dungeon"   # 整个刷副本步日志来源标签=刷副本
         names = self._selected_dungeons(ctx)
         if not names:
             ctx.log("「刷副本」无可跑副本（未选/未收录），跳过该步。", level="warn")
@@ -446,6 +456,7 @@ class DailyTask(Task):
         残留队伍会干扰视角/点名）→ 【强制解散】，无视「跑完解散」开关；has_single=False=整条链已到此
         结束，仅当用户勾了「跑完多人任务后解散队伍」才收尾解散。解散对「本就不在队」的号也安全收尾。
         单开/不足 2 个号直接跳过；失败只记日志，不阻塞整条龙。"""
+        self.current_log_source = None   # 解散/收尾类日志回退「日常」标签
         if ctx.should_stop() or len(wctxs) < 2:
             return
         team_tc = ctx.task_cfg("teaming")

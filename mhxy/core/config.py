@@ -26,6 +26,7 @@ PROJECT_ROOT = DATA_ROOT          # 兼容别名：vision.py / gui/app.py 仍按
 CONFIG_PATH = DATA_ROOT / "config.json"
 TEMPLATES_DIR = DATA_ROOT / "templates"
 CAPTURES_DIR = DATA_ROOT / "captures"
+LOGS_DIR = DATA_ROOT / "logs"
 
 # 跨任务【共用】的区域键（见 tasks.shared.regions）：在任意任务页标定一次全任务通用。
 SHARED_REGION_KEYS = ("activity_list", "bag_list")
@@ -107,11 +108,14 @@ def _mk_dungeon_shared():
       entry_common / entry_xiashi  活动列表里的普通/侠士副本卡片
       join / select                参加按钮 / 选择副本对话框按钮
       skip / clock / enter         跳过剧情 / 小闹钟(寻路) / 进入战斗按钮
-      enter_dungeon                选择副本对话框里的「进入」按钮（普通/侠士两标签区共用）
+enter_dungeon                选择副本对话框里的「进入」按钮（普通/侠士两标签区共用）
       xiashi_tab                   侠士进副本前先点的「侠士区」标签页
-      confirm                      侠士进副本后各队员弹的「确认」按钮（队长不弹）
+      ready                        侠士「准备」按钮：队员窗口准备弹窗里可点的按钮（必点）；⚠ 队长窗口的
+                               准备弹窗里没有此按钮，识别「准备已弹出」用 ready_popup（弹窗本身）
+      ready_popup                  侠士本准备弹窗：准备弹窗本身的特征（标题/边框，可选；不是准备按钮）——
+                               不在队长窗识别出它就没有「准备已弹出」信号
       settlement                   结算界面（副本结束信号，识别到即收尾）
-    loop 各键同旧 _mk_dungeon；extra：enter_retry_*/confirm_sec 为侠士「进入+确认」重试参数、
+    loop 各键同旧 _mk_dungeon；extra：enter_retry_*/confirm_sec 为侠士「进入+准备」重试参数、
     tuoying_* / enter_check_sec 为拓印临摹处理参数。
     副本内主循环为统一轮询（dungeon_base._run_rounds，user 2026-09-21 拍板）：每帧按优先级检测
     结算界面 → 战斗标识 → 跳过剧情 → 进入战斗 → 小闹钟，见下各键注释。"""
@@ -134,15 +138,16 @@ def _mk_dungeon_shared():
             "still_diff": 6.0,           # 平均帧差低于此值视为静止（战斗中画面一直在动，不会误判）
             "enter_retry_max": 3,        # 侠士「进入+确认」重试上限
             "enter_retry_pause": 1.2,    # 重试前回队长重点进入前的停顿
-            "confirm_sec": 40,           # 侠士各队员点确认的总超时（队长不点、不计在内）
+            "confirm_sec": 40,           # 侠士各队员点「准备」的总超时（队长不作为等待对象）
+            "captain_confirm_probe_sec": 5.0,  # 点「进入」后留在【队长窗口】等「准备/拓印」弹窗二选一的窗口（user 2026-10-11 重构）：
+                                          #   等不到才走后续确认轮询兜底；同理用于拓印描完两遍重进后再次等待
+            "tuoying_reenter_max": 3,    # 拓印描两遍完成后队长重新点「进入」的封顶轮数（防反复弹窗死循环）
             "tuoying_detect_sec": 8.0,   # 点「进入」后轮询是否弹出「拓印」临摹界面的时长
             "tuoying_passes": 2,         # 拓印临摹：单遍内沿图案骨架描几轮（每轮各笔画重新随机，提升覆盖）；整个拓印可能需要多遍(=弹窗会再次弹出)，见 tuoying_max_rounds
             "tuoying_lateral": 3.0,      # 拓印临摹：随描轨迹垂直于笔画走向的横向偏移上限(像素)，笔迹加宽更易达标
             "tuoying_sample_step": 5.0,  # 拓印临摹：骨架采样间距(像素)，越小越贴笔画(也更慢)
             "tuoying_stripe_spacing": 8.0,  # 已废弃（拓印改骨架描摹）——保留兼容旧配置读取
             "tuoying_upload_sec": 6.0,   # 点完「上传」后等拓印界面关闭的超时；超时=自动描未被认可→转手动
-            "tuoying_max_rounds": 3,       # 拓印临摹最大轮次：一次「上传」后界面可能再次弹出（要拓印两次图案才过），
-                                           #   每轮=描+上传+确认界面不再重现；超过轮数仍弹→转手动不复描
             "tuoying_gone_confirm_sec": 1.2,  # 判定拓印界面「真消失」的确认窗口：消失后再持续观察这么久都不重现，
                                           #   才算通过（防止上传后界面一闪即认定成功、实则第二遍还等着描）
             "enter_check_sec": 10.0,     # 普通副本点「进入」后验证已进本的时长（出现结算/跳过剧情等即算进）；超时重试点「进入」
@@ -173,7 +178,7 @@ def _mk_dungeon_shared():
             "enter": None,           # 副本内「进入战斗」按钮（寻路到位后点它发起本场）
             "enter_dungeon": None,   # 选择副本对话框里的「进入」按钮（普通/侠士共用）
             "xiashi_tab": None,      # 侠士进副本前先点的「侠士区」标签页（仅侠士用）
-            "confirm": None,         # 侠士进副本后各队员弹的「确认」按钮（队长不弹）
+            "ready": None,           # 侠士进副本后各队员弹的「准备」按钮（队长不弹）
             "settlement": None,      # 结算界面（副本结束信号；每轮打完轮询它，识别到即收尾）
         },
         "selected": ["dt_70_common", "dt_60_common1", "dt_60_common2",
@@ -323,6 +328,8 @@ DEFAULT_CONFIG = {
                                          #   top_right/top_left/bottom_right/bottom_left/off(关闭)。设置里可改。
     "appearance": "dark",                # 界面外观：dark(夜间) / light(白天)，侧栏可切换
     "debug_log": False,                  # 调试日志开关：开启后 level="debug" 的日志才进全局面板（设置页可勾）
+    "log_to_file": True,                 # 日志同步落盘：每条日志写入 logs/日志-YYYYMMDD_HHMMSS.log（每次启动一个）并 flush，崩溃/强杀不丢
+    "log_keep_files": 20,                # 自动清理：logs/ 里只保留最近 N 个日志文件（按启动时间），0/负数=不清理（设置页可调）
     "grab_auto_activate": True,          # 任务识别抓图前若窗口不在前台先激活再抓（用户拍板 2026-09-26）：
                                          #   mss 抓屏是屏幕真实像素，窗口被盖时认错；多开轮询会频繁切前台，
                                          #   嫌闪可设 false 回到「只抓不激活」。见 core/window.set_grab_auto_activate
@@ -436,7 +443,8 @@ DEFAULT_CONFIG = {
                 "shelf_load_wait_sec": 1.2,     # 等货架加载的「最长」等待（自适应：画面静止即提前结束，这是上限/超时）
                 "shelf_load_min_sec": 0.15,     # 等货架加载的「最短」等待（再快也至少等这么久，给画面起步时间）【标准抢货档】
                 "match_threshold": 0.85,
-                "after_buy_cooldown_sec": 2.0
+                "after_buy_cooldown_sec": 2.0,
+                "confirm_timeout_sec": 1.5   # 点「购买」后等确认弹窗出现的轮询上限（识别到即点，这是超时兜底）
             },
             "regions": {                 # 由标定向导写入，相对游戏窗口左上角 [x,y,w,h]
                 "listing": None,         # 货架/列表识别区域
@@ -544,6 +552,10 @@ DEFAULT_CONFIG = {
                 "dungeon_select_wait_sec": 6,  # 等「选择副本-进入」出现的短超时；没出现=本次无需选副本，跳过
                 "step_timeout_sec": 20,      # 确定/继续挑战/任务栏寻路/离开 等每步按钮出现的超时（容错继续）
                 "nav_double_gap_sec": 0.3,   # 点任务栏秘境条目后隔多久补点一次（首击常被游戏当聚焦吞掉，和抓鬼同款）
+                "nav_debug_cooldown_sec": 5.0,  # [调试] S_NAV 诊断节流：同一条目最短多久记一次（仅调试开关开时走）
+                "nav_debug_max_shots": 8,       # [调试] S_NAV 诊断截图本次运行上限（仅调试开关开时走）
+                "nav_debug_postclick_sec": 1.0,  # [调试] 点完条目后等多久再截一帧比帧差（判是否真寻路）
+                "nav_debug_postclick_diff": 2.0,  # [调试] 帧差≥此值=画面在动（疑似已寻路）
                 "battle_timeout_sec": 1800,  # 单轮秘境「超时判定」时长：挂够这么久仍没结束就视为超时、点离开（按真实关卡时限调）
                 "dungeon_enter_box": [0.0, 0.5, 0.55, 1.0],  # 「进入」按钮限定的左下角比例框 [x0,y0,x1,y1]（0~1）
                                              #   同款「进入」靠位置区分：只在 scene 这个左下角比例框里找
@@ -820,6 +832,11 @@ DEFAULT_CONFIG = {
         #   所有副本共用（dungeon_base / 拓印页只读这份，旧 tasks.shared、tasks.dungeon 残留值一律不沿用）。
         #   「拓印」页可单独跑一遍完整临摹（沿图案描一遍 + 自动点「上传」）。
         "tuoying": {
+            "loop": {
+                "tuoying_max_rounds": 2,     # 临摹最大轮次：一次「上传」后界面可能再次弹出（要描两次才过），
+                                             #   每轮=描+上传+确认界面不再重现；超过轮数仍弹→转手动不复描。
+                                             #   ⚠ 归拓印工具自己（进本逻辑直接读这份，dungeon.loop 不再放）
+            },
             "regions": {
                 "tuoying_area": None,    # 「拓印」临摹界面的图案绘制区（留空=检测到拓印时无法自动描、转手动）
             },
@@ -878,7 +895,7 @@ DEFAULT_CONFIG = {
         #   个人组默认顺序 = 单人任务页签顺序（SINGLE_TASK_ORDER，改页签就改它，两处保持一致）。
         #   单人任务组在本趟流程中 → 多人步跑完转入单人步前【强制解散】队伍（界面开关随之强制打开）；
         #   只有多人步时按 tasks.teaming.auto_disband（开关）决定是否收尾解散。
-        #   秒装备不在候选内（无限抢货、不会自己跑完，会卡死整条龙）。
+        #   抢关注不在候选内（无限抢货、不会自己跑完，会卡死整条龙）。
         "daily": {
             "steps": ([{"task": n, "enabled": True} for n in SINGLE_TASK_ORDER]
                       + [{"task": "dungeon", "enabled": True},
@@ -919,7 +936,45 @@ def load_config():
         save_config(cfg)
     if _migrate_login_account_slots(cfg):
         save_config(cfg)
+    if _migrate_dungeon_ready(cfg):
+        save_config(cfg)
+    if _migrate_tuoying_rounds(cfg):
+        save_config(cfg)
     return cfg
+
+
+def _migrate_tuoying_rounds(cfg):
+    """一次性迁移（2026-10-11）：「临摹多少遍」设置从 tasks.dungeon.loop.tuoying_max_rounds
+    挪到拓印工具自己的 tasks.tuoying.loop.tuoying_max_rounds（进本逻辑直接读这份）。把旧值
+    搬过去（新值没设时），并从 dungeon.loop 清掉。返回是否改动（改动由 load_config 存盘）。"""
+    tasks = cfg.get("tasks") or {}
+    tuo = tasks.get("tuoying") or {}
+    tloop = tuo.get("loop") or {}
+    dloop = ((tasks.get("dungeon", {}) or {}).get("loop") or {})
+    if "tuoying_max_rounds" not in dloop:
+        return False
+    if not tloop.get("tuoying_max_rounds"):
+        tloop["tuoying_max_rounds"] = dloop["tuoying_max_rounds"]
+        tuo["loop"] = tloop
+    dloop.pop("tuoying_max_rounds", None)
+    return True
+
+
+def _migrate_dungeon_ready(cfg):
+    """一次性迁移（2026-10-11 改名）：侠士本进本弹窗的两张模板 `confirm`/`confirm_popup`
+    改名为 `ready`/`ready_popup`（按钮/弹窗文案统一改「准备」）。把旧键下已标定的图片路径
+    原样搬到新键、清掉旧键，不用重标。返回是否改动（改动由 load_config 存盘）。"""
+    tpl = ((cfg.get("tasks") or {}).get("dungeon", {}) or {}).get("templates") or {}
+    if not tpl:
+        return False
+    changed = False
+    for old, new in (("confirm", "ready"), ("confirm_popup", "ready_popup")):
+        if old in tpl:
+            if not tpl.get(new):                  # 新键还没标（deep_merge 会带出默认 None）→ 搬旧值
+                tpl[new] = tpl[old]
+            tpl.pop(old, None)
+            changed = True
+    return changed
 
 
 def _migrate_login_account_slots(cfg):

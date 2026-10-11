@@ -111,11 +111,18 @@ class TuoyingTask(Task):
             return
         self._trace_loop(ctx, loop, rect, win_rect, up_tpl, title_tpl)
 
+    def _tuoying_max_rounds(self, ctx, loop):
+        """临摹「多少遍」的设置归拓印工具自己（tasks.tuoying.loop.tuoying_max_rounds）。
+        读不到时用旧 tasks.dungeon.loop 值兜底（迁移后一般不存在）。"""
+        tuo = ((ctx.cfg or {}).get("tasks", {}) or {}).get("tuoying", {}) or {}
+        v = ((tuo.get("loop", {}) or {}).get("tuoying_max_rounds")) or loop.get("tuoying_max_rounds", 2)
+        return max(1, int(v))
+
     def _trace_loop(self, ctx, loop, rect, win_rect, up_tpl, title_tpl):
         """完整临摹循环：沿图案描 → 点「上传」→ 盯界面不再重现，可能要多描多传几遍。
         与 dungeon_base._auto_trace 同判据；这里是「手动把临摹界面调到前台再跑」的单窗版。"""
         ctx.log("拓印：按标定绘制区自动沿图案描一遍并点「上传」，跑完整次临摹…", level="warn")
-        max_rounds = max(1, int(loop.get("tuoying_max_rounds", 3)))
+        max_rounds = self._tuoying_max_rounds(ctx, loop)
         confirm_sec = loop.get("tuoying_gone_confirm_sec", 1.2)
         upload_timeout = loop.get("tuoying_upload_sec", 6.0)
         for rnd in range(1, max_rounds + 1):

@@ -6,23 +6,59 @@
 """
 
 import datetime
+import os
 import threading
 
 import customtkinter as ctk
 
 from . import theme as T
 from ..core import config as cfg_mod
+from ..core.config import LOGS_DIR
 from ..core import window as win_mod
 from ..core.runner import TaskRunner, set_run_rejected_hook
 from ..core.input import get_cursor
 from .common import (DEFAULT_STOP_HOTKEY, DEFAULT_FAILSAFE, FAILSAFE_CORNERS,
                      _in_failsafe_corner, _parse_stop_hotkey, _vk_down)
 from .pages import (StartPage, DailyPage, WeeklyPage, ConfigPage, ToolsPage,
-                    GeneralPage, SettingsPage, AboutPage)
+                    GeneralPage, SettingsPage)
 
 
 # 日志级别 -> 中文简称（筛选开关上显示；与 theme.LEVEL_COLOR 的键一致）
 LOG_LEVEL_LABELS = {"info": "信息", "hit": "命中", "warn": "警告", "error": "错误"}
+
+# 本次会话日志文件名的前缀/模式（prune_log_files 只清理匹配它的文件，不碰别的）
+LOG_FILE_PREFIX = "日志-"
+_LOG_LEVEL_TAG = {"info": "INFO", "hit": "HIT", "warn": "WARN", "error": "ERROR", "debug": "DEBUG"}
+
+
+def format_log_line(now, source, level, msg):
+    """一行日志的落盘格式：`YYYY-MM-DD HH:MM:SS [LEVEL] [来源] 正文`（来源为空省略）。
+    纯函数、不碰 GUI，可单测。now=datetime 对象。"""
+    level_tag = _LOG_LEVEL_TAG.get(level, str(level).upper())
+    src = f" [{source}]" if source else ""
+    return f"{now.strftime('%Y-%m-%d %H:%M:%S')} [{level_tag}]{src} {msg}"
+
+
+def prune_log_files(logs_dir, keep):
+    """自动清理旧日志：logs_dir 里只保留修改时间最新的 keep 个 `日志-*.log`，其余删掉。
+    keep<=0=不清理。任意异常静默忽略（best-effort，清理失败不影响主流程）。"""
+    if not keep or keep <= 0:
+        return
+    try:
+        if not logs_dir.exists():
+            return
+        files = [p for p in logs_dir.iterdir()
+                 if p.is_file() and p.name.startswith(LOG_FILE_PREFIX)]
+        if len(files) <= keep:
+            return
+        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in files[keep:]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 
 # ----------------------------------------------------------------------
@@ -33,9 +69,9 @@ class App(ctk.CTk):
            ("daily", "🐉  日常"),
            ("weekly", "🗓  周常"),       # 内嵌 门派闯关/海底世界/迷魂塔（多人·自动组队·队长跑循环）
            ("general", "🧰  通用"),
-           ("config", "🎛  任务配置"),   # 内嵌 单人/多人任务的全部 参数+标定（运行唯一入口在「日常」）
-           ("tools", "🧰  工具"),        # 内嵌 秒装备/整理背包/拓印
-            ("settings", "⚙  设置"), ("about", "ⓘ  关于")]
+           ("config", "🎛  任务配置"),   # 内嵌 单人/多人任务的全局参数+标定（运行唯一入口在「日常」）
+           ("tools", "🧰  工具"),        # 内嵌 商城(抢关注)/整理背包/拓印
+           ("settings", "⚙  设置")]
     # 可运行任务页（有 runner/pump），App 的定时器/热键/关闭钩子按此遍历。
     # general 也在内：它的「一键组队」会跑后台任务，需要 pump 抽日志、关闭时停 runner。
     # weekly/tools 是分类页，App 下标只是顶层项；其内嵌任务页靠分类页的
@@ -135,7 +171,7 @@ class App(ctk.CTk):
     LOG_TRIM_KEEP = 1800    # 裁行滞后阈值：保最后 1800 行，避免每行都触发整体重绘
 
     def _build_log_panel(self):
-        """右侧常驻日志列：各页面/任务的日志统一汇到这里，按来源（秒装备/组队/整理背包…）打标签，
+        """右侧常驻日志列：各页面/任务的日志统一汇到这里，按来源（抢关注/组队/整理背包…）打标签，
         并支持【关键字/级别/来源】三种筛选——筛选即时作用于历史与新进日志。
         以前每个页面各有一个日志框，功能一多就散乱；现在收敛成这一处，谁产生的日志靠行首来源标签区分。"""
         # 筛选状态：日志先进内存缓冲（约 2000 行封顶），筛选变化时用缓冲整体重绘
@@ -146,6 +182,11 @@ class App(ctk.CTk):
         self._log_filter_levels = set(self.LOG_LEVEL_ORDER)   # 启用的级别，默认全开
         self._log_filter_source = None              # None = 全部来源
         self._log_level_btns = {}
+        # 日志写盘（逐行同步 flush）：本次会话一个文件，路径在首次打开时生成
+        self._log_fh = None
+        self._log_path = None
+        self._log_file_disabled = False             # 写盘出错后置 True（不再重试）
+        self._log_file_warned = False               # 写盘失败只提示一次
 
         panel = ctk.CTkFrame(self, fg_color=T.SIDEBAR, corner_radius=0, width=340)
         panel.grid(row=0, column=2, sticky="nsew")
@@ -165,6 +206,10 @@ class App(ctk.CTk):
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
                       command=self.clear_log).grid(row=0, column=2, sticky="e")
+        ctk.CTkButton(head, text="📂 日志夹", font=self.fonts["small"], height=26, width=74,
+                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
+                      border_width=1, border_color=T.BORDER,
+                      command=self.open_logs_dir).grid(row=0, column=3, sticky="e", padx=(6, 0))
 
         # ① 关键字筛选
         self.log_search = ctk.CTkEntry(panel, height=28, font=self.fonts["small"],
@@ -211,10 +256,9 @@ class App(ctk.CTk):
             pass
         self.log.bind("<Configure>", self._on_log_text_resize)
         self.log.configure(state="disabled")
-        self.log_line("界面就绪。各功能的日志都会汇总到这里。", "info")
 
     def log_line(self, msg, level="info", source=None):
-        """统一日志出口（所有页面/任务都调它）。source 非空时在行首加暗色来源标签，如「秒装备 ›」。
+        """统一日志出口（所有页面/任务都调它）。source 非空时在行首加暗色来源标签，如「抢关注 ›」。
         日志先写入内存缓冲（约 2000 行封顶），再按当前筛选决定是否上屏；筛选变动时用缓冲整体重绘，
         历史与新进日志都被同套筛选过滤。debug 级别只在全局「调试日志」开关（config.debug_log，
         设置页可勾）打开时才进入缓冲。"""
@@ -222,6 +266,15 @@ class App(ctk.CTk):
             return
         if getattr(self, "log", None) is None:
             return
+        # 落盘（逐行同步 flush）：config.log_to_file 打开才写。失败只提示一次、静默降级为只上屏。
+        if bool(getattr(self, "cfg", {}).get("log_to_file", True)):
+            try:
+                self._write_log_file(level, source, msg)
+            except Exception:
+                self._disable_log_file()
+                if not self._log_file_warned:
+                    self._log_file_warned = True
+                    self.log_line("日志写盘失败：本次会话不再写文件，仅上屏（可检查 logs/ 目录权限）。", "warn")
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         entry = (ts, source, level, msg)
         # 首次见到某来源时加进来源下拉（只是补选项，不影响当前选择）
@@ -239,6 +292,58 @@ class App(ctk.CTk):
             return
         if self._log_passes(entry):
             self._append_log_entry(entry)
+
+    # ---- 日志写盘（逐行同步 flush，每次启动一个新文件）----
+    def _ensure_log_file(self):
+        """按需打开本次会话的日志文件（UTF-8 追加）。log_to_file 关着返回 None（不建文件不写）；
+        打开失败抛异常（由 _write_log_file 的调用方禁用写盘）。首次打开顺带自动清理旧日志。"""
+        if self._log_fh is not None:
+            return self._log_fh
+        if not bool(getattr(self, "cfg", {}).get("log_to_file", True)):
+            return None
+        if self._log_path is None:
+            self._log_path = LOGS_DIR / (LOG_FILE_PREFIX
+                                         + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".log")
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        fh = open(self._log_path, "a", encoding="utf-8", newline="")
+        fh.write("===== 本次运行开始 %s =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        fh.flush()
+        self._log_fh = fh
+        # 自动清理旧日志：保留最近 N 份（含本次新文件）；keep<=0/非数=不清理（best-effort）。
+        try:
+            keep = getattr(self, "cfg", {}).get("log_keep_files", 20)
+            prune_log_files(LOGS_DIR, int(keep) if keep else 0)
+        except Exception:
+            pass
+        return fh
+
+    def _write_log_file(self, level, source, msg):
+        """把一条日志写进本次会话文件并 flush。异常上抛给 log_line 统一禁用+提示。"""
+        if self._log_file_disabled:
+            return
+        fh = self._ensure_log_file()
+        if fh is None:
+            return
+        fh.write(format_log_line(datetime.datetime.now(), source, level, msg) + "\n")
+        fh.flush()
+
+    def _disable_log_file(self):
+        """写盘出问题：关句柄、停写（后续 log_line 只上屏）。"""
+        self._log_file_disabled = True
+        try:
+            if self._log_fh is not None:
+                self._log_fh.close()
+        except Exception:
+            pass
+        self._log_fh = None
+
+    def open_logs_dir(self):
+        """在资源管理器打开 logs/ 目录（只读，不影响运行）。"""
+        try:
+            LOGS_DIR.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(LOGS_DIR))
+        except Exception as e:
+            self.log_line(f"打开日志文件夹失败：{e}", "warn")
 
     def _log_passes(self, entry):
         """单条日志是否通过当前筛选：级别(开关组) → 来源(下拉) → 关键字(搜索框)。"""
@@ -431,7 +536,6 @@ class App(ctk.CTk):
         "config": ConfigPage,
         "tools": ToolsPage,
         "settings": SettingsPage,
-        "about": AboutPage,
     }
 
     def _build_pages(self):
@@ -463,11 +567,16 @@ class App(ctk.CTk):
                         pass
 
     def _iter_pages(self):
-        """产出所有顶层页 + 各分类页已建成的内嵌子页。急停/广播/查运行都要扫到子页里的 runner。"""
+        """产出所有顶层页 + 各分类页已建成的内嵌子页（**递归**，支持分类页内再嵌分类页，
+        如「工具 → 商城 → 抢关注」）。急停/广播/查运行都要扫到任意层子页里的 runner。"""
         for page in self.pages.values():
-            yield page
-            for sub in getattr(page, "sub_pages", {}).values():
-                yield sub
+            yield from self._iter_page_tree(page)
+
+    def _iter_page_tree(self, page):
+        """深度优先产出一页及其所有内嵌子页（沿 .sub_pages 递归）。"""
+        yield page
+        for sub in getattr(page, "sub_pages", {}).values():
+            yield from self._iter_page_tree(sub)
 
     def build_all_pages(self, on_step=None):
         """一次性把所有页面都建好（建完再亮窗口，杜绝「出现后才逐页卡」）。

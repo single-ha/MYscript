@@ -38,7 +38,23 @@ class TaskRunner:
         self.thread = None
 
     def _log(self, msg, level="info"):
-        self.log_queue.put((level, msg))
+        # 日志来源短标签：任务可在运行中动态设 self.current_log_source（如「日常」链
+        # 每步设成当前子任务），GUI 全局面板按它打来源标签；None=回退页面默认来源。
+        src = getattr(self.task, "current_log_source", None)
+        self.log_queue.put((level, msg, src))
+
+    def drain_logs(self):
+        """取出全部待处理日志，返回 [(level, msg, source)]。source 可空（None=页面默认标签）。
+        兼容历史 2 元组条目。"""
+        out = []
+        q = self.log_queue
+        while not q.empty():
+            row = q.get()
+            if isinstance(row, (tuple, list)) and len(row) >= 3:
+                out.append((row[0], row[1], row[2]))
+            else:
+                out.append((row[0], row[1], None))
+        return out
 
     def is_running(self):
         return self.thread is not None and self.thread.is_alive()
