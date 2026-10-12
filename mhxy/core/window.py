@@ -549,6 +549,50 @@ def restore_targets_size(title_substr, offset, targets, base_size):
     return (ok, len(wins), actual)
 
 
+def normalize_windows_to_base(ctx):
+    """
+    统一把选中的游戏窗口调整到 targets.base_size 并按 2列×2行 排布（第1排贴顶、最后1排贴任务栏、第5个居中）。
+    供任务执行上下文调用（无 GUI 依赖，日志走 ctx.log）。
+    
+    Args:
+        ctx: TaskContext，需包含 cfg、select_windows()、log()、should_stop()
+    Returns:
+        (ok_count, total, actual_sizes) 同 restore_targets_size
+    """
+    base = (ctx.cfg.get("targets") or {}).get("base_size")
+    if not base or len(base) < 2:
+        ctx.log("未设置基准尺寸（targets.base_size），跳过窗口调整。", level="warn")
+        return (0, 0, [])
+    bw, bh = int(base[0]), int(base[1])
+    
+    wins = ctx.select_windows()[:5]  # 最多 5 个
+    if not wins:
+        ctx.log("未检测到目标窗口，跳过窗口调整。", level="warn")
+        return (0, 0, [])
+    
+    wa = work_area()
+    margin = int(ctx.cfg.get("arrange_left_margin", 100))
+    ok = 0
+    actual = []
+    
+    for i, w in enumerate(wins):
+        if ctx.should_stop():
+            break
+        w.activate()
+        x, y = arrange_slot(i, bw, bh, work=wa, margin=margin)
+        success = w.resize_to(bw, bh, move_to=(x, y))
+        r = w.rect()
+        actual.append([r[2], r[3]] if r else None)
+        if success:
+            ok += 1
+            ctx.log(f"已调整窗口到基准尺寸 {bw}×{bh}（实际 {r[2]}×{r[3]}）。", level="hit")
+        else:
+            sz = f"（实际 {r[2]}×{r[3]}）" if r else "（窗口已失效）"
+            ctx.log(f"调整窗口到基准尺寸 {bw}×{bh} 未完全生效{sz}——可能锁了分辨率档位，点击可能偏移。", level="warn")
+    
+    return (ok, len(wins), actual)
+
+
 def arrange_slot(index, bw, bh, work=None, margin=100):
     """第 index 个窗口（0 起）在基准排布网格里的左上角 (x, y)。
 

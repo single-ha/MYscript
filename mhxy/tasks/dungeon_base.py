@@ -232,6 +232,15 @@ class DungeonBaseTask(Task):
         if not wins:
             ctx.log("没找到/没选中目标窗口，已停止。", level="error")
             return
+        
+        # 统一调整窗口到基准尺寸（模板/区域坐标按 base_size 标定，多开同尺寸才好点）
+        win_mod.normalize_windows_to_base(ctx)
+        # 重新获取窗口列表（resize 后 rect 可能变化）
+        wins = ctx.select_windows()
+        if not wins:
+            ctx.log("调整窗口后丢失目标窗口，已停止。", level="error")
+            return
+        
         if not skip_team and len(wins) < 2:
             ctx.log("选中窗口不足 2 个（组队至少队长+1 队员）；若已自行组好队，请勾选「已组队」。", level="error")
             return

@@ -73,7 +73,8 @@ class GeneralPage(ctk.CTkFrame):
 
     def _normalize_now(self):
         """点「还原尺寸」时触发：把所有尺寸≠基准的游戏窗口拉回基准尺寸。
-        基准未设置时提示；没有窗口时提示。只对尺寸不符的窗口动手（已是基准的不碰）。"""
+        基准未设置时提示；没有窗口时提示。只对尺寸不符的窗口动手（已是基准的不碰）。
+        使用 resolve_targets 选窗，与任务执行逻辑一致。"""
         cfg = cfg_mod.load_config()
         self.cfg = cfg
         self.app.cfg = cfg
@@ -84,22 +85,27 @@ class GeneralPage(ctk.CTkFrame):
         bw, bh = int(base[0]), int(base[1])
         title = cfg.get("window_title", "梦幻西游")
         offset = cfg.get("window_offset", [0, 0])
+        targets = cfg.get("targets", {})
+        
+        # 用 resolve_targets 选窗，与任务执行逻辑一致（单开/多开、single_index/multi_indices）
         try:
-            wins = win_mod.locate_all(title, offset)
+            wins = win_mod.resolve_targets(title, offset, targets)
         except Exception:
             wins = []
         if not wins:
-            self.app.toast(f"没检测到游戏窗口（标题含「{title}」），请先打开游戏")
+            self.app.toast(f"没检测到目标窗口（标题含「{title}」），请先打开游戏")
             return
+        
         todo = []
         for w in wins:
             r = w.rect()
             if r and (abs(r[2] - bw) > 4 or abs(r[3] - bh) > 4):
                 todo.append(w)
         if not todo:
-            self.app.toast(f"所有窗口已是基准尺寸 {bw}×{bh}，无需还原")
+            self.app.toast(f"所有目标窗口已是基准尺寸 {bw}×{bh}，无需还原")
             self.refresh()
             return
+        
         ok = 0
         for w in todo:
             w.activate()
