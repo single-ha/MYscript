@@ -31,6 +31,7 @@ from . import vision
 from . import window as win_mod
 from . import rotation
 from . import scan
+from .config import CAPTURES_DEBUG_DIR
 
 
 # 组队标定 spec（单一真相源；calibrate_dialog 与 DungeonTask 都引用，避免漂移）
@@ -616,7 +617,7 @@ class TeamFormation:
         tpl = self.tpl.get(tpl_key)
         score = vision.best_score(scene, tpl)[0] if tpl is not None else 0.0
         ts = time.strftime("%H%M%S")
-        path = f"captures/diag_{tag}_{ts}.png"
+        path = str(CAPTURES_DEBUG_DIR / f"diag_{tag}_{ts}.png")
         vision.save_image(path, scene)
         ctx.log(f"诊断：『{tpl_key}』在 {region_key} 区域最高匹配分={score:.2f}（阈值 {self.threshold:.2f}）；"
                 f"该区域截图已存 {path}，可打开比对。", level="warn")

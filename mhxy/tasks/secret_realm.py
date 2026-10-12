@@ -37,7 +37,7 @@ from ..core import window as win_mod
 from ..core import rotation
 from ..core import scan
 from ..core import input as input_mod
-from ..core.config import CAPTURES_DIR
+from ..core.config import CAPTURES_DIR, CAPTURES_DEBUG_DIR
 from ..ui import ui_state
 from .base import Task, register
 
@@ -357,7 +357,7 @@ class SecretRealmTask(Task):
 
     # ---- 「继续挑战」（超时=今日秘境已完成：判该号完成、不续跑，进下个任务）----
     def _do_continue(self, ctx, rec, loop, regions, threshold):
-        if self._try_click(ctx, rec, regions, threshold, "sr_continue", "继续挑战", S_NAV):
+        if self._try_click(ctx, rec, regions, threshold, "sr_continue", "继续挑战", S_NAV, post_click_sleep=1.0):
             return
         if self._state_elapsed(rec) > loop.get("step_timeout_sec", 20):
             ctx.log("等「继续挑战」超时 → 判定该号秘境已完成（今日次数用完/无后续关卡可战），"
@@ -372,11 +372,15 @@ class SecretRealmTask(Task):
         hit = self._match_scene(cur, scene_rect, "sr_nav", threshold)
         if hit is not None:
             self._diag_nav(ctx, cur, scene_rect, loop, "命中", hit)   # [调试] 仅调试开关开时走
+            # 点击「秘境条目」诊断截图（仅一张，类似 dbg_nav_..._命中）
+            self._diag_click(ctx, cur, scene_rect, loop, "秘境条目", hit)
             self._click_at_verified(ctx, hit[0], hit[1], "秘境条目")
             ctx.log(f"点右侧任务栏·秘境条目寻路到NPC（{hit[2]:.3f}）。", level="hit")
             gap = loop.get("nav_double_gap_sec", 0.3)
             if gap > 0:
                 self._interruptible_sleep(ctx, self._jitter(gap, ctx))
+                # 补点「秘境条目」诊断截图（仅一张）
+                self._diag_click(ctx, cur, scene_rect, loop, "秘境条目(补点)", hit)
                 self._click_at_verified(ctx, hit[0], hit[1], "秘境条目(补点)")
                 ctx.log(f"补点「秘境条目」（防首击被吞，间隔 {gap:.1f}s）。", level="hit")
             self._diag_nav_postclick(ctx, loop, regions, threshold)   # [调试] 仅调试开关开时走
@@ -450,10 +454,10 @@ class SecretRealmTask(Task):
                      + f"dbg_nav_{self.name}_{tag}.png")
             marks = [(local[0], local[1], hit[2])] if (hit and local) else []
             note = f"S_NAV {tag} fg={fg} best={best[0]:.2f}"
-            if vision.save_debug_image(scene, str(CAPTURES_DIR / fname), card_xy=local,
+            if vision.save_debug_image(scene, str(CAPTURES_DEBUG_DIR / fname), card_xy=local,
                                        hits=marks, tpl_wh=(tpl.shape[::-1] if tpl is not None else None),
                                        note=note):
-                ctx.log(f"[调试] 已存 S_NAV 诊断截图 captures/{fname}", level="debug")
+                ctx.log(f"[调试] 已存 S_NAV 诊断截图 captures_debug/{fname}", level="debug")
         except Exception as e:
             ctx.log(f"[调试] S_NAV 诊断异常（忽略）：{e}", level="debug")
 
@@ -478,6 +482,32 @@ class SecretRealmTask(Task):
                     f"；进入战斗={'-' if eb is None else f'{eb[2]:.3f}'}", level="debug")
         except Exception as e:
             ctx.log(f"[调试] S_NAV 点击后诊断异常（忽略）：{e}", level="debug")
+
+    # ---- [调试] 点击诊断截图：点击秘境条目/补点存一张（共用 nav_debug_max_shots 上限）----
+    def _diag_click(self, ctx, scene, scene_rect, loop, label, hit):
+        """保存点击诊断截图（仅 debug_log 开启时），类似 dbg_nav_..._命中 只存一张。
+        共用 nav_debug_max_shots (默认8) 限制总截图数。"""
+        if not self._debug_on(ctx):
+            return
+        if getattr(self, "_nav_dbg_n", 0) >= int(loop.get("nav_debug_max_shots", 8)):
+            return
+        if scene is None or scene_rect is None or hit is None:
+            return
+        try:
+            local = (hit[0] - scene_rect[0], hit[1] - scene_rect[1])
+            tpl = self.flags.get("sr_nav")
+            marks = [(local[0], local[1], hit[2])]
+            fname = (datetime.datetime.now().strftime("%Y%m%d_%H%M%S_")
+                     + f"dbg_click_{label}.png")
+            note = f"{label} score={hit[2]:.3f}"
+            if vision.save_debug_image(scene, str(CAPTURES_DEBUG_DIR / fname),
+                                       card_xy=local, hits=marks,
+                                       tpl_wh=(tpl.shape[::-1] if tpl is not None else None),
+                                       note=note):
+                self._nav_dbg_n = getattr(self, "_nav_dbg_n", 0) + 1
+                ctx.log(f"[调试] 已存 {label} 截图 captures_debug/{fname}", level="debug")
+        except Exception as e:
+            ctx.log(f"[调试] 点击诊断异常：{e}", level="debug")
 
     def _enter_battle(self, rec):
         rec["entered_battle"] = True
@@ -511,7 +541,6 @@ class SecretRealmTask(Task):
 # 3) 判定胜利/通关：匹配 sr_victory 模板（必标） → 直接视为本轮完成
         vic = self._match_scene(cur, scene_rect, "sr_victory", threshold)
         if vic is not None:
-            self._save_capture(cur, "victory_hit")
             ctx.log(f"识别到通关/胜利标志（{vic[2]:.3f}，命中屏幕坐标 {vic[0]},{vic[1]}）→ 判定本轮完成，去点「离开」。", level="hit")
             self._goto(rec, S_LEAVE)
             return
@@ -600,15 +629,16 @@ class SecretRealmTask(Task):
         except Exception:
             pass
 
-    def _try_click(self, ctx, rec, regions, threshold, flag_key, label, next_state):
-        """在 scene 里找某按钮，命中就点它并切到 next_state，返回是否点到（非阻塞，一次扫描）。"""
+    def _try_click(self, ctx, rec, regions, threshold, flag_key, label, next_state, post_click_sleep=0.3):
+        """在 scene 里找某按钮，命中就点它并切到 next_state，返回是否点到（非阻塞，一次扫描）。
+        post_click_sleep: 点击后等待秒数（带抖动），默认 0.3s；继续挑战可传 1.0。"""
         scene_rect = self._scene_rect(ctx, regions)
         cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, flag_key, threshold)
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
             ctx.log(f"点「{label}」（{hit[2]:.3f}）。", level="hit")
-            self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
+            self._interruptible_sleep(ctx, self._jitter(post_click_sleep, ctx))
             self._goto(rec, next_state)
             return True
         return False

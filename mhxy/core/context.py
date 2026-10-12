@@ -10,6 +10,7 @@ import threading
 from . import config as cfg_mod
 from . import window as win_mod
 from . import vision
+from .config import CAPTURES_DEBUG_DIR
 from .window import GameWindow
 from .input import Mouse
 
@@ -124,7 +125,7 @@ class TaskContext:
             if self.cfg.get("debug_log"):   # 调错用：把交接瞬间全窗图存下来（开「调试日志」才写）
                 try:
                     vision.save_debug_image(
-                        scene, "captures/auto_organize_dbg.png",
+                        scene, str(CAPTURES_DEBUG_DIR / "auto_organize_dbg.png"),
                         hits=[(int(pos[0]), int(pos[1]), score)] if pos else [],
                         tpl_wh=(tpl.shape[1], tpl.shape[0]) if pos else None,
                         note="auto_organize debug (bag-full best-score)")

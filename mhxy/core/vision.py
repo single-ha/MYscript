@@ -8,13 +8,18 @@ import os
 import numpy as np
 import cv2
 
-from .config import PROJECT_ROOT
+from .config import PROJECT_ROOT, CAPTURES_DIR, CAPTURES_DEBUG_DIR
 
 
 def _abspath(path):
     if os.path.isabs(path):
         return path
     return str(PROJECT_ROOT / path)
+
+
+def get_captures_dir(debug: bool = False):
+    """返回截图目录：debug=True 用 captures_debug/，否则用 captures/"""
+    return CAPTURES_DEBUG_DIR if debug else CAPTURES_DIR
 
 
 def load_template(path):

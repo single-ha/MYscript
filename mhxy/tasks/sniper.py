@@ -10,6 +10,7 @@ import time
 
 from ..core import vision
 from ..core import window as win_mod
+from ..core.config import CAPTURES_DEBUG_DIR
 from .base import Task, register
 
 
@@ -428,7 +429,7 @@ class SniperTask(Task):
                 if rect is not None:
                     scene = ctx.window.grab_screen(rect)
                     if scene is not None:
-                        vision.save_debug_image(scene, "captures/sniper_confirm_fail.png",
+                        vision.save_debug_image(scene, str(CAPTURES_DEBUG_DIR / "sniper_confirm_fail.png"),
                                                note="sniper: confirm button not found")
             except Exception:
                 pass

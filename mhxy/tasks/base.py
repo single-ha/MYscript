@@ -21,7 +21,7 @@ import numpy as np
 from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
-from ..core.config import CAPTURES_DIR, ACTIVITY_UI_TPL_KEY
+from ..core.config import CAPTURES_DIR, CAPTURES_DEBUG_DIR, ACTIVITY_UI_TPL_KEY
 
 _REGISTRY = {}
 
@@ -598,10 +598,10 @@ class Task:
             fname = (datetime.datetime.now().strftime("%Y%m%d_%H%M%S_")
                      + f"dbg_join_{self.name}.png")
             note = f"col#{col_idx + 1} card=({ex_local},{ey_local}) best={lo:.2f}"
-            if vision.save_debug_image(scene, str(CAPTURES_DIR / fname), col_x0=x0, col_x1=x1,
+            if vision.save_debug_image(scene, str(CAPTURES_DEBUG_DIR / fname), col_x0=x0, col_x1=x1,
                                        card_xy=(ex_local, ey_local), hits=marks,
                                        tpl_wh=join_tpl.shape[::-1], note=note):
-                ctx.log(f"[调试] 已存诊断截图 captures/{fname}", level="debug")
+                ctx.log(f"[调试] 已存诊断截图 captures_debug/{fname}", level="debug")
         except Exception as e:
             ctx.log(f"[调试] 诊断异常（忽略）：{e}", level="debug")
 

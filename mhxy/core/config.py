@@ -26,6 +26,7 @@ PROJECT_ROOT = DATA_ROOT          # 兼容别名：vision.py / gui/app.py 仍按
 CONFIG_PATH = DATA_ROOT / "config.json"
 TEMPLATES_DIR = DATA_ROOT / "templates"
 CAPTURES_DIR = DATA_ROOT / "captures"
+CAPTURES_DEBUG_DIR = DATA_ROOT / "captures_debug"
 LOGS_DIR = DATA_ROOT / "logs"
 
 # 跨任务【共用】的区域键（见 tasks.shared.regions）：在任意任务页标定一次全任务通用。
