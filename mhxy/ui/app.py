@@ -658,7 +658,17 @@ class App(ctk.CTk):
     def _show(self, key):
         self._current_key = key   # 记当前可见页，全局热键只控它
         page, _just_created = self._ensure_page(key)
-        page.tkraise()
+
+        # 关键修正：所有页面都放在同一 grid 位置，切页时必须先把旧页移出布局，
+        # 再显示新页，避免 Tk 在同一帧里同时绘制两个页面、造成几帧错乱混合。
+        for k, p in self.pages.items():
+            if k == key:
+                if not p.winfo_ismapped():
+                    p.grid(row=0, column=0, sticky="nsew")
+                p.tkraise()
+            else:
+                p.grid_remove()
+
         # 总是 refresh：部分页（如通用页）刻意把内容填充放在 refresh 里、__init__ 不填，靠这里驱动。
         # 重复 refresh 的代价已被各页的「内容签名守卫」摊薄（数据没变就不重画列表）。
         if hasattr(page, "refresh"):
