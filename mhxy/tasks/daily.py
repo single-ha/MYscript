@@ -60,6 +60,24 @@ GROUP_TITLES = {"single": "单人任务", "multi": "多人任务"}
 # 引擎的 steps 分段、config 的 group_order 都会自动跟进，无需改别处。
 
 
+def get_selected_dungeon_titles(cfg):
+    """取当前勾选的副本标题列表，**按展示顺序**（侠士本在前、类内等级低→高，再普通本）。
+    供起始页/日常页的执行链显示用（把「刷副本」展开为具体副本名）。"""
+    order = dungeon_display_names()
+    sel = (cfg.get("tasks", {}) or {}).get("dungeon", {}).get("selected")
+    if isinstance(sel, str):
+        sel = [sel]
+    if not isinstance(sel, list):
+        return []
+    chosen = {s for s in sel if isinstance(s, str)}
+    out = []
+    for n in order:
+        if n in chosen:
+            cls = get_task(n)
+            out.append(cls.title if cls else n)
+    return out
+
+
 @register
 class DailyTask(Task):
     name = "daily"

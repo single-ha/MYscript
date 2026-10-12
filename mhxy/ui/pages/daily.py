@@ -15,7 +15,7 @@ from ...core import window as win_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
 from ...tasks.base import dungeon_tasks
-from ...tasks.daily import CHAINABLE, GROUP_OF, GROUP_TITLES, MULTI_BARRIER
+from ...tasks.daily import CHAINABLE, GROUP_OF, GROUP_TITLES, MULTI_BARRIER, get_selected_dungeon_titles
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
 from ..common import (Card, Tooltip, bind_wraplength, required_regions,
@@ -355,8 +355,10 @@ class DailyPage(ctk.CTkFrame):
 
     def _task_title(self, name):
         if name == "dungeon":
-            # 具体刷哪些副本在本页「刷副本」步勾选，这里只显示一步「刷副本」，不挂具体副本名。
-            return "刷副本"
+            titles = get_selected_dungeon_titles(self.app.cfg)
+            if titles:
+                return " -> ".join(titles)
+            return "刷副本（未勾选）"
         cls = get_task(name)
         return cls.title if cls else name
 

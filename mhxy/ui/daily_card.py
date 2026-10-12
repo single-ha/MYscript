@@ -20,17 +20,20 @@ import customtkinter as ctk
 from . import theme as T
 from ..core import config as cfg_mod
 from ..tasks import get_task
-from ..tasks.daily import CHAINABLE, GROUP_OF
+from ..tasks.daily import CHAINABLE, GROUP_OF, get_selected_dungeon_titles
 from .common import Tooltip
 
 # 区顺序与「日常」页一致：多人组在前、个人组在后（区内顺序按配置里存的原序）。
 _GROUPS = ["multi"] + [g for g in dict.fromkeys(GROUP_OF.values()) if g != "multi"]
 
 
-def task_title(name):
-    """任务显示名：刷副本固定「刷副本」，其余取任务类的 title（取不到回退原名）。"""
-    if name == "dungeon":
-        return "刷副本"
+def task_title(name, cfg=None):
+    """任务显示名：刷副本展开为当前勾选的副本标题列表（按展示顺序），其余取任务类的 title。"""
+    if name == "dungeon" and cfg is not None:
+        titles = get_selected_dungeon_titles(cfg)
+        if titles:
+            return " -> ".join(titles)
+        return "刷副本（未勾选）"
     cls = get_task(name)
     return cls.title if cls else name
 
@@ -258,10 +261,10 @@ class DailyRunCard(ctk.CTkFrame):
         """重绘执行链 + 就绪摘要（就地改文本，不重建控件）。"""
         names = enabled_names(self.app.cfg)
         if names:
-            self.lbl_chain.configure(text=" -> ".join(task_title(n) for n in names), text_color=T.ACCENT)
+            self.lbl_chain.configure(text=" -> ".join(task_title(n, self.app.cfg) for n in names), text_color=T.ACCENT)
         else:
             self.lbl_chain.configure(text="（无，开始日常只会空转）", text_color=T.TEXT_DIM)
-        not_ready = [task_title(n) for n in names if not self._ready_bool(n)]
+        not_ready = [task_title(n, self.app.cfg) for n in names if not self._ready_bool(n)]
         if not names:
             self.lbl_ready.configure(text="")
         elif not_ready:
