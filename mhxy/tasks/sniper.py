@@ -10,7 +10,6 @@ import time
 
 from ..core import vision
 from ..core import window as win_mod
-from ..core.config import CAPTURES_DEBUG_DIR
 from .base import Task, register
 
 
@@ -210,7 +209,7 @@ class SniperTask(Task):
         cfg = ctx.cfg or {}
         tpl_path = (cfg.get("tasks", {}) or {}).get("shared", {}).get("templates", {}).get("shop_icon")
         if not tpl_path:
-            ctx.log("未标定「商城图标」(通用页·公共区域)，无法自动进商城——本次需手动停在商城界面再运行。",
+            ctx.log("未标定「商城图标」（任务配置页·全局共享标定），无法自动进商城——本次需手动停在商城界面再运行。",
                     level="warn")
             return False
         from ..ui import ui_state
@@ -230,7 +229,7 @@ class SniperTask(Task):
             return False
         hit = vision.match(scene, tpl_img, 0.75)
         if hit is None:
-            ctx.log("主界面上没识别到商城图标，跳过自动进商城（若误判可到「通用」页核对公共区域标定）。",
+            ctx.log("主界面上没识别到商城图标，跳过自动进商城（若误判可到「任务配置」页核对全局共享标定）。",
                     level="warn")
             return False
         cx, cy, score = hit
@@ -429,8 +428,13 @@ class SniperTask(Task):
                 if rect is not None:
                     scene = ctx.window.grab_screen(rect)
                     if scene is not None:
-                        vision.save_debug_image(scene, str(CAPTURES_DEBUG_DIR / "sniper_confirm_fail.png"),
-                                               note="sniper: confirm button not found")
+                        ctx.debug_snapshot(
+                            "sniper_confirm_fail",
+                            scene=scene,
+                            rect=rect,
+                            note="sniper: confirm button not found",
+                            filename="sniper_confirm_fail.png",
+                        )
             except Exception:
                 pass
         ctx.log("未识别到『确认』按钮，本次购买可能未完成！", level="warn")

@@ -31,7 +31,7 @@ from ..core.teaming import (TeamFormation, TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_
 from .base import Task, register
 
 # 抓鬼自身模板键（gg_ 前缀=抓鬼，存盘 templates/tm_gg_*.png，避免与别的任务同名互相覆盖）。
-# 取任务条目寻路的图标（曾叫 gg_nav）= 任务栏的「小闹钟」（clock），已迁「通用」页公共标定、
+# 取任务条目寻路的图标（曾叫 gg_nav）= 任务栏的「小闹钟」（clock），已迁「任务配置」页全局共享标定、
 # 由 task_config 叠加进本任务 templates（见 SHARED_TPL_KEYS）；旧 gg_nav 值仅作兼容读取兜底。
 _FLAG_KEYS = ["gg_entry", "gg_join", "gg_claim", "clock", "gg_next", "gg_cancel", "gg_finish_cancel"]
 
@@ -48,13 +48,13 @@ class ZhuaguiTask(Task):
     CALIBRATION = {
         "regions": [
             ("scene", "主识别区", "留空=整个窗口当识别区(推荐)；对话框/各按钮都在这里找", True),
-            # activity_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
+            # activity_list 已在「任务配置」页「全局共享标定」卡统一标定（全任务共用），见 tasks.shared
         ],
         "templates": [
             ("gg_entry", "活动卡片入口", "活动列表里「抓鬼」那张卡片，框图标+文字、要独特"),
             ("gg_join", "参加按钮", "抓鬼卡片右侧的「参加」按钮，框按钮本身、要独特"),
             ("gg_claim", "领取抓鬼任务按钮", "自动寻路到任务 NPC 后对话框里那个「领取抓鬼任务」按钮；每轮都要点它领当前轮任务（第 1 轮与点「继续」寻路回 NPC 后都点）"),
-            # 取任务条目寻路的图标（曾叫 gg_nav）= 任务栏「小闹钟」，已迁「通用」页「标定（公共区域）」统一标定，
+            # 取任务条目寻路的图标（曾叫 gg_nav）= 任务栏「小闹钟」，已迁「任务配置」页「全局共享标定」卡统一标定，
             # 这里不再单独标（见 tasks/shared + SHARED_TPL_KEYS + CLOCK_TPL_KEY）。
             ("gg_next", "继续按钮（是否继续弹窗）", "这场战斗打完弹出「是否继续」弹窗，点里面的「继续」自动寻路到任务 NPC 领下一轮（最后一轮不点）"),
             ("gg_finish_cancel", "结束轮取消按钮（是否继续弹窗）", "「是否继续」弹窗里的「取消」按钮：跑满设定轮数（loop.finish_cancel_rounds）后点它结束抓鬼任务——不点任务会一直挂着，回不到外面界面"),
@@ -90,27 +90,27 @@ class ZhuaguiTask(Task):
         if not skip_team:
             for rk in TEAM_REQUIRED_REGIONS:
                 if not team_tc.get("regions", {}).get(rk):
-                    problems.append(f"组队区域『{rk}』未标定 —— 请在「通用」页点「标定（组队）」框选")
+                    problems.append(f"组队区域『{rk}』未标定 —— 请在「任务配置」页「组队（共享）」卡点「标定」框选")
             for tk in TEAM_REQUIRED_TEMPLATES:
                 p = team_tc.get("templates", {}).get(tk)
                 if not p or vision.load_template(p) is None:
-                    problems.append(f"组队模板『{tk}』缺失 —— 请在「通用」页点「标定（组队）」裁图")
+                    problems.append(f"组队模板『{tk}』缺失 —— 请在「任务配置」页「组队（共享）」卡点「标定」裁图")
 
         # 跑完解散已迁至「日常」页集中控制（tasks.teaming.auto_disband），抓鬼自身不再解散。
 
         regions = tc.get("regions", {})
         if not regions.get("activity_list"):
-            problems.append("『活动列表区域』未标定 —— 请到「通用」页点「标定（公共区域）」框选（所有任务共用）")
+            problems.append("『活动列表区域』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（所有任务共用）")
         templates = tc.get("templates", {})
         for tk in ["gg_entry", "gg_join", "gg_claim", "gg_next", "gg_finish_cancel"]:
             p = templates.get(tk)
             if not p or vision.load_template(p) is None:
                 problems.append(f"抓鬼模板『{tk}』缺失或加载失败 —— 请在本页「标定」里框选裁图")
-        # 点任务条目寻路 = 点任务栏「小闹钟」：已迁「通用」页「标定（公共区域）」（tasks.shared，
+        # 点任务条目寻路 = 点任务栏「小闹钟」：已迁「任务配置」页「全局共享标定」卡（tasks.shared，
         # task_config 叠加进本任务 templates）。gg_nav 是旧标定位（曾在抓鬼页标），保留兼容读取。
         nav_path = templates.get("clock") or templates.get("gg_nav")
         if not nav_path or vision.load_template(nav_path) is None:
-            problems.append("『小闹钟(寻路)』未标定 —— 请到「通用」页点「标定（公共区域）」框选（副本/抓鬼共用）")
+            problems.append("『小闹钟(寻路)』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（副本/抓鬼共用）")
 
         if not ctx.hotkeys.get("open_activity"):
             problems.append("缺快捷键 open_activity（如 alt+c）—— 请在设置里填")
@@ -144,8 +144,9 @@ class ZhuaguiTask(Task):
             ctx.log("没找到/没选中目标窗口，已停止。", level="error")
             return
         
-        # 统一调整窗口到基准尺寸（模板/区域坐标按 base_size 标定，多开同尺寸才好点）
-        win_mod.normalize_windows_to_base(ctx)
+        # 统一调整窗口到基准尺寸（模板/区域坐标按 base_size 标定，多开同尺寸才好点）。
+        # 本次运行只做一次（单跑=这里做；日常链已在起跑处做过会自动跳过）。
+        win_mod.ensure_windows_normalized_once(ctx)
         # 重新获取窗口列表（resize 后 rect 可能变化）
         wins = ctx.select_windows()
         if not wins:
@@ -348,6 +349,9 @@ class ZhuaguiTask(Task):
             entry_xy = (rect[0] + hit[0], rect[1] + hit[1])
             r = self._find_join_ready(ctx, rec, list_region, entry_xy, threshold, loop,
                                       entry_tpl=self.flags.get("gg_entry"))
+            if r == "completed":
+                ctx.log(f"找到抓鬼卡片（{hit[2]:.3f}）且显示「完成」标识，判定本号抓鬼已完成。", level="hit")
+                return scan.ACCEPT, {"completed": True}
             if r is not None and r != "nudged":
                 ctx.mouse.click(r[0], r[1])
                 ctx.log(f"找到抓鬼卡片（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}），等寻路到 NPC。", level="hit")
@@ -371,6 +375,8 @@ class ZhuaguiTask(Task):
             reset_max=loop.get("scroll_reset_max", 20),
             log=ctx.log, label="活动列表")
         if res.found:
+            if isinstance(res.payload, dict) and res.payload.get("completed"):
+                return False
             self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
             return True
         if res.stopped:

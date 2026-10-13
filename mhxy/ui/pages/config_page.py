@@ -8,8 +8,14 @@
 import customtkinter as ctk
 
 from .. import theme as T
-from ..common import bind_wraplength
-from ...core.config import SINGLE_TASK_ORDER
+from ..common import Card, bind_wraplength, load_thumb
+from ...core import config as cfg_mod
+from ...core.runner import TaskRunner
+from ...core.config import (ACTIVITY_UI_TPL_KEY, BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY,
+                             MAIN_ICON_TPL_KEYS, POPUP_CLOSE_TPL_KEY, SHARED_REGION_KEYS,
+                             SINGLE_TASK_ORDER)
+from ...core.teaming import TEAM_CALIB_TPL_KEYS, TEAM_REQUIRED_REGIONS
+from ...tasks import get_task
 from .treasure_map import TreasureMapConfig
 from .secret_realm import SecretRealmConfig
 from .appreciation import AppreciationConfig
@@ -65,8 +71,9 @@ class ConfigPage(ctk.CTkFrame):
         ctk.CTkLabel(bar, text="任务配置 / 标定", font=self.fonts["title"], text_color=T.TEXT).grid(
             row=0, column=0, sticky="w")
         sub = ctk.CTkLabel(bar, text="单人/多人任务的全部参数与标定都收在这里，改动即保存、无需运行按钮；"
-                                     "运行唯一入口在「日常」页。公共区域/组队模板请到「通用」页统一标定。",
-                           font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
+                                     "运行唯一入口在「日常」页。公共区域/组队模板统一在本页标定，工具页只放工具型功能。",
+                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
+
         sub.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         bind_wraplength(sub)
 
@@ -84,8 +91,8 @@ class ConfigPage(ctk.CTkFrame):
 
         # 登录游戏区（自己起客户端，不在日常任务链里，故单列一区放最上面）
         row = self._section(scroll, row, "login", "🚀 登录游戏 · 逐号启动客户端",
-                            "标定客户端路径与切号按钮；账号本身在「账号库」里标定（最多 10 个），"
-                            "并挑最多 5 个去登录（按挑的先后依次登录）——账号库在「日常」页顶部登录区。")
+                             "标定客户端路径与切号按钮；账号本身在「账号库」里标定（最多 10 个），"
+                             "并挑最多 5 个去登录（按挑的先后依次登录）——账号库在「日常」页顶部登录区。")
         c = LoginConfig(scroll, self.app)
         c.grid(row=row, column=0, sticky="ew", padx=2, pady=(0, 12))
         self._cards.append(c)
@@ -93,7 +100,23 @@ class ConfigPage(ctk.CTkFrame):
         self._sections[-1]["widgets"].append(c)
         row += 1
 
+        row = self._section(scroll, row, "shared", "🌐 公共区域 · 活动/背包/主界面共享标定",
+                            "活动列表/背包列表、战斗标识、小闹钟、主界面图标等跨任务共享资源，标定一次全任务通用；"
+                            "拓印临摹资产在工具页「拓印」里单独标。")
+        self._shared_card = SharedCalibrationCard(scroll, self.app)
+        self._shared_card.grid(row=row, column=0, sticky="ew", padx=2, pady=(0, 12))
+        self._sections[-1]["widgets"].append(self._shared_card)
+        row += 1
+
+        row = self._section(scroll, row, "teaming", "👥 组队共享 · 组队标定/队长ID",
+                            "队长/队员握手、队伍面板与共享配置的组队标定都在这里统一维护。")
+        self._team_card = TeamingCalibrationCard(scroll, self.app)
+        self._team_card.grid(row=row, column=0, sticky="ew", padx=2, pady=(0, 12))
+        self._sections[-1]["widgets"].append(self._team_card)
+        row += 1
+
         # 单人任务区
+
         row = self._section(scroll, row, "single", "👤 单人任务 · 每号独立跑",
                             "参数改动即保存；标定完成后回到这里即可看到就绪状态。")
         for name in SINGLE_TASK_ORDER:
@@ -171,6 +194,30 @@ class ConfigPage(ctk.CTkFrame):
                 c.refresh()
             except Exception:
                 pass
+        if hasattr(self, "_shared_card"):
+            try:
+                self._shared_card.refresh()
+            except Exception:
+                pass
+        if hasattr(self, "_team_card"):
+            try:
+                self._team_card.refresh()
+            except Exception:
+                pass
+
+    def pump(self):
+        if hasattr(self, "_team_card") and hasattr(self._team_card, "pump"):
+            try:
+                self._team_card.pump()
+            except Exception:
+                pass
+
+    def stop_pending(self):
+        if hasattr(self, "_team_card") and hasattr(self._team_card, "stop_pending"):
+            try:
+                self._team_card.stop_pending()
+            except Exception:
+                pass
 
     def reveal_card(self, task_name):
         """跳转定位：把「任务配置」页滚动到指定任务的配置卡（必要时先展开其所在区）。
@@ -212,3 +259,230 @@ class ConfigPage(ctk.CTkFrame):
                     self.app.after_idle(self._scroll_reveal, card, _try + 1)
         except Exception:
             pass
+
+
+class SharedCalibrationCard(ctk.CTkFrame):
+    """共享区域标定卡：活动/背包列表、战斗标识、小闹钟、主界面图标共用。"""
+
+    def __init__(self, master, app):
+        super().__init__(master, fg_color="transparent")
+        self.app = app
+        self.fonts = app.fonts
+        self._dialog = None
+        self.grid_columnconfigure(0, weight=1)
+        self._build()
+
+    def _build(self):
+        card = ctk.CTkFrame(self, fg_color=T.SURFACE, corner_radius=T.RADIUS, border_width=1, border_color=T.BORDER)
+        card.grid(row=0, column=0, sticky="ew")
+        card.grid_columnconfigure(0, weight=1)
+        head = ctk.CTkFrame(card, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 6))
+        head.grid_columnconfigure(0, weight=1)
+        txt = ctk.CTkFrame(head, fg_color="transparent")
+        txt.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(txt, text="公共区域（全局共享）", font=self.fonts["h2"], text_color=T.TEXT).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(txt, text="活动列表/背包列表、战斗标识、小闹钟、主界面图标：标一次全任务通用。",
+                     font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w").grid(
+            row=1, column=0, sticky="ew", pady=(2, 0))
+        btns = ctk.CTkFrame(head, fg_color="transparent")
+        btns.grid(row=0, column=1, sticky="e")
+        ctk.CTkButton(btns, text="标定", font=self.fonts["body"], height=36, width=104,
+                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
+                      border_width=1, border_color=T.BORDER, command=self._open).grid(row=0, column=0)
+        ctk.CTkFrame(card, fg_color=T.BORDER, height=1).grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 2))
+        self.status = ctk.CTkLabel(card, text="", font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
+        self.status.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 0))
+        bind_wraplength(self.status)
+        self.refresh()
+
+    def refresh(self):
+        cfg = cfg_mod.load_config()
+        shared_tc = cfg_mod.task_config(cfg, "shared")
+        sreg = shared_tc.get("regions", {})
+        sdone = sum(1 for k in SHARED_REGION_KEYS if sreg.get(k))
+        stpl = shared_tc.get("templates", {})
+        tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY) + MAIN_ICON_TPL_KEYS + (POPUP_CLOSE_TPL_KEY, ACTIVITY_UI_TPL_KEY)
+        tdone = sum(1 for k in tpl_keys if stpl.get(k))
+        ready = (sdone == len(SHARED_REGION_KEYS) and bool(stpl.get(BATTLE_FLAG_TPL_KEY)) and bool(stpl.get(CLOCK_TPL_KEY)))
+        self.status.configure(text=f"区域：{sdone}/{len(SHARED_REGION_KEYS)}　模板：{tdone}/{len(tpl_keys)}" + ("　✓ 已就绪" if ready else "　（还需标定）"),
+                             text_color=T.SUCCESS if ready else T.WARN)
+
+    def _open(self):
+        existing = self._dialog
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift(); existing.focus_force(); return
+            except Exception:
+                pass
+        from ..calibrate_dialog import CalibrateDialog
+        def _after():
+            self._dialog = None
+            self.refresh()
+        try:
+            self._dialog = CalibrateDialog(self.app, task_name="shared", on_done=_after)
+        except Exception as e:
+            self._dialog = None
+            self.app.toast(f"打开公共区域标定失败：{e}")
+
+
+class TeamingCalibrationCard(ctk.CTkFrame):
+    """组队共享标定卡：组队标定 + 队长ID + 已组队开关。"""
+
+    def __init__(self, master, app):
+        super().__init__(master, fg_color="transparent")
+        self.app = app
+        self.fonts = app.fonts
+        self._dialog = None
+        self._leader_thumbs = []
+        self.runner_team = None
+        self.runner_disband = None
+        self.grid_columnconfigure(0, weight=1)
+        self._build()
+
+    def _build(self):
+        card = Card(self)
+        card.grid(row=0, column=0, sticky="ew")
+        card.grid_columnconfigure(0, weight=1)
+        head = ctk.CTkFrame(card, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 6))
+        head.grid_columnconfigure(0, weight=1)
+        head.grid_columnconfigure(1, weight=0)
+        txt = ctk.CTkFrame(head, fg_color="transparent")
+        txt.grid(row=0, column=0, sticky="ew")
+        txt.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(txt, text="组队（共享）", font=self.fonts["h2"], text_color=T.TEXT).grid(row=0, column=0, sticky="w")
+        self.status = ctk.CTkLabel(txt, text="", font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
+        self.status.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        self.leader_status = ctk.CTkLabel(txt, text="", font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w")
+        self.leader_status.grid(row=2, column=0, sticky="ew", pady=(2, 0))
+        bind_wraplength(self.status)
+        bind_wraplength(self.leader_status)
+        btns = ctk.CTkFrame(head, fg_color="transparent")
+        btns.grid(row=0, column=1, sticky="e")
+        ctk.CTkButton(btns, text="标定", font=self.fonts["body"], height=36, width=104,
+                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
+                      border_width=1, border_color=T.BORDER, command=self._open).grid(row=0, column=0, padx=(0, 8))
+        self.btn_leader = ctk.CTkButton(btns, text="队长ID", font=self.fonts["body"], height=36, width=104,
+                                         corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
+                                         text_color=T.TEXT, border_width=1, border_color=T.BORDER,
+                                         command=self._open_leader)
+        self.btn_leader.grid(row=0, column=1)
+        ctk.CTkFrame(card, fg_color=T.BORDER, height=1).grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 2))
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.grid(row=2, column=0, sticky="w", padx=16, pady=(8, 2))
+        self.btn_team = ctk.CTkButton(actions, text="▶  一键组队", font=self.fonts["body"], height=36, width=120,
+                                      corner_radius=T.RADIUS_SM, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+                                      text_color=T.ON_ACCENT, command=self._toggle_team)
+        self.btn_team.pack(side="left")
+        self.btn_disband = ctk.CTkButton(actions, text="▶  一键解散", font=self.fonts["body"], height=36, width=120,
+                                         corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
+                                         text_color=T.TEXT, border_width=1, border_color=T.BORDER,
+                                         command=self._toggle_disband)
+        self.btn_disband.pack(side="left", padx=(8, 0))
+        ctk.CTkFrame(card, fg_color="transparent", height=8).grid(row=3, column=0, sticky="ew")
+        self.refresh()
+
+    def refresh(self):
+        cfg = cfg_mod.load_config()
+        tc = cfg_mod.task_config(cfg, "teaming")
+        rdone = sum(1 for k in TEAM_REQUIRED_REGIONS if (tc.get("regions", {}) or {}).get(k))
+        tdone = sum(1 for k in TEAM_CALIB_TPL_KEYS if (tc.get("templates", {}) or {}).get(k))
+        ready = rdone == len(TEAM_REQUIRED_REGIONS) and tdone == len(TEAM_CALIB_TPL_KEYS)
+        self.status.configure(text=f"组队标定：区域 {rdone}/{len(TEAM_REQUIRED_REGIONS)}，模板 {tdone}/{len(TEAM_CALIB_TPL_KEYS)}" + ("　✓ 已就绪" if ready else "　（还需标定）"),
+                             text_color=T.SUCCESS if ready else T.WARN)
+        ok = bool((tc.get("templates") or {}).get("leader_id"))
+        self.leader_status.configure(text=("队长ID：✓ 已标定" if ok else "队长ID：⚠ 未标定（点「标定队长ID」）"),
+                                    text_color=T.SUCCESS if ok else T.WARN)
+        self._refresh_leader_btn()
+    def _refresh_leader_btn(self):
+        self._leader_thumbs.clear()
+        img = load_thumb("templates/tm_leader_id.png", self._leader_thumbs, max_h=26)
+        try:
+            self.btn_leader.configure(image=img, text=" 队长ID" if img is not None else "标定队长ID")
+        except Exception:
+            pass
+
+    def _open(self):
+        existing = self._dialog
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.lift(); existing.focus_force(); return
+            except Exception:
+                pass
+        from ..calibrate_dialog import CalibrateDialog
+        def _after():
+            self._dialog = None
+            self.refresh()
+        try:
+            self._dialog = CalibrateDialog(self.app, task_name="teaming", on_done=_after, exclude=["leader_id"])
+        except Exception as e:
+            self._dialog = None
+            self.app.toast(f"打开组队标定失败：{e}")
+
+    def _open_leader(self):
+        from ..leader_gallery import LeaderIdGallery
+        LeaderIdGallery.open(self.app)
+
+    def _toggle_team(self):
+        if self.runner_team and self.runner_team.is_running():
+            self.runner_team.stop()
+            self.btn_team.configure(text="停止中…", state="disabled")
+            return
+        task_cls = get_task("dungeon")
+        if task_cls is None:
+            self.app.log_line("找不到组队任务。", "error", "组队")
+            return
+        self.runner_team = TaskRunner(task_cls(), cfg_mod.load_config())
+        ok, problems = self.runner_team.start()
+        if not ok:
+            for p in problems:
+                self.app.log_line("无法开始组队：" + p, "error", "组队")
+            self.runner_team = None
+            return
+        self.btn_team.configure(text="■  停止组队", fg_color=T.DANGER,
+                                hover_color=T.DANGER_HOVER, state="normal")
+
+    def _toggle_disband(self):
+        if self.runner_disband and self.runner_disband.is_running():
+            self.runner_disband.stop()
+            self.btn_disband.configure(text="停止中…", state="disabled")
+            return
+        task_cls = get_task("disband")
+        if task_cls is None:
+            self.app.log_line("找不到解散任务。", "error", "解散")
+            return
+        self.runner_disband = TaskRunner(task_cls(), cfg_mod.load_config())
+        ok, problems = self.runner_disband.start()
+        if not ok:
+            for p in problems:
+                self.app.log_line("无法开始解散：" + p, "error", "解散")
+            self.runner_disband = None
+            return
+        self.btn_disband.configure(text="■  停止解散", fg_color=T.DANGER,
+                                   hover_color=T.DANGER_HOVER, text_color=T.ON_ACCENT,
+                                   border_width=0, border_color=T.DANGER, state="normal")
+
+    def pump(self):
+        if self.runner_team:
+            for level, msg, _src in self.runner_team.drain_logs():
+                self.app.log_line(msg, level, "组队")
+            if not self.runner_team.is_running() and self.btn_team.cget("text") != "▶  一键组队":
+                self.btn_team.configure(text="▶  一键组队", fg_color=T.ACCENT,
+                                        hover_color=T.ACCENT_HOVER, state="normal")
+        if self.runner_disband:
+            for level, msg, _src in self.runner_disband.drain_logs():
+                self.app.log_line(msg, level, "解散")
+            if not self.runner_disband.is_running() and self.btn_disband.cget("text") != "▶  一键解散":
+                self.btn_disband.configure(text="▶  一键解散", fg_color=T.BTN,
+                                           hover_color=T.BTN_HOVER, text_color=T.TEXT,
+                                           border_width=1, border_color=T.BORDER, state="normal")
+
+
+    def stop_pending(self):
+        if self.runner_team and self.runner_team.is_running():
+            self.runner_team.stop()
+        if self.runner_disband and self.runner_disband.is_running():
+            self.runner_disband.stop()

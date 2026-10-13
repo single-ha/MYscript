@@ -42,7 +42,7 @@ S_ESCORTING = "ESCORTING"           # 运镖中：监控运镖中标志/对话�
 
 # 模板键（用 escort_ 前缀，避免和「宝图」任务的同名模板在磁盘上互相覆盖——
 #   标定存盘按 templates/tm_<key>.png 命名，只按 key 区分，不区分任务）。
-# 战斗标识走公共共享模板 tasks.shared.templates.battle_flag（「通用」页「标定（公共区域）」标定，全任务共用），
+# 战斗标识走公共共享模板 tasks.shared.templates.battle_flag（「任务配置」页「全局共享标定」卡标定，全任务共用），
 # task_config 已把它叠加进本任务 templates，这里直接用同 key「battle_flag」读，不再各自标。
 _FLAG_KEYS = ["escort_entry", "escort_join", "escort_silver", "escort_confirm",
               "escort_ongoing", "battle_flag"]
@@ -62,7 +62,7 @@ class EscortTask(Task):
     CALIBRATION = {
         "regions": [
             ("scene", "主识别区", "留空=整个窗口当识别区(推荐)；对话框/战斗等标志都在这里找", True),
-            # activity_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
+            # activity_list 已在「任务配置」页「全局共享标定」卡统一标定（全任务共用），见 tasks.shared
         ],
         "templates": [
             ("escort_entry", "运镖入口", "活动列表里「运镖」那一条，框图标+文字、要独特"),
@@ -71,7 +71,7 @@ class EscortTask(Task):
             ("escort_confirm", "「确认」按钮", "点完「押送普通镖银」后再弹出的确认按钮，框按钮本身、要独特"),
             ("escort_ongoing", "「运镖中」标志", "运镖途中一直挂在屏幕上的标志（如镖银图标/运镖任务追踪条），"
                                               "只要它在就说明还在运镖、不会停。框它独特的部分"),
-            # 战斗界面标志已移到「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
+            # 战斗界面标志已移到「任务配置」页「全局共享标定」卡统一标定（全任务共用），见 tasks.shared
         ],
         "watchlist": False,
     }
@@ -83,16 +83,16 @@ class EscortTask(Task):
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
 
-        # activity_list 属公共区域（全任务共用），在「通用」页标定；task_config 已把 tasks.shared 叠加进来，直接读即可
+        # activity_list 属公共区域（全任务共用），在「任务配置」页标定；task_config 已把 tasks.shared 叠加进来，直接读即可
         for rk, label in [("activity_list", "活动列表区域")]:
             if not regions.get(rk):
-                problems.append(f"『{label}』未标定 —— 请到「通用」页点「标定（公共区域）」框选（所有任务共用）")
+                problems.append(f"『{label}』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（所有任务共用）")
 
         for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
             if not path or vision.load_template(path) is None:
                 if tk == BATTLE_FLAG_TPL_KEY:
-                    problems.append("『战斗界面标志』未标定 —— 请到「通用」页点「标定（公共区域）」框选（全任务共用）")
+                    problems.append("『战斗界面标志』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
                 else:
                     problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
@@ -261,6 +261,9 @@ class EscortTask(Task):
             entry_xy = (rect[0] + cx, rect[1] + cy)
             r = self._find_join_ready(ctx, rec, list_region, entry_xy, threshold, loop,
                                       entry_tpl=self.flags.get("escort_entry"))
+            if r == "completed":
+                ctx.log(f"找到「运镖」（{score:.3f}）且显示「完成」标识，判定该号今日已完成。", level="hit")
+                return scan.ACCEPT, {"completed": True}
             if r is not None and r != "nudged":
                 ctx.mouse.click(r[0], r[1])
                 ctx.log(f"找到「运镖」（{score:.3f}）→ 点「参加」（{r[2]:.3f}），等对话框。", level="hit")
@@ -284,6 +287,9 @@ class EscortTask(Task):
             reset_max=loop.get("scroll_reset_max", 20),
             log=ctx.log, label="活动列表")
         if res.found:
+            if isinstance(res.payload, dict) and res.payload.get("completed"):
+                rec["done"] = True
+                return
             self._goto(rec, S_DIALOG)
             return
         if res.stopped:

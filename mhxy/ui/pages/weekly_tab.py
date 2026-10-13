@@ -2,7 +2,7 @@
 """周常任务子页基类（门派闯关 / 海底世界 / 迷魂塔共用同一页骨架）。
 
 流程（见 mhxy/tasks/weekly_base.py）：多人任务先自动组队（「已组队」开关卡在「周常」页顶层、
-队长在「通用」页「选择窗口」里选），组好后只驱动队长窗口循环跑
+队长在左下角连接状态按钮里选），组好后只驱动队长窗口循环跑
 「领任务 → 做任务 → 判完成 → 再开新一轮」，直到 中止（活动不可参加/已参加）或时间上限或急停。
 
 本页 = 运行按钮 + 「标定」+「刷新配置」+ 时间上限参数 + 标定就绪状态。
@@ -95,7 +95,7 @@ class WeeklyTabPage(ctk.CTkFrame):
                      fg_color=T.SURFACE_2, border_color=T.BORDER).pack(side="left", padx=(8, 0))
 
         hint = ctk.CTkLabel(left,
-                            text="多人任务：先自动组队（「已组队」开关在「周常」页顶部；队长在「通用」页选），"
+                            text="多人任务：先自动组队（「已组队」开关在「周常」页顶部；队长在左下角连接状态按钮里选），"
                                  "组好后只驱动队长窗口，逻辑：\n"
                                  "领任务：开活动 → 找到活动卡片 → 点「参加」→ 自动寻路到 NPC → 点「参加活动」。\n"
                                  "做任务：战斗中=等；「进入战斗」=点它开战；小闹钟=点它寻路；"
@@ -123,7 +123,7 @@ class WeeklyTabPage(ctk.CTkFrame):
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
         spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
-        need_r = required_regions(spec)   # scene 可留空、活动列表区在「通用」页统一标定
+        need_r = required_regions(spec)   # scene 可留空、活动列表区在「任务配置」页统一标定
         need_t = required_templates(spec)
         _ready, txt, color = calib_status(regions=regions, templates=templates, task_name=self.TASK_NAME,
                                           region_keys=need_r, tpl_keys=need_t)

@@ -42,6 +42,7 @@ from .base import (Task, register, get_task, dungeon_tasks, dungeon_display_name
                    enter_target_for)
 from .dungeon_base import DUNGEON_NS
 from ..core.config import SINGLE_TASK_ORDER
+from ..core import window as win_mod
 from ..core.teaming import TeamFormation
 
 # 可进日常的任务（这些都有明确「完成条件」、会自动结束）。抢关注 sniper 不在此列。
@@ -118,6 +119,9 @@ class DailyTask(Task):
         time_limit = self._time_limit(ctx)
         start_ts = time.time()
         deadline = start_ts + time_limit * 60 if time_limit > 0 else None
+
+        # 用户拍板：窗口基准尺寸检查/归一化在「开始日常」时只做一次；链内各子任务不再重复做。
+        win_mod.ensure_windows_normalized_once(ctx, key="daily_base_size_checked")
 
         wins = ctx.select_windows()
         if not wins:
@@ -482,9 +486,9 @@ class DailyTask(Task):
             ctx.log("多人任务已全部跑完（本次为最后一段），未勾「解散队伍」，保留队伍。", level="warn")
             return
         if not (team_tc.get("templates", {}) or {}).get("team_quit"):
-            ctx.log(("解散队伍需先在「通用」页标定「退出队伍」模板 —— 单人任务必须在队伍外跑，"
+            ctx.log(("解散队伍需先在「任务配置」页「组队（共享）」卡标定「退出队伍」模板 —— 单人任务必须在队伍外跑，"
                      "本次未解散，单人任务可能受影响。") if has_single
-                    else "解散队伍需先在「通用」页标定「退出队伍」模板 —— 本次保留队伍。", level="warn")
+                    else "解散队伍需先在「任务配置」页「组队（共享）」卡标定「退出队伍」模板 —— 本次保留队伍。", level="warn")
             return
         reason = ("后面是单人任务组，单人步必须在队伍外跑，强制解散") if has_single \
                  else "已勾选「跑完多人任务后解散队伍」，收尾解散"

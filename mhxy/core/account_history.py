@@ -18,7 +18,7 @@
 - config（tasks.login 下，只碰这两个键，不整块回写）：
     account_library = [{slot, name}, ...]     账号库，slot 0..9，name 用户可改（默认 账号N）
     accounts        = [slot, ...]             登录队列（**按点击顺序**、最多 5 个；空=没选）
-  读写一律走【原始】tasks.login 命名空间（不经 task_config），故绝不会把「通用」页共享标定
+  读写一律走【原始】tasks.login 命名空间（不经 task_config），故绝不会把「任务配置」页共享标定
   （活动/背包列表区、战斗标识/小闹钟）顺手抄进本任务——那正是 CLAUDE.md 记的污染坑。
 """
 

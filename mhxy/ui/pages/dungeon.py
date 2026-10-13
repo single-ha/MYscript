@@ -128,7 +128,7 @@ class DungeonConfig(ctk.CTkFrame):
             ready = regions_ok and templates_ok
         else:
             team_ok = teaming_ready(team_tc)
-            line += "；组队标定：" + ("齐全 ✓" if team_ok else "未齐（去「通用」页标定组队）")
+            line += "；组队标定：" + ("齐全 ✓" if team_ok else "未齐（去「任务配置」页「组队（共享）」卡补标）")
             ready = regions_ok and templates_ok and team_ok
             line += "　✓ 就绪" if ready else "　（还需标定）"
         self.lbl_ready.configure(text=line, text_color=T.SUCCESS if ready else T.WARN)
@@ -176,7 +176,7 @@ class DungeonConfig(ctk.CTkFrame):
         try:
             txt = f"🎮 已选中 {n} 个号"
             if n == 0 and not quiet:
-                txt += "（去「通用」页「选择窗口/队长」勾选多开）"
+                txt += "（点左下角连接状态按钮「未检测到目标窗口」选择多开）"
             self.lbl_wins.configure(text=txt)
         except Exception:
             pass

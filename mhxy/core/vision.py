@@ -4,6 +4,7 @@
 """
 
 import os
+import datetime
 
 import numpy as np
 import cv2
@@ -15,6 +16,22 @@ def _abspath(path):
     if os.path.isabs(path):
         return path
     return str(PROJECT_ROOT / path)
+
+
+def _with_daily_dir(path):
+    """captures/captures_debug 下的输出自动落到 YYYY-MM-DD 子目录。"""
+    try:
+        p = os.path.abspath(path)
+        np = os.path.normcase(p)
+        day = datetime.datetime.now().strftime("%Y-%m-%d")
+        for root in (CAPTURES_DIR, CAPTURES_DEBUG_DIR):
+            r = os.path.normcase(os.path.abspath(str(root)))
+            if os.path.commonpath([np, r]) == r:
+                rel = os.path.relpath(p, str(root))
+                return str(root / day / rel)
+    except Exception:
+        pass
+    return path
 
 
 def get_captures_dir(debug: bool = False):
@@ -33,7 +50,7 @@ def load_template(path):
 
 def save_image(path, img):
     """保存图片（兼容中文路径）。"""
-    p = _abspath(path)
+    p = _with_daily_dir(_abspath(path))
     os.makedirs(os.path.dirname(p), exist_ok=True)
     ext = os.path.splitext(p)[1] or ".png"
     ok, buf = cv2.imencode(ext, img)
@@ -137,11 +154,12 @@ def best_score(scene_bgr, template_bgr):
 
 
 def save_debug_image(scene, path, col_x0=None, col_x1=None,
-                     card_xy=None, hits=None, tpl_wh=None, note=""):
+                     card_xy=None, hits=None, tpl_wh=None, note="",
+                     click_kind=None, card_color=None):
     """诊断用：在 scene 副本上画标注并存到 path（绝对/相对均可）。坐标均为 scene 局部坐标。
     只画几何 + ASCII 文本（cv2 不支持中文）。返回是否保存成功。
       col_x0/col_x1：卡片所在列左右边界 → 黄色竖带（列内找「参加」的范围）
-      card_xy：卡片中心 → 红十字
+      card_xy：卡片中心/点击点 → 十字（默认红；click_kind/card_color 可覆盖）
       hits：[(cx,cy,score)] 低阈值候选 → 框（≥0.7 绿、否则橙）+ 分数
       tpl_wh：(w,h) 命中框尺寸，缺省不画框
       note：左上角 ASCII 备注"""
@@ -149,6 +167,11 @@ def save_debug_image(scene, path, col_x0=None, col_x1=None,
         return False
     img = scene.copy()
     h, w = img.shape[:2]
+    click_colors = {
+        "left": (0, 255, 0),     # 绿
+        "double": (0, 255, 255), # 黄
+        "right": (0, 165, 255),  # 橙
+    }
     if col_x0 is not None and col_x1 is not None:
         cv2.rectangle(img, (int(col_x0), 0), (int(col_x1) - 1, h - 1), (0, 255, 255), 1)
     if tpl_wh and hits:
@@ -161,8 +184,9 @@ def save_debug_image(scene, path, col_x0=None, col_x1=None,
             cv2.putText(img, f"{s:.2f}", (x0, max(12, y0 - 2)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
     if card_xy is not None:
+        marker_color = card_color or click_colors.get(click_kind, (0, 0, 255))
         cv2.drawMarker(img, (int(card_xy[0]), int(card_xy[1])),
-                       (0, 0, 255), cv2.MARKER_CROSS, 18, 2)
+                       marker_color, cv2.MARKER_CROSS, 18, 2)
     if note:
         cv2.putText(img, note, (4, max(12, h - 8)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)

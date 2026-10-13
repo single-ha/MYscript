@@ -593,6 +593,22 @@ def normalize_windows_to_base(ctx):
     return (ok, len(wins), actual)
 
 
+def ensure_windows_normalized_once(ctx, key="base_size_checked"):
+    """本次任务运行内只做一次窗口基准尺寸归一化。
+
+    通过 ctx.runtime 记忆是否已执行：
+    - 首次调用：执行 normalize_windows_to_base(ctx)
+    - 后续调用：直接返回 (None, None, None)，表示已跳过
+    """
+    rt = getattr(ctx, "runtime", None)
+    if not isinstance(rt, dict):
+        return normalize_windows_to_base(ctx)
+    if rt.get(key):
+        return (None, None, None)
+    rt[key] = True
+    return normalize_windows_to_base(ctx)
+
+
 def arrange_slot(index, bw, bh, work=None, margin=100):
     """第 index 个窗口（0 起）在基准排布网格里的左上角 (x, y)。
 

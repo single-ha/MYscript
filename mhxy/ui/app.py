@@ -20,7 +20,7 @@ from ..core.input import get_cursor
 from .common import (DEFAULT_STOP_HOTKEY, DEFAULT_FAILSAFE, FAILSAFE_CORNERS,
                      _in_failsafe_corner, _parse_stop_hotkey, _vk_down)
 from .pages import (StartPage, DailyPage, WeeklyPage, ConfigPage, ToolsPage,
-                    GeneralPage, SettingsPage)
+                    SettingsPage)
 
 
 # 日志级别 -> 中文简称（筛选开关上显示；与 theme.LEVEL_COLOR 的键一致）
@@ -40,14 +40,14 @@ def format_log_line(now, source, level, msg):
 
 
 def prune_log_files(logs_dir, keep):
-    """自动清理旧日志：logs_dir 里只保留修改时间最新的 keep 个 `日志-*.log`，其余删掉。
-    keep<=0=不清理。任意异常静默忽略（best-effort，清理失败不影响主流程）。"""
+    """自动清理旧日志：logs_dir 下（含 YYYY-MM-DD 子目录）只保留最新 keep 个 `日志-*.log`。
+    keep<=0=不清理。删掉旧日志后若日期目录空了，一并清理空目录。"""
     if not keep or keep <= 0:
         return
     try:
         if not logs_dir.exists():
             return
-        files = [p for p in logs_dir.iterdir()
+        files = [p for p in logs_dir.rglob("*")
                  if p.is_file() and p.name.startswith(LOG_FILE_PREFIX)]
         if len(files) <= keep:
             return
@@ -55,6 +55,14 @@ def prune_log_files(logs_dir, keep):
         for old in files[keep:]:
             try:
                 old.unlink()
+            except OSError:
+                pass
+        # 顺手清空空的 YYYY-MM-DD 子目录（深的先删，避免父目录非空删不掉）
+        for d in sorted((p for p in logs_dir.rglob("*") if p.is_dir()),
+                        key=lambda p: len(p.parts), reverse=True):
+            try:
+                if not any(d.iterdir()):
+                    d.rmdir()
             except OSError:
                 pass
     except OSError:
@@ -66,17 +74,17 @@ def prune_log_files(logs_dir, keep):
 # ----------------------------------------------------------------------
 class App(ctk.CTk):
     NAV = [("start", "🏠  起始"),
-           ("daily", "🐉  日常"),
-           ("weekly", "🗓  周常"),       # 内嵌 门派闯关/海底世界/迷魂塔（多人·自动组队·队长跑循环）
-           ("general", "🧰  通用"),
-           ("config", "🎛  任务配置"),   # 内嵌 单人/多人任务的全局参数+标定（运行唯一入口在「日常」）
-           ("tools", "🧰  工具"),        # 内嵌 商城(抢关注)/整理背包/拓印
-           ("settings", "⚙  设置")]
+            ("daily", "🐉  日常"),
+            ("weekly", "🗓  周常"),       # 内嵌 门派闯关/海底世界/迷魂塔（多人·自动组队·队长跑循环）
+            ("config", "🎛  任务配置"),   # 内嵌 单人/多人任务的全局参数+标定（运行唯一入口在「日常」）
+            ("tools", "🧰  工具"),        # 内嵌 商城(抢关注)/整理背包/拓印/窗口归一化
+            ("settings", "⚙  设置")]
     # 可运行任务页（有 runner/pump），App 的定时器/热键/关闭钩子按此遍历。
-    # general 也在内：它的「一键组队」会跑后台任务，需要 pump 抽日志、关闭时停 runner。
     # weekly/tools 是分类页，App 下标只是顶层项；其内嵌任务页靠分类页的
-    # pump() 下钻转发（见 pages/category.py）。config 是纯配置页，无 runner，不进此列。
-    RUNNABLE_KEYS = ("start", "general", "weekly", "daily", "tools")
+    # pump() 下钻转发（见 pages/category.py）。config 虽是配置页，但其中组队卡可直接跑
+    # 一键组队/一键解散，故也要纳入 pump 轮询。
+    RUNNABLE_KEYS = ("start", "weekly", "daily", "tools", "config")
+
 
     def __init__(self):
         super().__init__()
@@ -302,9 +310,11 @@ class App(ctk.CTk):
         if not bool(getattr(self, "cfg", {}).get("log_to_file", True)):
             return None
         if self._log_path is None:
-            self._log_path = LOGS_DIR / (LOG_FILE_PREFIX
-                                         + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".log")
-        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+            day = datetime.datetime.now().strftime("%Y-%m-%d")
+            day_dir = LOGS_DIR / day
+            self._log_path = day_dir / (LOG_FILE_PREFIX
+                                        + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".log")
+        self._log_path.parent.mkdir(parents=True, exist_ok=True)
         fh = open(self._log_path, "a", encoding="utf-8", newline="")
         fh.write("===== 本次运行开始 %s =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         fh.flush()
@@ -532,7 +542,6 @@ class App(ctk.CTk):
         "start": StartPage,
         "daily": DailyPage,
         "weekly": WeeklyPage,
-        "general": GeneralPage,
         "config": ConfigPage,
         "tools": ToolsPage,
         "settings": SettingsPage,
@@ -556,7 +565,7 @@ class App(ctk.CTk):
         return p, True
 
     def refresh_leader_thumb(self):
-        """广播刷新所有含行内队长ID缩略图/状态的页（刷副本页、通用页等），无论从哪个改了「队长ID 库」都同步。"""
+        """广播刷新所有含行内队长ID缩略图/状态的页（刷副本页、工具页/配置页等），无论从哪个改了「队长ID 库」都同步。"""
         for p in self._iter_pages():
             for meth in ("_refresh_leader_btn", "_refresh_leader_status"):
                 fn = getattr(p, meth, None)
@@ -669,7 +678,7 @@ class App(ctk.CTk):
             else:
                 p.grid_remove()
 
-        # 总是 refresh：部分页（如通用页）刻意把内容填充放在 refresh 里、__init__ 不填，靠这里驱动。
+        # 总是 refresh：部分页（如任务配置页/工具页）刻意把内容填充放在 refresh 里、__init__ 不填，靠这里驱动。
         # 重复 refresh 的代价已被各页的「内容签名守卫」摊薄（数据没变就不重画列表）。
         if hasattr(page, "refresh"):
             page.refresh()

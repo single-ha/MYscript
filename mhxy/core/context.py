@@ -6,6 +6,7 @@
 
 import time
 import threading
+import datetime
 
 from . import config as cfg_mod
 from . import window as win_mod
@@ -18,6 +19,8 @@ from .input import Mouse
 class TaskContext:
     def __init__(self, cfg, log_fn=None, stop_event=None, window=None, label=None):
         self.cfg = cfg
+        # 任务运行期共享态（仅内存）：同一 runner 内各子上下文共享，用于「本趟只做一次」类开关。
+        self.runtime = {}
         # 按 config 设定「只认游戏进程的窗口」，避免把终端/编辑器等同名标题窗口当成游戏号去点击。
         win_mod.set_game_process(cfg.get("window_process", "MyGame_x64r.exe"))
         # 识别抓图前先确保前台（用户拍板）；多开嫌前台切换频繁可在配置里关掉回到「只抓不激活」。
@@ -27,6 +30,7 @@ class TaskContext:
                                            cfg.get("window_offset", [0, 0]))
         self.mouse = Mouse(cfg.get("input_backend", "sendinput"),
                            cfg.get("humanize", {}))
+        self._install_click_debug_hooks()
         # 键盘动作（按键/组合键）也在同一个拟人化输入对象上，导航/复位靠它发快捷键。
         self.keyboard = self.mouse
         self.hotkeys = cfg.get("hotkeys", {})   # 键名映射，任务用 ctx.send_hotkey(动作名) 发
@@ -44,12 +48,122 @@ class TaskContext:
     # ---- 多开：派生绑定指定窗口的子上下文（共享鼠标/日志/停止/配置）----
     def make_child(self, window, label):
         """基于本上下文派生一个绑定指定窗口的子上下文：
-        共享同一个鼠标(光标本就全局唯一)、日志出口、停止信号与配置，只是窗口与标签不同。"""
+        共享日志出口、停止信号与配置，只是窗口与标签不同。"""
         child = TaskContext(self.cfg, log_fn=self._log_fn,
                             stop_event=self.stop_event, window=window, label=label)
-        child.mouse = self.mouse                # 共用同一只鼠标
-        child.keyboard = child.mouse
+        child.runtime = self.runtime            # 共享本趟运行态（如尺寸归一化 once 标记）
         return child
+
+    def _debug_on(self):
+        try:
+            return bool((self.cfg or {}).get("debug_log", False))
+        except Exception:
+            return False
+
+    def _next_click_dbg_name(self, kind):
+        rt = self.runtime if isinstance(self.runtime, dict) else {}
+        rt["click_dbg_seq"] = int(rt.get("click_dbg_seq", 0)) + 1
+        seq = rt["click_dbg_seq"]
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        return f"click_{kind}_{ts}_{seq:06d}.png"
+
+    def _next_dbg_name(self, tag):
+        rt = self.runtime if isinstance(self.runtime, dict) else {}
+        rt["dbg_seq"] = int(rt.get("dbg_seq", 0)) + 1
+        seq = rt["dbg_seq"]
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        return f"dbg_{tag}_{ts}_{seq:06d}.png"
+
+    def debug_snapshot(self, tag, scene=None, rect=None, note="", card_xy=None,
+                       hits=None, tpl_wh=None, col_x0=None, col_x1=None,
+                       click_kind=None, filename=None, log_saved=True):
+        """统一非点击/点击调试截图入口。返回 (ok, filename_or_None)。"""
+        if not self._debug_on():
+            return False, None
+        try:
+            r = rect if rect is not None else self.window.rect()
+            if r is None:
+                return False, None
+            sc = scene if scene is not None else self.window.grab_screen(r)
+            if sc is None:
+                return False, None
+            fname = filename or self._next_dbg_name(tag)
+            ok = vision.save_debug_image(
+                sc,
+                str(CAPTURES_DEBUG_DIR / fname),
+                col_x0=col_x0,
+                col_x1=col_x1,
+                card_xy=card_xy,
+                hits=hits,
+                tpl_wh=tpl_wh,
+                note=note,
+                click_kind=click_kind,
+            )
+            if ok and log_saved:
+                day = datetime.datetime.now().strftime("%Y-%m-%d")
+                self.log(f"[调试] 已存诊断截图 captures_debug/{day}/{fname}", level="debug")
+            return ok, fname
+        except Exception:
+            return False, None
+
+    def debug_click_snapshot(self, kind, x, y, scene=None, rect=None, note="", hits=None, tpl_wh=None):
+        """统一点击调试截图入口：单击/双击/右击都走这里，颜色与命名统一。"""
+        if not self._debug_on():
+            return
+        try:
+            r = rect if rect is not None else self.window.rect()
+            if r is None:
+                return
+            sc = scene if scene is not None else self.window.grab_screen(r)
+            if sc is None:
+                return
+            local = None
+            if x is not None and y is not None:
+                local = (int(x - r[0]), int(y - r[1]))
+            fname = self._next_click_dbg_name(kind)
+            tip = note or (f"click:{kind} screen=({int(x)},{int(y)}) local=({local[0]},{local[1]})"
+                           if local is not None else f"click:{kind} (no-hit)")
+            self.debug_snapshot(
+                f"click_{kind}",
+                scene=sc,
+                rect=r,
+                note=tip,
+                card_xy=local,
+                hits=hits,
+                tpl_wh=tpl_wh,
+                click_kind=kind,
+                filename=fname,
+                log_saved=True,
+            )
+        except Exception:
+            pass
+
+    def _install_click_debug_hooks(self):
+        """给鼠标 click/double_click/right_click 加统一调试截图钩子。"""
+        m = self.mouse
+        if getattr(m, "_dbg_click_wrapped", False):
+            return
+
+        _orig_click = m.click
+        _orig_double = m.double_click
+        _orig_right = m.right_click
+
+        def _wrapped_click(x, y, *args, **kwargs):
+            self.debug_click_snapshot("left", x, y)
+            return _orig_click(x, y, *args, **kwargs)
+
+        def _wrapped_double(x, y, *args, **kwargs):
+            self.debug_click_snapshot("double", x, y)
+            return _orig_double(x, y, *args, **kwargs)
+
+        def _wrapped_right(x, y, *args, **kwargs):
+            self.debug_click_snapshot("right", x, y)
+            return _orig_right(x, y, *args, **kwargs)
+
+        m.click = _wrapped_click
+        m.double_click = _wrapped_double
+        m.right_click = _wrapped_right
+        m._dbg_click_wrapped = True
 
     # ---- 基础特性：按 targets 配置选出要操作的窗口列表 ----
     def select_windows(self):
@@ -124,11 +238,15 @@ class TaskContext:
             self.log(f"自动整理·未满（best={score:.3f}，阈值={threshold}，位置={pos}）", level="debug")
             if self.cfg.get("debug_log"):   # 调错用：把交接瞬间全窗图存下来（开「调试日志」才写）
                 try:
-                    vision.save_debug_image(
-                        scene, str(CAPTURES_DEBUG_DIR / "auto_organize_dbg.png"),
+                    self.debug_snapshot(
+                        "auto_organize",
+                        scene=scene,
+                        rect=rect,
+                        note="auto_organize debug (bag-full best-score)",
                         hits=[(int(pos[0]), int(pos[1]), score)] if pos else [],
                         tpl_wh=(tpl.shape[1], tpl.shape[0]) if pos else None,
-                        note="auto_organize debug (bag-full best-score)")
+                        filename="auto_organize_dbg.png",
+                    )
                 except Exception:
                     pass
             return                       # 背包没满

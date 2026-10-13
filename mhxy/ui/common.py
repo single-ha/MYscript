@@ -452,7 +452,7 @@ def open_calibrate(app, task_name, on_done=None, owner=None, slot="_cal_dialog")
 
 
 # ----------------------------------------------------------------------
-# 公共区域（全任务共用标定）：任务页做就绪提示时，若公共区域没标齐，指路到「通用」页
+# 公共区域（全任务共用标定）：任务页做就绪提示时，若公共区域没标齐，指路到「任务配置」页
 # ----------------------------------------------------------------------
 def shared_region_hint(regions, task_name):
     """返回公共区域未标齐的提示文本（regions 应为已叠加 tasks.shared 的 task_config）。
@@ -461,17 +461,17 @@ def shared_region_hint(regions, task_name):
     if not missing:
         return ""
     names = "、".join(cfg_mod.SHARED_REGION_LABELS.get(k, k) for k in missing)
-    return f"；公共区域「{names}」未标定 —— 请到「通用」页点「标定（公共区域）」（全任务共用）"
+    return f"；公共区域「{names}」未标定 —— 请到「任务配置」页的「全局共享标定」卡完成标定（全任务共用）"
 
 
 def shared_template_hint(templates, task_name):
     """返回公共共享模板未标齐的提示文本（templates 应为已叠加 tasks.shared 模板的 task_config）。
-    战斗标识/小闹钟等已统一移到「通用」页「标定（公共区域）」标定（见 TASK_SHARED_TPL_REQ）。已标齐返回 ""。"""
+    战斗标识/小闹钟等已统一移到「任务配置」页「全局共享标定」卡标定（见 TASK_SHARED_TPL_REQ）。已标齐返回 ""。"""
     missing = [k for k in cfg_mod.TASK_SHARED_TPL_REQ.get(task_name, ()) if not templates.get(k)]
     if not missing:
         return ""
     label = "、".join(cfg_mod.SHARED_TPL_LABELS.get(k, k) for k in missing)
-    return f"；公共模板「{label}」未标定 —— 请到「通用」页点「标定（公共区域）」框选（全任务共用）"
+    return f"；公共模板「{label}」未标定 —— 请到「任务配置」页的「全局共享标定」卡框选（全任务共用）"
 
 
 def calib_status(*, regions, templates, task_name,
@@ -575,7 +575,7 @@ def teaming_summary(team_tc):
 
 
 class TeamSettingsCard(ctk.CTkFrame):
-    """多人任务共用的「组队设置」卡片：「已组队」开关（队长/队长ID 统一在通用页选）。
+    """多人任务共用的「组队设置」卡片：「已组队」开关（队长/队长ID 统一在配置页/工具页入口选）。
     「跑完解散队伍」开关已迁到「日常」页（见 DailyPage.var_disband，存共享 tasks.teaming.auto_disband）。
     控件读写共享 tasks.teaming 命名空间，故各多人任务页只需嵌这一张卡、零重复；
     on_change 回调让宿主页刷新自己的标定状态。"""
@@ -585,13 +585,15 @@ class TeamSettingsCard(ctk.CTkFrame):
         self.app = app
         self.fonts = fonts
         self.on_change = on_change
+        self.grid_columnconfigure(0, weight=1)
 
         # —— 已组队 开关 ——
         row = ctk.CTkFrame(self, fg_color="transparent")
-        row.pack(fill="x", anchor="w")
+        row.grid(row=0, column=0, sticky="ew")
+        row.grid_columnconfigure(0, weight=1)
         self.switch_skip = ctk.CTkSwitch(row, text="已组队（跳过组队，直接开刷）", font=fonts["body"],
                                          progress_color=T.ACCENT, command=self._on_skip)
-        self.switch_skip.pack(anchor="w")
+        self.switch_skip.grid(row=0, column=0, sticky="ew")
 
     # —— 读共享 teaming 命名空间 ——
     def _read(self):

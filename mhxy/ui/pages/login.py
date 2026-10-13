@@ -189,7 +189,7 @@ class LoginConfig(ctk.CTkFrame):
     def _write(self, mutate):
         """改一项 tasks.login 配置并落盘。mutate(tc) 就地改。
 
-        读回来的 tc 已叠加了「通用」页公共标定（活动列表/背包列表/战斗标识/小闹钟），
+        读回来的 tc 已叠加了「任务配置」页全局共享标定（活动列表/背包列表/战斗标识/小闹钟），
         写回前必须剥掉那些共享键——共享标定只归 tasks.shared 所有（见 core/config
         的 EXCLUSIVE_SHARED_REGIONS / calibrate_dialog._save 的同一约定），否则一次改参数
         就把共享标定抄进本任务命名空间。"""

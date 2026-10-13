@@ -65,7 +65,7 @@ class SanjieConfig(ctk.CTkFrame):
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
         spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
-        need_r = required_regions(spec)   # 三界奇缘自身无区域；公共区域（活动列表）在「通用」页统一标定
+        need_r = required_regions(spec)   # 三界奇缘自身无区域；公共区域（活动列表）在「任务配置」页统一标定
         need_t = required_templates(spec)
         opt_tpl = optional_templates(spec)
         opt_ok = bool(templates.get("qq_option")) or bool(loopc.get("answer_pos")) or bool(regions.get("answer_area"))

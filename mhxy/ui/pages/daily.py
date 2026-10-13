@@ -266,7 +266,7 @@ class DailyPage(ctk.CTkFrame):
 
     # ---- 工具按钮 ----
     def _adjust_windows(self):
-        """「调整窗口」：把所选窗口（最多 5 个）调到基准尺寸并按 2列×2行 排布（原在通用页，随按钮迁到本页）。"""
+        """「调整窗口」：把所选窗口（最多 5 个）调到基准尺寸并按 2列×2行 排布（该入口在日常页）。"""
         cfg = cfg_mod.load_config()
         self.app.cfg = cfg
         win_mod.arrange_windows(cfg, self.app)
@@ -354,6 +354,14 @@ class DailyPage(ctk.CTkFrame):
         return names[0]
 
     def _task_title(self, name):
+        """任务卡片/单跑提示用的显示名：刷副本只显示 '刷副本'，不展开具体副本。"""
+        if name == "dungeon":
+            return "刷副本"
+        cls = get_task(name)
+        return cls.title if cls else name
+
+    def _task_title_expanded(self, name):
+        """执行顺序摘要用的显示名：刷副本展开为当前勾选的副本列表。"""
         if name == "dungeon":
             titles = get_selected_dungeon_titles(self.app.cfg)
             if titles:
@@ -375,7 +383,7 @@ class DailyPage(ctk.CTkFrame):
     def _calib_done(self, name, sub):
         spec = getattr(get_task(name), "CALIBRATION", None) or {}
         # 每个任务自己的 spec 之外，还要查公共区域/公共模板（tasks.shared）对该任务的必需项
-        # （活动列表/背包列表、战斗标识等），统一在「通用」页「标定（公共区域）」标定。
+        # （活动列表/背包列表、战斗标识等），统一在「任务配置」页「全局共享标定」卡标定。
         need_r = required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get(name, ()))
         need_t = required_templates(spec) + list(cfg_mod.TASK_SHARED_TPL_REQ.get(name, ()))
         regions, templates = sub.get("regions", {}), sub.get("templates", {})
@@ -695,6 +703,7 @@ class DailyPage(ctk.CTkFrame):
         if rec is not None:
             self._set_row_status(rec)
         self._steps_sig = self._steps_signature()
+        self._refresh_exec_order()
 
     def _grid_all(self):
         """按 _flat 顺序把区头与行落回 list_frame 的 grid 行位（不销毁控件），再刷新序号/计数。
@@ -744,7 +753,7 @@ class DailyPage(ctk.CTkFrame):
         lbl = getattr(self, "lbl_exec_order", None)
         if lbl is None:
             return
-        names = [self._task_title(s["task"]) for s in self._steps
+        names = [self._task_title_expanded(s["task"]) for s in self._steps
                  if s["enabled"] and self._group_on.get(GROUP_OF[s["task"]], True)]
         if names:
             lbl.configure(text=" -> ".join(names), text_color=T.ACCENT)

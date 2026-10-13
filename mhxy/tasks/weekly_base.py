@@ -41,7 +41,7 @@ from ..ui.common import required_templates
 from .base import Task, register   # noqa: F401  (register 供子类用，语义上子类 @register)
 
 # 每个号/每轮的模板键（card/join/confirm/enter/claim_task 在任务自身命名空间标定；
-# battle_flag / clock 在「通用」页公共标定，task_config 叠加进本任务 templates）。
+# battle_flag / clock 在「任务配置」页全局共享标定，task_config 叠加进本任务 templates）。
 # ⚠ 模板要在这里登记，_load_flags 只按本列表建字典 —— 漏登记 = 运行期永远取不到该模板
 #   （踩过：claim_task 漏加 → 这一步永远走「没标定」分支、静默失效）。
 _FLAG_KEYS = ["card", "join", "confirm", "enter", "battle_flag", "clock", "claim_task"]
@@ -68,7 +68,7 @@ class WeeklyBaseTask(Task):
     CALIBRATION = {
         "regions": [
             ("scene", "主识别区", "留空=整个窗口当识别区（推荐）；战斗/按钮/小闹钟都在这里找", True),
-            # activity_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
+            # activity_list 已在「任务配置」页「全局共享标定」卡统一标定（全任务共用），见 tasks.shared
         ],
         "templates": [
             ("card", "活动卡片", "活动列表里本任务那张卡片，框「图标+文字」、要独特（别的活动长得像）"),
@@ -79,7 +79,7 @@ class WeeklyBaseTask(Task):
             ("claim_task", "「领取任务」按钮", "门派闯关专用：点完 NPC「参加活动」之后还要点一下的"
                                              "「领取任务」按钮。海底世界/迷魂塔没有这一步，"
                                              "向导里不会出现该项"),
-            # battle_flag / clock 已移到「通用」页「标定（公共区域）」，见 tasks.shared
+            # battle_flag / clock 已移到「任务配置」页「全局共享标定」卡，见 tasks.shared
         ],
         "watchlist": False,
     }
@@ -119,18 +119,18 @@ class WeeklyBaseTask(Task):
         if not skip_team:
             for rk in TEAM_REQUIRED_REGIONS:
                 if not team_tc.get("regions", {}).get(rk):
-                    problems.append(f"组队区域『{rk}』未标定 —— 请在「通用」页点「标定（组队）」框选")
+                    problems.append(f"组队区域『{rk}』未标定 —— 请在「任务配置」页「组队（共享）」卡点「标定」框选")
             for tk in TEAM_REQUIRED_TEMPLATES:
                 p = team_tc.get("templates", {}).get(tk)
                 if not p or vision.load_template(p) is None:
-                    problems.append(f"组队模板『{tk}』缺失 —— 请在「通用」页点「标定（组队）」裁图")
+                    problems.append(f"组队模板『{tk}』缺失 —— 请在「任务配置」页「组队（共享）」卡点「标定」裁图")
             for hk in ("open_team", "open_friend"):
                 if not ctx.hotkeys.get(hk):
                     problems.append(f"缺快捷键 {hk} —— 组队要用（请在设置里填）")
 
         regions = tc.get("regions", {})
         if not regions.get("activity_list"):
-            problems.append("『活动列表区域』未标定 —— 请到「通用」页点「标定（公共区域）」框选（所有任务共用）")
+            problems.append("『活动列表区域』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（所有任务共用）")
         templates = tc.get("templates", {})
         # 必标模板直接取 CALIBRATION spec（不写死列表）—— 否则 spec 加了行、preflight 忘了加，
         # 就会变成「向导里让标、preflight 不查」，缺失也能开跑，最后卡在运行期才发现。
@@ -142,7 +142,7 @@ class WeeklyBaseTask(Task):
             p = templates.get(sk)
             if not p or vision.load_template(p) is None:
                 label = "战斗界面标志" if sk == "battle_flag" else "小闹钟(寻路)"
-                problems.append(f"『{label}』未标定 —— 请到「通用」页点「标定（公共区域）」框选（全任务共用）")
+                problems.append(f"『{label}』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
 
         if not ctx.hotkeys.get("open_activity"):
             problems.append("缺快捷键 open_activity（如 alt+c）—— 请在设置里填")
@@ -169,8 +169,9 @@ class WeeklyBaseTask(Task):
             ctx.log("没找到/没选中目标窗口，已停止。", level="error")
             return
         
-        # 统一调整窗口到基准尺寸（模板/区域坐标按 base_size 标定，多开同尺寸才好点）
-        win_mod.normalize_windows_to_base(ctx)
+        # 统一调整窗口到基准尺寸（模板/区域坐标按 base_size 标定，多开同尺寸才好点）。
+        # 本次运行只做一次（单跑=这里做；日常链已在起跑处做过会自动跳过）。
+        win_mod.ensure_windows_normalized_once(ctx)
         # 重新获取窗口列表（resize 后 rect 可能变化）
         wins = ctx.select_windows()
         if not wins:
@@ -332,6 +333,9 @@ class WeeklyBaseTask(Task):
             return False
         if r == "stopped":
             return False
+        if r == "completed":
+            ctx.log("该活动卡片显示「完成」，判定本号本任务已完成，结束周常循环。", level="hit")
+            return False
         if r != "join_clicked":
             reason = "活动卡片未找到（列表整段翻完）" if r == "abort_no_card" else "认出卡片但没找到「参加」按钮"
             ctx.log(f"领任务中止：{reason}（活动不可参加/已参加）。（已截图存证）", level="error")
@@ -369,7 +373,7 @@ class WeeklyBaseTask(Task):
         ctx.log(f"{wait:.0f}s 内没看到「领取任务」按钮 → 跳过（可能已直接进任务场景）。")
         return False
 
-    # ---- 找卡片 → 点「参加」：返回 "join_clicked" / "abort_no_card" / "abort_no_join" / "stopped" ----
+    # ---- 找卡片 → 点「参加」：返回 "join_clicked" / "completed" / "abort_no_card" / "abort_no_join" / "stopped" ----
     def _find_card_once(self, ctx, rec, list_region, loop, regions, threshold):
         tpl = self.flags.get("card")
         card_cut = float(loop.get("card_match_threshold", 0.0))
@@ -389,6 +393,9 @@ class WeeklyBaseTask(Task):
             # 认出卡片后连确认几次「参加」（卡片贴列表边缘被裁/按钮错位时 _find_join_ready 自动微滚补全）
             for _ in range(max(1, int(loop.get("join_confirm_tries", 3)))):
                 r = self._find_join_ready(ctx, rec, list_region, entry_xy, threshold, loop, entry_tpl=tpl)
+                if r == "completed":
+                    ctx.log(f"找到活动卡片（{hit[2]:.3f}）且显示「完成」标识，判定本号该周常已完成。", level="hit")
+                    return scan.ACCEPT, {"completed": True}
                 if r is not None and r != "nudged":
                     ctx.mouse.click(r[0], r[1])
                     ctx.log(f"找到活动卡片（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}），开始寻路到 NPC。",
@@ -416,6 +423,8 @@ class WeeklyBaseTask(Task):
         if res.stopped:
             return "stopped"
         if res.found:
+            if res.payload and res.payload.get("completed"):
+                return "completed"
             return "join_clicked" if res.payload and res.payload.get("join") else "abort_no_join"
         ctx.log("活动列表翻找活动卡片多次未果。", level="warn")
         return "abort_no_card"

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """周常任务分类页：内嵌 门派闯关 / 海底世界 / 迷魂塔 三个周常玩法页。
-顶层放一张「组队设置」卡（已组队开关，与「任务配置」页组队设置同一份，存共享 tasks.teaming；队长在「通用」页选）。
+顶层放一张「组队设置」卡（已组队开关，与「任务配置」页组队设置同一份，存共享 tasks.teaming；队长在左下角连接状态按钮里选）。
 （用户拍板 2026-09-23：「已组队」入口迁到「日常」设置区只作为新增，本页/任务配置页原组队卡保留不动。）"""
 
 import customtkinter as ctk
@@ -45,7 +45,7 @@ class WeeklyPage(CategoryPage):
         card.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 10))
         card.grid_columnconfigure(0, weight=1)
         lbl = ctk.CTkLabel(card, text="组队设置（与「日常」页设置区同一处，存共享 tasks.teaming）· "
-                                "队长/队长ID 在「通用」页「选择窗口」里选",
+                                "队长在左下角连接状态按钮里选，队长ID 在「任务配置」页组队卡管理",
                             font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         lbl.grid(row=0, column=0, sticky="ew", padx=16, pady=(10, 4))
         bind_wraplength(lbl)

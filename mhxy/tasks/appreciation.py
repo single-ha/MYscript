@@ -54,7 +54,7 @@ class AppreciationTask(Task):
             ("scene", "主识别区", "留空=整个窗口当识别区(推荐)", True),
             ("appr_region", "图文列表区域", "进鉴赏界面后、心形图案所在的那片图文列表区域；"
              "心形在此匹配、滚动也在这一片里滚。框住列表本身", False),
-            # activity_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
+            # activity_list 已在「任务配置」页「全局共享标定」卡统一标定（全任务共用），见 tasks.shared
         ],
         "templates": [
             ("appr_entry", "活动卡片入口", "活动列表里要点「参加」的那张「趣味鉴赏」卡片，框图标+文字、要独特"),
@@ -72,10 +72,10 @@ class AppreciationTask(Task):
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
 
-        # activity_list 属公共区域（全任务共用），在「通用」页标定；task_config 已把 tasks.shared 叠加进来，直接读即可
+        # activity_list 属公共区域（全任务共用），在「任务配置」页标定；task_config 已把 tasks.shared 叠加进来，直接读即可
         for rk, label in [("activity_list", "活动列表区域")]:
             if not regions.get(rk):
-                problems.append(f"『{label}』未标定 —— 请到「通用」页点「标定（公共区域）」框选（所有任务共用）")
+                problems.append(f"『{label}』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（所有任务共用）")
 
         for rk, label in [("appr_region", "图文列表区域")]:
             if not regions.get(rk):
@@ -243,6 +243,9 @@ class AppreciationTask(Task):
             entry_xy = (rect[0] + cx, rect[1] + cy)
             r = self._find_join_ready(ctx, rec, list_region, entry_xy, threshold, loop,
                                       entry_tpl=self.flags.get("appr_entry"))
+            if r == "completed":
+                ctx.log(f"找到「趣味鉴赏」卡片（{score:.3f}）且显示「完成」标识，判定该号今日已完成。", level="hit")
+                return scan.ACCEPT, {"completed": True}
             if r is not None and r != "nudged":
                 ctx.mouse.click(r[0], r[1])
                 ctx.log(f"找到「趣味鉴赏」卡片（{score:.3f}）→ 点「参加」（{r[2]:.3f}），进鉴赏界面。", level="hit")
@@ -272,6 +275,9 @@ class AppreciationTask(Task):
             reset_max=loop.get("scroll_reset_max", 20),
             log=ctx.log, label="活动列表")
         if res.found:
+            if isinstance(res.payload, dict) and res.payload.get("completed"):
+                self._goto(rec, S_DONE)
+                return
             return
         if res.stopped:
             return

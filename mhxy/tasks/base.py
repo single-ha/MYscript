@@ -21,7 +21,7 @@ import numpy as np
 from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
-from ..core.config import CAPTURES_DIR, CAPTURES_DEBUG_DIR, ACTIVITY_UI_TPL_KEY
+from ..core.config import CAPTURES_DIR, ACTIVITY_UI_TPL_KEY
 
 _REGISTRY = {}
 
@@ -159,7 +159,7 @@ class Task:
         if st is True:
             ctx.log("已确认在主界面，开跑。", level="info")
         elif st is None:
-            ctx.log("无法判断主界面（大概率没标定「商城图标」）——可在「通用」页标定公共区域，本次照旧开跑。",
+            ctx.log("无法判断主界面（大概率没标定「商城图标」）——可在「任务配置」页「全局共享标定」卡补标，本次照旧开跑。",
                     level="warn")
         else:
             # 回不去：存一张现场截图，方便核对到底是「面板真没关掉」还是「其实已主界面但商城图标没认到」。
@@ -224,7 +224,7 @@ class Task:
         出现才返回 True，允许调用方开始滚轮翻找活动卡片；超时（或未标定模板）返回 False，
         由调用方退回原有的固定等待兜底（向后兼容：不标定也能照常跑）。
 
-        activity_ui_flag 是「通用」页「标定（公共区域）」里的可选共享模板（tasks.shared.templates）：
+        activity_ui_flag 是「任务配置」页「全局共享标定」卡里的可选共享模板（tasks.shared.templates）：
         选中「活动」界面后独有的画面元素（面板标题/顶栏等），能区分「活动真的弹好了」和「还在主界面/别的面板」。
         之所以要这一步：open_activity 快捷键发出后界面可能有延迟、或被公告弹窗挡着，此时直接开始滚轮翻找
         就是在空画面上白翻，还可能误点。找不到模板时（未标定）返回 False 让调用方走旧路径。
@@ -322,7 +322,8 @@ class Task:
         """找「参加」按钮。认出卡片但按钮没匹配上，最常见原因是卡片贴着列表区域上/下缘只露了半张、
         按钮那半在裁剪线外（或按钮与条目中心有纵向错位、没进查找条带）。别猜精确几何：只要没找到
         按钮，就朝「让被裁那半滚进来」的方向微滚一格再找（方向按条目在区域上/下半区粗判），返回
-        "nudged" 让调用方原地重试；连续微滚 nudge_max 次仍找不着 → 返回 None 交由调用方告警一次+
+        "nudged" 让调用方原地重试；若识别到共享模板「完成标识」(join_done) 返回 "completed"；
+        连续微滚 nudge_max 次后仍「参加/完成」都找不到 → 留证截图(captures/)并返回 None 交由调用方告警一次+
         原地重试（scroll_search 的 STAY）。微滚计数记在 rec['_nudges']，命中/切到新屏即归零。
         子类须已实现 _find_join_on_row。返回：命中=(x,y,score)；微滚过="nudged"；否则 None。"""
         rec.setdefault("_join_warned", False)
@@ -330,6 +331,12 @@ class Task:
         if join is not None:
             rec["_nudges"] = 0
             return join
+        done = self._find_done_on_row(ctx, list_region, entry_xy, threshold, loop, entry_tpl=entry_tpl)
+        if done is not None:
+            rec["_nudges"] = 0
+            rec["_join_warned"] = False
+            ctx.log(f"认出卡片且识别到「完成」标识（{done[2]:.3f}）→ 该任务本号已完成。", level="hit")
+            return "completed"
         if rec.setdefault("_nudges", 0) < loop.get("nudge_max", 4):
             dirn = self._join_clip_dir(ctx, list_region, entry_xy, entry_tpl)
             if dirn is not None:
@@ -338,7 +345,48 @@ class Task:
                 return "nudged"
             # 条目在区域内完整显示仍找不到按钮：不计入连拍（归零），由调用方告警+原地重试
             rec["_nudges"] = 0
+        self._capture_join_unknown(ctx, list_region, entry_xy, loop)
         return None
+
+    def _shared_template(self, ctx, key):
+        """读 tasks.shared.templates 的模板（实例缓存，缺失返回 None）。"""
+        cache = getattr(self, "_shared_tpl_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._shared_tpl_cache = cache
+        if key in cache:
+            return cache[key]
+        shared = (((ctx.cfg or {}).get("tasks", {}) or {}).get("shared", {}) or {})
+        tpl_path = ((shared.get("templates") or {}) or {}).get(key)
+        tpl = vision.load_template(tpl_path) if tpl_path else None
+        cache[key] = tpl
+        return tpl
+
+    def _find_done_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop, entry_tpl=None):
+        """识别共享模板「完成标识」（join_done）：只在条目所属列/本行容差内找，防跨卡误判。"""
+        done_tpl = self._shared_template(ctx, "join_done")
+        if done_tpl is None:
+            return None
+        return self._find_join_in_column(
+            ctx, list_region, entry_screen_xy, threshold, loop,
+            done_tpl, entry_tpl, max_follow_cap=loop.get("join_same_row_px", 55)
+        )
+
+    def _capture_join_unknown(self, ctx, list_region, entry_screen_xy, loop):
+        """认出卡片但「参加/完成」都没命中：业务留证图（captures/，不受 debug_log 控制）。"""
+        now = time.time()
+        cool = float(loop.get("join_unknown_capture_cooldown_sec", 8.0))
+        if now - getattr(self, "_join_unknown_ts", 0.0) < max(0.0, cool):
+            return
+        self._join_unknown_ts = now
+        rect = (ctx.window.region_to_screen_rect(list_region) if list_region else ctx.window.rect())
+        scene = ctx.window.grab_screen(rect) if rect is not None else None
+        if scene is None:
+            return
+        cap = self._save_capture(scene, f"join_unknown_{self.name}")
+        ex, ey = int(entry_screen_xy[0]), int(entry_screen_xy[1])
+        ctx.log(f"认出卡片但既没识别到「参加」也没识别到「完成」，已留证截图 {cap}（卡片点≈{ex},{ey}）。",
+                level="warn")
 
     def _find_join_in_column(self, ctx, list_region, entry_screen_xy, threshold, loop,
                              join_tpl, entry_tpl=None, max_follow_cap=None):
@@ -557,7 +605,7 @@ class Task:
         """「认出卡片但找不到『参加/进入』」时的诊断（仅调试开关开、且节流+限量时执行）。
 
         采集：本列 / 各列 / 全屏 raw 最高分（区分『真没有』vs『有但低于阈值』vs『按钮在隔壁列』）、
-        命中与 max_follow 拒绝详情；并存一张**标注截图**到 captures/。只读，不改点击行为。
+        命中与 max_follow 拒绝详情；并存一张**标注截图**到 captures_debug/（调试开关控制）。只读，不改点击行为。
         节流键：loop.join_debug_cooldown_sec（默认 5s）、loop.join_debug_max_shots（默认 8 张/次运行）。"""
         if not self._debug_on(ctx) or scene is None or col is None or join_tpl is None:
             return
@@ -598,10 +646,22 @@ class Task:
             fname = (datetime.datetime.now().strftime("%Y%m%d_%H%M%S_")
                      + f"dbg_join_{self.name}.png")
             note = f"col#{col_idx + 1} card=({ex_local},{ey_local}) best={lo:.2f}"
-            if vision.save_debug_image(scene, str(CAPTURES_DEBUG_DIR / fname), col_x0=x0, col_x1=x1,
-                                       card_xy=(ex_local, ey_local), hits=marks,
-                                       tpl_wh=join_tpl.shape[::-1], note=note):
-                ctx.log(f"[调试] 已存诊断截图 captures_debug/{fname}", level="debug")
+            ok, _ = ctx.debug_snapshot(
+                "join_miss",
+                scene=scene,
+                rect=rect,
+                note=note,
+                col_x0=x0,
+                col_x1=x1,
+                card_xy=(ex_local, ey_local),
+                hits=marks,
+                tpl_wh=join_tpl.shape[::-1],
+                filename=fname,
+                log_saved=False,
+            )
+            if ok:
+                day = datetime.datetime.now().strftime("%Y-%m-%d")
+                ctx.log(f"[调试] 已存诊断截图 captures_debug/{day}/{fname}", level="debug")
         except Exception as e:
             ctx.log(f"[调试] 诊断异常（忽略）：{e}", level="debug")
 

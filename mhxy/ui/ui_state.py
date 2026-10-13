@@ -4,7 +4,7 @@
 
 提供三个判定/动作：
   · is_main_screen()——主界面判定：在窗口画面里找「商城图标」模板，找到=当前是主界面
-    （商城/活动图标在「通用」页→标定（公共区域）里标，tasks.shared.templates，见 MAIN_ICON_TPL_KEYS）。
+    （商城/活动图标在「任务配置」页「全局共享标定」卡里标，tasks.shared.templates，见 MAIN_ICON_TPL_KEYS）。
   · is_present()——「标志是否在画面里」判定：任务级通用（如 battle_flag 战斗标志），
     运镖/宝图/秘境等都共用这一份，不再各任务复制 _present。
   · back_to_main_screen()——「确保回到主界面」：已在主界面直接返回，否则反复按 ESC 关面板
@@ -86,7 +86,7 @@ def is_main_screen(cfg, window, threshold=0.8, region=None):
 
 def find_popup_close(cfg, window, threshold=0.85):
     """弹窗守卫的探测原语：在当前窗口画面里找活动/公告弹窗右上角的「×」关闭按钮
-    （tasks.shared.templates.popup_close，可选共享模板，在「通用」页「标定（公共区域）」里标）。
+    （tasks.shared.templates.popup_close，可选共享模板，在「任务配置」页「全局共享标定」卡里标）。
 
     返回：命中 = 按钮中心的【屏幕绝对坐标】(cx, cy)；未命中/不可用 = None。
     未标模板 / 窗口未定位 / 抓图失败 一律返回 None——调用方（base._defuse_popup）据此静默跳过，

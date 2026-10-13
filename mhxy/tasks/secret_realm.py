@@ -30,14 +30,12 @@
 """
 
 import time
-import datetime
 
 from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
 from ..core import scan
 from ..core import input as input_mod
-from ..core.config import CAPTURES_DIR, CAPTURES_DEBUG_DIR
 from ..ui import ui_state
 from .base import Task, register
 
@@ -53,7 +51,7 @@ S_BATTLE = "BATTLE"                 # 自动战斗中：盯「进入战斗」续
 S_LEAVE = "LEAVE"                   # 失败/超时后：点「离开」收尾本轮
 
 # 模板键（用 sr_ 前缀，避免与运镖/宝图同名模板在磁盘互相覆盖——存盘按 templates/tm_<key>.png）。
-# 战斗标识走公共共享模板 tasks.shared.templates.battle_flag（「通用」页「标定（公共区域）」标定，全任务共用），
+# 战斗标识走公共共享模板 tasks.shared.templates.battle_flag（「任务配置」页「全局共享标定」卡标定，全任务共用），
 # task_config 已把它叠加进本任务 templates，用同 key「battle_flag」读，不必各自标。
 _FLAG_KEYS = ["sr_entry", "sr_join", "sr_select", "sr_dungeon_enter", "sr_confirm",
               "sr_continue", "sr_nav", "sr_enter_battle", "sr_leave",
@@ -74,7 +72,7 @@ class SecretRealmTask(Task):
     CALIBRATION = {
         "regions": [
             ("scene", "主识别区", "留空=整个窗口当识别区(推荐)；对话框/各按钮/失败等标志都在这里找", True),
-            # activity_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
+            # activity_list 已在「任务配置」页「全局共享标定」卡统一标定（全任务共用），见 tasks.shared
         ],
         "templates": [
             ("sr_entry", "活动卡片入口", "活动列表里要点「参加」的那张卡片，框图标+文字、要独特"),
@@ -90,7 +88,7 @@ class SecretRealmTask(Task):
             ("sr_leave", "「离开」按钮", "失败/超时后点的「离开」按钮，点它退出秘境"),
             ("sr_fail", "「失败」标志", "战斗失败时屏幕上的「失败」字样/弹窗，判定该退出（先点它结算，离开才点得到）", True),
             ("sr_victory", "「通关/胜利」标志", "一轮正常结束时出现的通关/胜利字样或结算画面标志，用于判定本轮完成（必标）"),
-            # 战斗界面标志已移到「通用」页「标定（公共区域）」统一标定（全任务共用）；结界只用于日志诊断，可选。
+            # 战斗界面标志已移到「任务配置」页「全局共享标定」卡统一标定（全任务共用）；结界只用于日志诊断，可选。
         ],
         "watchlist": False,
     }
@@ -102,10 +100,10 @@ class SecretRealmTask(Task):
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
 
-        # activity_list 属公共区域（全任务共用），在「通用」页标定；task_config 已把 tasks.shared 叠加进来，直接读即可
+        # activity_list 属公共区域（全任务共用），在「任务配置」页标定；task_config 已把 tasks.shared 叠加进来，直接读即可
         for rk, label in [("activity_list", "活动列表区域")]:
             if not regions.get(rk):
-                problems.append(f"『{label}』未标定 —— 请到「通用」页点「标定（公共区域）」框选（所有任务共用）")
+                problems.append(f"『{label}』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（所有任务共用）")
 
         for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
@@ -281,6 +279,9 @@ class SecretRealmTask(Task):
             entry_xy = (rect[0] + cx, rect[1] + cy)
             r = self._find_join_ready(ctx, rec, list_region, entry_xy, threshold, loop,
                                       entry_tpl=self.flags.get("sr_entry"))
+            if r == "completed":
+                ctx.log(f"找到卡片（{score:.3f}）且显示「完成」标识，判定该号今日已完成。", level="hit")
+                return scan.ACCEPT, {"completed": True}
             if r is not None and r != "nudged":
                 ctx.mouse.click(r[0], r[1])
                 ctx.log(f"找到卡片（{score:.3f}）→ 点「参加」（{r[2]:.3f}），等对话框。", level="hit")
@@ -306,6 +307,9 @@ class SecretRealmTask(Task):
             reset_max=loop.get("scroll_reset_max", 20),
             log=ctx.log, label="活动列表")
         if res.found:
+            if isinstance(res.payload, dict) and res.payload.get("completed"):
+                rec["done"] = True
+                return
             self._goto(rec, S_SELECT)
             return
         if res.stopped:
@@ -449,15 +453,20 @@ class SecretRealmTask(Task):
                 f"nav命中(屏幕)={hit} 局部={local} raw最高={best[0]:.3f}@{best[1]}", level="debug")
             if scene is None:
                 return
-            self._nav_dbg_n = getattr(self, "_nav_dbg_n", 0) + 1
-            fname = (datetime.datetime.now().strftime("%Y%m%d_%H%M%S_")
-                     + f"dbg_nav_{self.name}_{tag}.png")
             marks = [(local[0], local[1], hit[2])] if (hit and local) else []
             note = f"S_NAV {tag} fg={fg} best={best[0]:.2f}"
-            if vision.save_debug_image(scene, str(CAPTURES_DEBUG_DIR / fname), card_xy=local,
-                                       hits=marks, tpl_wh=(tpl.shape[::-1] if tpl is not None else None),
-                                       note=note):
-                ctx.log(f"[调试] 已存 S_NAV 诊断截图 captures_debug/{fname}", level="debug")
+            if getattr(self, "_nav_dbg_n", 0) < int(loop.get("nav_debug_max_shots", 8)):
+                # 统一到全局点击诊断入口：颜色/命名/路径规则一致（left=绿色）。
+                if local is not None and scene_rect is not None:
+                    sx, sy = scene_rect[0] + local[0], scene_rect[1] + local[1]
+                else:
+                    sx = sy = None
+                ctx.debug_click_snapshot(
+                    "left", sx, sy,
+                    scene=scene, rect=scene_rect, note=note,
+                    hits=marks, tpl_wh=(tpl.shape[::-1] if tpl is not None else None),
+                )
+                self._nav_dbg_n = getattr(self, "_nav_dbg_n", 0) + 1
         except Exception as e:
             ctx.log(f"[调试] S_NAV 诊断异常（忽略）：{e}", level="debug")
 
@@ -497,15 +506,13 @@ class SecretRealmTask(Task):
             local = (hit[0] - scene_rect[0], hit[1] - scene_rect[1])
             tpl = self.flags.get("sr_nav")
             marks = [(local[0], local[1], hit[2])]
-            fname = (datetime.datetime.now().strftime("%Y%m%d_%H%M%S_")
-                     + f"dbg_click_{label}.png")
             note = f"{label} score={hit[2]:.3f}"
-            if vision.save_debug_image(scene, str(CAPTURES_DEBUG_DIR / fname),
-                                       card_xy=local, hits=marks,
-                                       tpl_wh=(tpl.shape[::-1] if tpl is not None else None),
-                                       note=note):
-                self._nav_dbg_n = getattr(self, "_nav_dbg_n", 0) + 1
-                ctx.log(f"[调试] 已存 {label} 截图 captures_debug/{fname}", level="debug")
+            ctx.debug_click_snapshot(
+                "left", hit[0], hit[1],
+                scene=scene, rect=scene_rect, note=note,
+                hits=marks, tpl_wh=(tpl.shape[::-1] if tpl is not None else None),
+            )
+            self._nav_dbg_n = getattr(self, "_nav_dbg_n", 0) + 1
         except Exception as e:
             ctx.log(f"[调试] 点击诊断异常：{e}", level="debug")
 

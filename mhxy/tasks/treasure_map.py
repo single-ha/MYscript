@@ -67,7 +67,7 @@ _FLAG_KEYS = ["flag_treasure_entry", "flag_join", "flag_tingting",
               "battle_flag", "flag_next_map", "treasure_item", "flag_bag_arrange"]
 # 必备模板（缺失则 preflight 阻断）：battle_flag 虽不点它，但「静止判定」要在战斗期暂停——
 # 不标它一进战斗就被误判（收集提前完成/挖完），故必标。走公共共享模板 tasks.shared.templates.battle_flag
-# （「通用」页「标定（公共区域）」标定，全任务共用），task_config 已把它叠加进本任务 templates。
+# （「任务配置」页「全局共享标定」卡标定，全任务共用），task_config 已把它叠加进本任务 templates。
 _REQUIRED_FLAGS = ["flag_treasure_entry", "flag_join", "flag_tingting",
                    "flag_next_map", "battle_flag", "treasure_item"]
 
@@ -82,7 +82,7 @@ class TreasureMapTask(Task):
     CALIBRATION = {
         "regions": [
             ("scene", "主识别区", "留空=整个窗口当识别区(推荐)；战斗/对话/下一张等标志都在这里找", True),
-            # activity_list / bag_list 已在「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
+            # activity_list / bag_list 已在「任务配置」页「全局共享标定」卡统一标定（全任务共用），见 tasks.shared
         ],
         "templates": [
             ("flag_treasure_entry", "宝图任务入口", "活动列表里「宝图任务」那一条，框图标+文字、要独特"),
@@ -91,7 +91,7 @@ class TreasureMapTask(Task):
             ("flag_next_map", "「使用」按钮", "挖完一张后游戏自动弹出的继续按钮"),
             ("treasure_item", "藏宝图道具", "背包里藏宝图那个图标的样子"),
             ("flag_bag_arrange", "背包「整理」按钮", "打开背包后那个「整理」按钮。每次回开背包确认前先点它让道具归位（可选，找不到就跳过）", True),
-            # 战斗界面标志已移到「通用」页「标定（公共区域）」统一标定（全任务共用），见 tasks.shared
+            # 战斗界面标志已移到「任务配置」页「全局共享标定」卡统一标定（全任务共用），见 tasks.shared
         ],
         "watchlist": False,
     }
@@ -103,18 +103,18 @@ class TreasureMapTask(Task):
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
 
-        # 活动列表区/背包区属公共区域（全任务共用），已在「通用」页标定；这里只判若任务命名空间
+        # 活动列表区/背包区属公共区域（全任务共用），已在「任务配置」页标定；这里只判若任务命名空间
         # 还残留旧值则无需重标，且 task_config 已把 tasks.shared 叠加进来，直接 regions.get 即可。
         for rk, label in [("activity_list", "活动列表区域"), ("bag_list", "背包列表区域")]:
             if not regions.get(rk):
-                problems.append(f"『{label}』未标定 —— 请到「通用」页点「标定（公共区域）」框选（所有任务共用）")
+                problems.append(f"『{label}』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（所有任务共用）")
 
         # 模板：判是否已有宝图(入口/参加/听听无妨) + 挖宝(下一张/藏宝图) + 战斗标志（静止判定要排除战斗期）都要
         for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
             if not path or vision.load_template(path) is None:
                 if tk == BATTLE_FLAG_TPL_KEY:
-                    problems.append("『战斗界面标志』未标定 —— 请到「通用」页点「标定（公共区域）」框选（全任务共用）")
+                    problems.append("『战斗界面标志』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
                 else:
                     problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
@@ -308,6 +308,9 @@ class TreasureMapTask(Task):
             for _ in range(max(1, int(loop.get("join_confirm_tries", 3)))):
                 r = self._find_join_ready(ctx, rec, list_region, entry_xy, threshold, loop,
                                           entry_tpl=self.flags.get("flag_treasure_entry"))
+                if r == "completed":
+                    ctx.log("认出「宝图任务」且显示「完成」标识 → 领取阶段已完成，转入挖宝阶段。", level="hit")
+                    return (scan.ACCEPT, {"join": False, "pos": None})
                 if r is not None and r != "nudged":
                     ctx.mouse.click(r[0], r[1])
                     ctx.log(f"找到「宝图任务」（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}），"

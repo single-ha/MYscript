@@ -154,7 +154,7 @@ class LoginTask(Task):
             ctx.log("未完成 %d 个（%s）：见上面各号的原因。" % (
                 len(failed), "、".join(names[s] for s in failed)), level="warn")
         if len(done) > 1 and not ((ctx.cfg.get("targets") or {}).get("multi")):
-            ctx.log("提示：当前是单开模式，只会用第一个窗口；多个号要一起跑请到「通用」页选多开"
+            ctx.log("提示：当前是单开模式，只会用第一个窗口；多个号要一起跑请点左下角连接状态按钮（「未检测到目标窗口」）选多开"
                     "（多开勾选留空=自动跟踪全部窗口，新开的号会自动纳入）。", level="warn")
 
     # ------------------------------------------------------------------
@@ -186,7 +186,7 @@ class LoginTask(Task):
             else:
                 ctx.log("启动客户端后等不到它的窗口（超时）。请确认：①路径能正常打开游戏；"
                         "②该客户端没在运行（已在运行时再启动往往只把旧窗口调到前台、不会新开窗口）；"
-                        "③「通用」页的窗口标题/进程名与客户端实际值是否对得上。", level="error")
+                        "③「设置」页的窗口标题/进程名与客户端实际值是否对得上。", level="error")
             return False
         rect = win.rect()
         if rect is None:
@@ -222,7 +222,7 @@ class LoginTask(Task):
                          "界面大小与本机标定不一致可能会点偏，建议检查窗口分辨率。", level="warn")
         else:
             wctx.log("未设置基准尺寸（targets.base_size），跳过窗口调整，照常登录"
-                     "（建议先在「通用」页设基准尺寸，模板/区域坐标是按它标定的）。", level="warn")
+                     "（建议先在「工具→窗口归一化」里设基准尺寸，模板/区域坐标是按它标定的）。", level="warn")
 
         step_t = float(loop.get("step_timeout_sec", 30))
         poll = float(loop.get("poll_sec", 0.3))
@@ -405,7 +405,7 @@ class LoginTask(Task):
     def _wait_entered(self, ctx, loop):
         """点完角色卡后等这个号真正进游戏。
 
-        以主界面判定（通用页公共标定里的商城图标，见 ui_state.is_main_screen）为准：
+        以主界面判定（任务配置页「全局共享标定」里的商城图标，见 ui_state.is_main_screen）为准：
           · True  → 已进入主界面，立即放行（下一个号继续登录）；
           · None  → 未标定图标/抓图失败判不了，到 enter_game_settle_sec 兜底按完成收尾（向后兼容）；
           · False → 画面能抓、图标已标定却没匹配上（最常见：进游戏后公告/活动弹窗盖住商城图标）——
@@ -425,7 +425,7 @@ class LoginTask(Task):
             if st is None:
                 if time.time() >= blind_until:
                     ctx.log("未标定「商城图标」无法确认是否已进游戏，按固定等待收尾"
-                            "（要精确判定请到「通用」页标定公共区域里的商城图标）。", level="warn")
+                            "（要精确判定请到「任务配置」页「全局共享标定」补标商城图标）。", level="warn")
                     return True
             else:  # False：图标已标定、画面能抓到但没匹配上
                 self._close_login_popup(ctx)
@@ -475,7 +475,7 @@ class LoginTask(Task):
         extra = ("（截图 %s）" % cap) if cap else ""
         ctx.log("进游戏后没确认到商城图标%s——多半被公告/活动弹窗挡住或图标样子变了，"
                 "已按进入完成放行、继续下一个号。若图标确实在画面上却频繁出现此提示，"
-                "请到「通用」页重校公共区域的商城图标。%s" % (sc, extra), level="warn")
+                "请到「任务配置」页「全局共享标定」卡重校商城图标。%s" % (sc, extra), level="warn")
 
     def _shop_icon_best_score(self, ctx, scene):
         """诊断用：商城图标在当前画面里的最高匹配分（未标定/取不到返回 None）。"""
