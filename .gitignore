@@ -18,6 +18,7 @@ __pycache__/
 # /logs/      每次启动的日志文件（自动清理，保留份数见设置）
 /config.json
 /captures/
+/captures_debug/
 /templates/
 /logs/
 
