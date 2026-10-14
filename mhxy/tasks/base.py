@@ -590,6 +590,7 @@ class Task:
     def _save_capture(self, scene, name):
         fname = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + str(name) + ".png"
         vision.save_image(str(CAPTURES_DIR / fname), scene)
+        ctx.log(f"截图已保存: {CAPTURES_DIR / fname}", level="info")
         return fname
 
     def _debug_on(self, ctx):
@@ -652,12 +653,11 @@ class Task:
                 rect=rect,
                 note=note,
                 col_x0=x0,
-                col_x1=x1,
+col_x1=x1,
                 card_xy=(ex_local, ey_local),
                 hits=marks,
                 tpl_wh=join_tpl.shape[::-1],
                 filename=fname,
-                log_saved=False,
             )
             if ok:
                 day = datetime.datetime.now().strftime("%Y-%m-%d")

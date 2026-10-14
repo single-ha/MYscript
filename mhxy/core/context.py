@@ -76,7 +76,7 @@ class TaskContext:
 
     def debug_snapshot(self, tag, scene=None, rect=None, note="", card_xy=None,
                        hits=None, tpl_wh=None, col_x0=None, col_x1=None,
-                       click_kind=None, filename=None, log_saved=True):
+                       click_kind=None, filename=None):
         """统一非点击/点击调试截图入口。返回 (ok, filename_or_None)。"""
         if not self._debug_on():
             return False, None
@@ -99,7 +99,7 @@ class TaskContext:
                 note=note,
                 click_kind=click_kind,
             )
-            if ok and log_saved:
+            if ok:
                 day = datetime.datetime.now().strftime("%Y-%m-%d")
                 self.log(f"[调试] 已存诊断截图 captures_debug/{day}/{fname}", level="debug")
             return ok, fname
@@ -133,7 +133,6 @@ class TaskContext:
                 tpl_wh=tpl_wh,
                 click_kind=kind,
                 filename=fname,
-                log_saved=True,
             )
         except Exception:
             pass
