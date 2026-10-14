@@ -868,6 +868,8 @@ class DungeonBaseTask(Task):
         # 先确认「活动」界面真的弹好了再翻卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
         if not self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0)):
             self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 点击「日常活动」标签页（未标定/匹配失败静默跳过）
+        self._click_daily_activity_tab(ctx, threshold)
         list_region = regions.get("activity_list")
         # 找「参加」的微滚计数/告警标志（开活动→参加一次性发起、不复用轮转 record，局部状态即可）
         rec = {"_join_warned": False, "_nudges": 0, "_low_warned": False, "_fb_warned": False}

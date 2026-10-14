@@ -60,10 +60,14 @@ POPUP_CLOSE_TPL_KEY = "popup_close"
 # 「活动」界面打开后独有的画面元素（面板标题/顶栏等）。发完 open_activity 快捷键后先等它出现、
 # 确认界面真的弹好了再开始滚轮翻找活动卡片（见 tasks/base.Task._wait_activity_ui）。不标=沿用固定等待时长。
 ACTIVITY_UI_TPL_KEY = "activity_ui_flag"
+# 日常活动标签（存 tasks.shared.templates.daily_activity_tab，在「任务配置」页「全局共享标定」里标定，可选）：
+# 活动界面顶部的「日常活动」标签页。打开活动界面后先点它切到日常列表，再找卡片。不标=直接在当前列表找卡片。
+DAILY_ACTIVITY_TAB_TPL_KEY = "daily_activity_tab"
 # 共享模板的友好中文名（就绪/标定提示用的展示名，见 ui/common.shared_template_hint）。
 SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)",
                       "join_done": "完成标识",
                       "activity_ui_flag": "活动界面标志",
+                      DAILY_ACTIVITY_TAB_TPL_KEY: "日常活动标签",
                       POPUP_CLOSE_TPL_KEY: "弹窗关闭按钮(×)"}
 # 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟；shop/activity 由 ui_state 直接读 shared，
 # 不叠加，避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
@@ -728,13 +732,14 @@ DEFAULT_CONFIG = {
                 "activity_list": None,   # 「活动」界面里那一片卡片列表（滚轮翻找副本/运镖/宝图等入口）
                 "bag_list": None,        # 「背包」打开后那一片物品列表（滚轮翻找藏宝图/待整理物品）
             },
-            "templates": {               # 跨任务共享模板，统一在「任务配置」页「全局共享标定」卡标定一次：
+"templates": {               # 跨任务共享模板，统一在「任务配置」页「全局共享标定」卡标定一次：
                 "battle_flag": None,     #   战斗界面标志（运镖/宝图必标，秘境仅日志诊断）
                 "clock": None,           #   小闹钟(寻路)（刷副本/抓鬼必标，点它寻路到当前目标）
                 "join_done": None,       #   活动卡片右侧「完成」标识（可选；认出卡片但无「参加」时用于判定今日已完成）
                 "shop_icon": None,       #   商城图标（可选，主界面判定用）
                 "activity_icon": None,   #   活动图标（可选，供后续界面判定复用）
                 "activity_ui_flag": None, # 活动界面标志（可选，发 open_activity 后等它出现再翻找卡片）
+                "daily_activity_tab": None, # 日常活动标签（可选，活动界面顶部的「日常活动」标签页）
             },
         },
 

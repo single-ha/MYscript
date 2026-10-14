@@ -21,7 +21,7 @@ import numpy as np
 from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
-from ..core.config import CAPTURES_DIR, ACTIVITY_UI_TPL_KEY
+from ..core.config import CAPTURES_DIR, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY
 
 _REGISTRY = {}
 
@@ -245,6 +245,32 @@ class Task:
                 return True
             self._interruptible_sleep(ctx, self._jitter(0.2, ctx))
         return False
+
+    def _click_daily_activity_tab(self, ctx, threshold):
+        """点击「日常活动」标签页。未标定/匹配失败静默跳过。"""
+        shared = ((ctx.cfg or {}).get("tasks", {}) or {}).get("shared", {}) or {}
+        tpl_path = ((shared.get("templates") or {}).get(DAILY_ACTIVITY_TAB_TPL_KEY))
+        tpl = vision.load_template(tpl_path) if tpl_path else None
+        if tpl is None:
+            return False  # 未标定，静默跳过
+        rect = ctx.window.rect()
+        if rect is None:
+            return False
+        deadline = time.time() + 3.0  # 找标签最多等 3s
+        while time.time() < deadline:
+            if ctx.should_stop():
+                return False
+            scene = ctx.window.grab_screen(rect)
+            if scene is not None:
+                hit = vision.match(scene, tpl, threshold)
+                if hit is not None:
+                    cx, cy = hit[0], hit[1]
+                    ctx.mouse.click(rect[0] + cx, rect[1] + cy)
+                    ctx.log("点击「日常活动」标签", level="info")
+                    self._interruptible_sleep(ctx, 0.5)  # 固定等待 0.5s 列表刷新
+                    return True
+            self._interruptible_sleep(ctx, 0.2)
+        return False  # 超时，静默跳过
 
     def _interruptible_sleep(self, ctx, seconds):
         """可被停止打断的等待。等待期间顺带跑弹窗守卫（节流，见 _defuse_popup）。"""
