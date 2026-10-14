@@ -309,6 +309,14 @@ class AppreciationTask(Task):
         cur = ctx.window.grab_screen(rect)
         hit = self._match_region(cur, rect, "appr_heart", threshold)
         if hit is not None:
+            # 二次确认：再抓一帧同区域，心形若在 ±3px 内才点；否则视为已滚动、下一轮重试
+            confirm_frame = ctx.window.grab_screen(rect)
+            hit2 = self._match_region(confirm_frame, rect, "appr_heart", threshold)
+            if hit2 is None or abs(hit2[0] - hit[0]) > 3 or abs(hit2[1] - hit[1]) > 3:
+                rec["not_found_since"] = time.time()
+                return
+            # 加速移动+点击，缩小被边缘滚动的窗口
+            ctx.mouse.human_move(hit[0], hit[1], speed=2.5)
             ctx.mouse.click(hit[0], hit[1])
             rec["clicks"] += 1
             rec["t_action"] = time.time()

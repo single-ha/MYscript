@@ -175,6 +175,7 @@ enter_dungeon                选择副本对话框里的「进入」按钮（普
             "join": None,            # 卡片右侧的「参加」按钮
             "select": None,          # 对话框「选择副本」按钮
             "skip": None,            # 「跳过剧情」按钮（每轮先点它，也用来判上一场打完）
+            "skip_new": None,        # 新版「跳过剧情」按钮（新版副本的跳过剧情，共用，备用）
             "clock": None,           # 任务栏「小闹钟」按钮（点它寻路到当前目标；旧标定位，现已迁「任务配置」页
                                      #   公共标定 = tasks.shared.templates.clock，task_config 叠加注入，此键仅兼容旧配置读取）
             "enter": None,           # 副本内「进入战斗」按钮（寻路到位后点它发起本场）
@@ -956,7 +957,12 @@ def _migrate_tuoying_rounds(cfg):
     dloop = ((tasks.get("dungeon", {}) or {}).get("loop") or {})
     if "tuoying_max_rounds" not in dloop:
         return False
-    if not tloop.get("tuoying_max_rounds"):
+    # 注意：load_config 里先 deep-merge 默认配置，tloop 通常已经带默认值(2)，
+    # 不能再用「not tloop.get(...)」判断“新键是否未设置”，否则旧值会被默认值吞掉。
+    default_rounds = (((DEFAULT_CONFIG.get("tasks", {}) or {}).get("tuoying", {})
+                      or {}).get("loop", {}) or {}).get("tuoying_max_rounds", 2)
+    cur = tloop.get("tuoying_max_rounds")
+    if cur is None or cur == default_rounds:
         tloop["tuoying_max_rounds"] = dloop["tuoying_max_rounds"]
         tuo["loop"] = tloop
     dloop.pop("tuoying_max_rounds", None)

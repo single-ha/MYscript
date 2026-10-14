@@ -68,10 +68,10 @@ DUNGEON_NS = "dungeon"                       # 共享配置命名空间（tasks.
 # 在「工具」页「拓印」里标定，见 TUOYING_TPL_KEYS；clock 存 tasks.shared.templates（「任务配置」页全局共享标定，
 # task_config 叠加注入本任务 templates）；battle_flag 同理存 shared。由 _load_flags 统一读入）。
 # 顺序按操作流程走，并作为标定向导里模板画廊的展示顺序（clock/battle_flag 已不在画廊，被 shared 取代）：
-#   卡片(普通/侠士) → 参加 → 选择副本 → 侠士区标签页(侠士进副本前) → 进入 → 队员准备按钮(侠士) → 准备弹窗标志(可选) → 跳过/进入战斗 → 结算界面。
+#   卡片(普通/侠士) → 参加 → 选择副本 → 侠士区标签页(侠士进副本前) → 进入 → 队员准备按钮(侠士) → 准备弹窗标志(可选) → 跳过/进入战斗/新版跳过 → 结算界面。
 SHARED_TPL_KEYS = ["entry_common", "entry_xiashi", "join", "select",
                    "xiashi_tab", "enter_dungeon", "ready", "ready_popup",
-                   "skip", "clock", "enter",
+                   "skip", "skip_new", "clock", "enter",
                    "settlement", "tuoying_title", "tuoying_upload", "battle_flag"]
 
 # 标定向导/就绪判据用的共享标定 spec（一次标定所有副本）
@@ -99,6 +99,7 @@ DUNGEON_CALIBRATION = {
                                    "「准备已弹出」从而立即开始点队员准备）。可选：不标则等不到该信号、靠队员准备轮询"
                                    "兜底，照样能进本", True),
         ("skip", "跳过剧情按钮", "副本内每轮先点的「跳过剧情」按钮（共用）"),
+        ("skip_new", "新版跳过剧情按钮", "新版副本内的「跳过剧情」按钮（共用，备用）"),
         ("enter", "进入战斗按钮", "寻路到位后点它发起本场的「进入战斗」按钮（共用）"),
         ("settlement", "结算界面", "副本结束时的结算画面（识别到即判结束收尾，共用）"),
     ],
@@ -426,6 +427,17 @@ class DungeonBaseTask(Task):
                 ctx.log(f"第 {fights} 场：点「进入战斗」（{hit[2]:.3f}），等它打完…", level="hit")
                 stage_at = now
                 stage_to = battle_to
+                clock_cool_until = 0.0
+                self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
+                continue
+
+            # ⑤b 新版跳过剧情：点它（新版副本的跳过剧情按钮），随后等待窗口重开
+            hit = self._match_scene(cur, rect, "skip_new", threshold)
+            if hit is not None:
+                ctx.mouse.click(hit[0], hit[1])
+                ctx.log(f"点「新版跳过剧情」（{hit[2]:.3f}）。", level="hit")
+                stage_at = now
+                stage_to = step_to
                 clock_cool_until = 0.0
                 self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
                 continue

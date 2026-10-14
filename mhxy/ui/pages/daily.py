@@ -756,7 +756,16 @@ class DailyPage(ctk.CTkFrame):
         names = [self._task_title_expanded(s["task"]) for s in self._steps
                  if s["enabled"] and self._group_on.get(GROUP_OF[s["task"]], True)]
         if names:
-            lbl.configure(text=" -> ".join(names), text_color=T.ACCENT)
+            # 计数时 dungeon 展开为勾选的副本数量
+            count = 0
+            for s in self._steps:
+                if s["enabled"] and self._group_on.get(GROUP_OF[s["task"]], True):
+                    if s["task"] == "dungeon":
+                        titles = get_selected_dungeon_titles(self.app.cfg)
+                        count += len(titles) if titles else 0
+                    else:
+                        count += 1
+            lbl.configure(text=" -> ".join(names) + f" (共{count}项)", text_color=T.ACCENT)
         else:
             lbl.configure(text="（无，开始日常只会空转）", text_color=T.TEXT_DIM)
 

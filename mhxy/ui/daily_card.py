@@ -75,6 +75,20 @@ def enabled_names(cfg):
             if s["enabled"] and ge.get(GROUP_OF[s["task"]], True)]
 
 
+def enabled_count(cfg):
+    """本趟真正会跑的执行项数量：刷副本展开为勾选的副本数量，其余任务各算 1。
+    与 enabled_names 同语义，但 dungeon 展开计数。"""
+    names = enabled_names(cfg)
+    count = 0
+    for name in names:
+        if name == "dungeon":
+            titles = get_selected_dungeon_titles(cfg)
+            count += len(titles) if titles else 0
+        else:
+            count += 1
+    return count
+
+
 class DailyRunCard(ctk.CTkFrame):
     """日常运行控制卡（起始页用）。构造后由宿主页 refresh()/pump() 驱动。"""
 
@@ -261,7 +275,8 @@ class DailyRunCard(ctk.CTkFrame):
         """重绘执行链 + 就绪摘要（就地改文本，不重建控件）。"""
         names = enabled_names(self.app.cfg)
         if names:
-            self.lbl_chain.configure(text=" -> ".join(task_title(n, self.app.cfg) for n in names), text_color=T.ACCENT)
+            chain_text = " -> ".join(task_title(n, self.app.cfg) for n in names) + f" (共{enabled_count(self.app.cfg)}项)"
+            self.lbl_chain.configure(text=chain_text, text_color=T.ACCENT)
         else:
             self.lbl_chain.configure(text="（无，开始日常只会空转）", text_color=T.TEXT_DIM)
         not_ready = [task_title(n, self.app.cfg) for n in names if not self._ready_bool(n)]
