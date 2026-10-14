@@ -121,7 +121,7 @@ class DailyTask(Task):
         deadline = start_ts + time_limit * 60 if time_limit > 0 else None
 
         # 用户拍板：窗口基准尺寸检查/归一化在「开始日常」时只做一次；链内各子任务不再重复做。
-        win_mod.ensure_windows_normalized_once(ctx, key="daily_base_size_checked")
+        win_mod.ensure_windows_normalized_once(ctx)
 
         wins = ctx.select_windows()
         if not wins:
@@ -322,7 +322,8 @@ class DailyTask(Task):
             try:
                 c["sub_step"]()
             except Exception as e:                      # 单个子任务炸了不该带垮整条链
-                c["wctx"].log(f"「{c['cur_title']}」运行异常：{e}，跳过该任务。", level="error")
+                import traceback
+                c["wctx"].log(f"「{c['cur_title']}」运行异常：{e}\n{traceback.format_exc()}，跳过该任务。", level="error")
                 self._end_step(c)
                 c["idx"] += 1
                 continue

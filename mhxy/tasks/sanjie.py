@@ -360,7 +360,8 @@ class SanjieTask(Task):
         三界奇缘的参加按钮模板为 qq_join；卡片为 qq_entry。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
                                          self.flags.get("qq_join"),
-                                         self.flags.get("qq_entry"))
+                                         self.flags.get("qq_entry"),
+                                         max_follow_cap=loop.get("join_same_row_px", 55))
 
     def _load_flags(self, tc):
         templates = tc.get("templates", {})

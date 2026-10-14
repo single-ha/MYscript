@@ -654,8 +654,9 @@ class SecretRealmTask(Task):
         """统一实现见 base.Task._find_join_in_column（整列枚举取距离卡片行最近那枚「参加」）。
         秘境降妖的参加按钮模板为 sr_join；卡片为 sr_entry。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
-                                         self.flags.get("sr_join"),
-                                         self.flags.get("sr_entry"))
+                                          self.flags.get("sr_join"),
+                                          self.flags.get("sr_entry"),
+                                          max_follow_cap=loop.get("join_same_row_px", 55))
 
     def _load_flags(self, tc):
         templates = tc.get("templates", {})

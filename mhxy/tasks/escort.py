@@ -471,7 +471,8 @@ class EscortTask(Task):
         运镖的参加按钮模板为 escort_join；卡片为 escort_entry。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
                                          self.flags.get("escort_join"),
-                                         self.flags.get("escort_entry"))
+                                         self.flags.get("escort_entry"),
+                                         max_follow_cap=loop.get("join_same_row_px", 55))
 
     def _load_flags(self, tc):
         templates = tc.get("templates", {})

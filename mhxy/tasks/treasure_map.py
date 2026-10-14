@@ -573,8 +573,9 @@ class TreasureMapTask(Task):
         """统一实现见 base.Task._find_join_in_column（整列枚举取离卡片行最近那枚「参加」）。
         宝图的参加按钮模板为 flag_join；卡片入口为 flag_treasure_entry。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
-                                         self.flags.get("flag_join"),
-                                         self.flags.get("flag_treasure_entry"))
+                                          self.flags.get("flag_join"),
+                                          self.flags.get("flag_treasure_entry"),
+                                          max_follow_cap=loop.get("join_same_row_px", 55))
 
     def _load_flags(self, tc):
         templates = tc.get("templates", {})

@@ -390,7 +390,8 @@ class AppreciationTask(Task):
         趣味鉴赏的参加按钮模板为 appr_join；卡片为 appr_entry。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
                                          self.flags.get("appr_join"),
-                                         self.flags.get("appr_entry"))
+                                         self.flags.get("appr_entry"),
+                                         max_follow_cap=loop.get("join_same_row_px", 55))
 
     def _load_flags(self, tc):
         templates = tc.get("templates", {})
