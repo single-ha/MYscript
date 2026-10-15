@@ -12,6 +12,7 @@ from ..common import Card, bind_wraplength, load_thumb
 from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...core.config import (ACTIVITY_UI_TPL_KEY, BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY,
+                             DAILY_ACTIVITY_TAB_TPL_KEY, JOIN_DONE_TPL_KEY,
                              MAIN_ICON_TPL_KEYS, POPUP_CLOSE_TPL_KEY, SHARED_REGION_KEYS,
                              SINGLE_TASK_ORDER)
 from ...core.teaming import TEAM_CALIB_TPL_KEYS, TEAM_REQUIRED_REGIONS
@@ -300,13 +301,44 @@ class SharedCalibrationCard(ctk.CTkFrame):
         cfg = cfg_mod.load_config()
         shared_tc = cfg_mod.task_config(cfg, "shared")
         sreg = shared_tc.get("regions", {})
-        sdone = sum(1 for k in SHARED_REGION_KEYS if sreg.get(k))
         stpl = shared_tc.get("templates", {})
-        tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY) + MAIN_ICON_TPL_KEYS + (POPUP_CLOSE_TPL_KEY, ACTIVITY_UI_TPL_KEY)
-        tdone = sum(1 for k in tpl_keys if stpl.get(k))
-        ready = (sdone == len(SHARED_REGION_KEYS) and bool(stpl.get(BATTLE_FLAG_TPL_KEY)) and bool(stpl.get(CLOCK_TPL_KEY)))
-        self.status.configure(text=f"区域：{sdone}/{len(SHARED_REGION_KEYS)}　模板：{tdone}/{len(tpl_keys)}" + ("　✓ 已就绪" if ready else "　（还需标定）"),
-                             text_color=T.SUCCESS if ready else T.WARN)
+
+        # 区域：全部为必要，无可选
+        req_regions = SHARED_REGION_KEYS
+        opt_regions = ()
+        req_reg_done = sum(1 for k in req_regions if sreg.get(k))
+        opt_reg_done = 0
+
+        # 模板：必要 vs 可选
+        req_tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)
+        opt_tpl_keys = (JOIN_DONE_TPL_KEY,) + MAIN_ICON_TPL_KEYS + (POPUP_CLOSE_TPL_KEY, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY)
+        all_tpl_keys = req_tpl_keys + opt_tpl_keys
+
+        req_tpl_done = sum(1 for k in req_tpl_keys if stpl.get(k))
+        opt_tpl_done = sum(1 for k in opt_tpl_keys if stpl.get(k))
+
+        # 格式化显示
+        parts = []
+        if req_regions:
+            parts.append(f"必要区域：{req_reg_done}/{len(req_regions)}")
+        if opt_regions:
+            parts.append(f"可选区域：{opt_reg_done}/{len(opt_regions)}")
+        if req_tpl_keys:
+            parts.append(f"必要模板：{req_tpl_done}/{len(req_tpl_keys)}")
+        if opt_tpl_keys:
+            parts.append(f"可选模板：{opt_tpl_done}/{len(opt_tpl_keys)}")
+
+        # 颜色判定：红=有必要未标，黄=必要全标但可选未全标，绿=全标
+        req_all_done = (req_reg_done == len(req_regions)) and (req_tpl_done == len(req_tpl_keys))
+        opt_all_done = (opt_tpl_done == len(opt_tpl_keys))
+        if not req_all_done:
+            color = T.DANGER  # 红：有必要项未标
+        elif not opt_all_done:
+            color = T.WARN    # 黄：必要全标但可选未全标
+        else:
+            color = T.SUCCESS # 绿：全部标定
+
+        self.status.configure(text=", ".join(parts), text_color=color)
 
     def _open(self):
         existing = self._dialog

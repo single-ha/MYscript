@@ -121,7 +121,7 @@ class DailyTask(Task):
         deadline = start_ts + time_limit * 60 if time_limit > 0 else None
 
         # 用户拍板：窗口基准尺寸检查/归一化在「开始日常」时只做一次；链内各子任务不再重复做。
-        win_mod.ensure_windows_normalized_once(ctx)
+        win_mod.ensure_windows_normalized_once(ctx, move_windows=False)
 
         wins = ctx.select_windows()
         if not wins:

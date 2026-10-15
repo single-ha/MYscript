@@ -63,24 +63,16 @@ class ZhuaguiConfig(ctk.CTkFrame):
         loopc = tc.get("loop", {})
         self.var_rounds.set(str(loopc.get("max_rounds", 2)))
 
-        team_tc = teaming_ns(self.app.cfg)
-        skip_team = team_tc.get("skip_team", False)
         templates = tc.get("templates", {})
         spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
         need_t = required_templates(spec)
         opt_tpl = optional_templates(spec)
-        self_ok, calib_txt, _calib_color = calib_status(regions=tc.get("regions", {}), templates=templates,
+
+        # 任务标定（使用 calib_status 统一格式）
+        self_ok, calib_txt, calib_color = calib_status(regions=tc.get("regions", {}), templates=templates,
                                                         task_name=self.TASK_NAME, tpl_keys=need_t,
                                                         tpl_opt_keys=opt_tpl, label="抓鬼标定")
-        if skip_team:
-            ready = self_ok
-            team_line = "已组队：跳过组队（无需组队标定）\n"
-        else:
-            team_ok = teaming_ready(team_tc)
-            ready = self_ok and team_ok
-            team_line = "组队标定：" + ("齐全 ✓\n" if team_ok else "区域内/模板未标齐\n")
-        self.lbl_calib.configure(text=team_line + calib_txt,
-                                 text_color=T.SUCCESS if ready else T.WARN)
+        self.lbl_calib.configure(text=calib_txt, text_color=calib_color)
 
     # ---- 参数保存（改动即保存）----
     def _on_max_rounds(self, raw):

@@ -146,7 +146,7 @@ class ZhuaguiTask(Task):
         
         # 统一调整窗口到基准尺寸（模板/区域坐标按 base_size 标定，多开同尺寸才好点）。
         # 本次运行只做一次（单跑=这里做；日常链已在起跑处做过会自动跳过）。
-        win_mod.ensure_windows_normalized_once(ctx)
+        win_mod.ensure_windows_normalized_once(ctx, move_windows=False)
         # 重新获取窗口列表（resize 后 rect 可能变化）
         wins = ctx.select_windows()
         if not wins:

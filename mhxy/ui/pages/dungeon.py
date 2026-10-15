@@ -12,7 +12,8 @@ from ...core import config as cfg_mod
 from ...core import window as win_mod
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ..common import (Card, bind_wraplength, open_calibrate,
-                      teaming_ns, teaming_ready, _row_optional)
+                      teaming_ns, teaming_ready, _row_optional, calib_status,
+                      required_regions, required_templates, optional_templates)
 
 
 class DungeonConfig(ctk.CTkFrame):
@@ -60,6 +61,11 @@ class DungeonConfig(ctk.CTkFrame):
         self.lbl_ready.pack(fill="x", padx=16, pady=(2, 0))
         bind_wraplength(self.lbl_ready)
 
+        self.lbl_team = ctk.CTkLabel(card, text="", font=self.fonts["small"], text_color=T.TEXT_DIM,
+                                      justify="left")
+        self.lbl_team.pack(fill="x", padx=16, pady=(0, 0))
+        bind_wraplength(self.lbl_team)
+
         hint = ctk.CTkLabel(card, text="多副本按勾选顺序一一刷完；某副本异常自动跳过继续下一个。"
                                        "「已组队」在顶部组队设置里勾（勾上=跳过组队直接由队长开刷，无需组队标定）。",
                             font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
@@ -78,8 +84,8 @@ class DungeonConfig(ctk.CTkFrame):
 
     def _required_counts(self):
         """共享 tasks.dungeon 的标定计数（一次标定所有副本）。
-        返回 (rdone, rtot, ropt_miss, tdone, ttot, topt_miss)：
-        必标项 (done/total) + 可选但未标记的个数（可选标了不算必标、不拖就绪）。
+        返回 (rdone, rtot, ropt, tdone, ttot, topt_done, topt_total)：
+        必标项 (done/total) + 可选项 (done/total)。
         「刷副本」的标定 spec 是共享 DUNGEON_CALIBRATION（一次标定所有副本），
         get_task("dungeon") 是仅组队的 DungeonTask、无标定 spec，不能用它。"""
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
@@ -91,47 +97,59 @@ class DungeonConfig(ctk.CTkFrame):
 
         def cat(raw, rows):
             done = sum(1 for k, opt in rows if not opt and raw.get(k))
-            opt_miss = sum(1 for k, opt in rows if opt and not raw.get(k))
-            return done, len([1 for k, opt in rows if not opt]), opt_miss
+            opt_done = sum(1 for k, opt in rows if opt and raw.get(k))
+            opt_total = len([1 for k, opt in rows if opt])
+            opt_miss = opt_total - opt_done
+            return done, len([1 for k, opt in rows if not opt]), opt_done, opt_total
 
-        rdone, rtot, ropt = cat(regions, rrows)
-        tdone, ttot, topt = cat(templates, trows)
-        return rdone, rtot, ropt, tdone, ttot, topt
+        rdone, rtot, ropt, _ = cat(regions, rrows)
+        tdone, ttot, topt_done, topt_total = cat(templates, trows)
+        return rdone, rtot, ropt, tdone, ttot, topt_done, topt_total
 
     @staticmethod
-    def _calib_line(rdone, rtot, ropt, tdone, ttot, topt):
-        """标定状态行的统一格式（user 拍板 2026-09-25）：
-        「标定：必要区域 x/n（另有 m 处可选未标记）；必要模板 x/n（另有 m 处可选未标记）」——
-        某类 n=0 则该类不显示；可选未标记 m=0 则不显示其括号提示。"""
+    def _calib_line(rdone, rtot, ropt, tdone, ttot, topt_done, topt_total):
+        """Standard format for calibration status line (new format):
+        "necessary_area: x/X, necessary_template: m/M, optional_template: n/N" (items with zero total not shown)"""
         parts = []
         if rtot:
-            s = f"必要区域 {rdone}/{rtot}"
-            if ropt:
-                s += f"（另有 {ropt} 处可选未标记）"
-            parts.append(s)
+            parts.append(f"必要区域：{rdone}/{rtot}")
         if ttot:
-            s = f"必要模板 {tdone}/{ttot}"
-            if topt:
-                s += f"（另有 {topt} 处可选未标记）"
-            parts.append(s)
-        return "标定：" + "；".join(parts) if parts else "标定：无"
+            parts.append(f"必要模板：{tdone}/{ttot}")
+        if topt_total:
+            parts.append(f"可选模板：{topt_done}/{topt_total}")
+        return "，".join(parts) if parts else "无标定"
 
     def _refresh_ready(self):
-        rdone, rtot, ropt, tdone, ttot, topt = self._required_counts()
+        # 获取标定计数和所需变量
+        rdone, rtot, ropt, tdone, ttot, topt_done, topt_total = self._required_counts()
+        
+        # 重新获取 regions、templates 等变量（用于 calib_status）
+        tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
+        regions = tc.get("regions", {})
+        templates = tc.get("templates", {})
+        spec = DUNGEON_CALIBRATION
+        req_regions = required_regions(DUNGEON_CALIBRATION)
+        req_templates = required_templates(DUNGEON_CALIBRATION)
+
         regions_ok = rdone == rtot
         templates_ok = tdone == ttot
         team_tc = teaming_ns(self.app.cfg)
         skip_team = team_tc.get("skip_team", False)
-        line = self._calib_line(rdone, rtot, ropt, tdone, ttot, topt)
-        if skip_team:
-            line += "　✓ 就绪（已组队，跳过组队）" if (regions_ok and templates_ok) else "　（还需标定）"
-            ready = regions_ok and templates_ok
-        else:
-            team_ok = teaming_ready(team_tc)
-            line += "；组队标定：" + ("齐全 ✓" if team_ok else "未齐（去「任务配置」页「组队（共享）」卡补标）")
-            ready = regions_ok and templates_ok and team_ok
-            line += "　✓ 就绪" if ready else "　（还需标定）"
-        self.lbl_ready.configure(text=line, text_color=T.SUCCESS if ready else T.WARN)
+
+        # 任务标定（与单人任务卡片格式一致:"刷副本标定：必要区域：x/X，必要模板：m/M，可选模板：n/N"）
+        task_ready, task_text, task_color = calib_status(
+            regions=tc.get("regions", {}),
+            templates=tc.get("templates", {}),
+            task_name=self.TASK_NAME,
+            region_keys=req_regions,
+            tpl_keys=req_templates,
+            tpl_opt_keys=optional_templates(DUNGEON_CALIBRATION),
+            label="刷副本标定"
+        )
+        self.lbl_ready.configure(text=task_text, text_color=task_color)
+
+        # 隐藏组队标定标签
+        self.lbl_team.configure(text="", text_color=T.TEXT_DIM)
 
     def _kick_count_windows(self, quiet=False):
         """后台线程按 targets 选窗并统计已选中号数（枚举走 core.window，不占主线程），供状态行显示。quiet: 刷新页签时静默。"""

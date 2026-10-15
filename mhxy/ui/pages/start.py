@@ -90,12 +90,8 @@ class StartPage(ctk.CTkFrame):
         self._login_body.grid_columnconfigure(0, weight=1)
 
         self.login_order = OrderThumbs(self._login_body, self.fonts, empty_text="",
-                                       thumb_h=54, border_color=T.SUCCESS, max_w=60)
+                                        thumb_h=54, border_color=T.SUCCESS, max_w=60)
         self.login_order.grid(row=0, column=0, sticky="w")
-        self.lbl_login_order = ctk.CTkLabel(self._login_body, text="", font=self.fonts["small"],
-                                            anchor="w", justify="left", text_color=T.TEXT_DIM)
-        self.lbl_login_order.grid(row=1, column=0, sticky="ew", pady=(6, 0))
-        bind_wraplength(self.lbl_login_order)
 
         self._login_open = True
 
@@ -144,7 +140,6 @@ class StartPage(ctk.CTkFrame):
             else:
                 text = "按下面缩略图的先后依次登录，每个号各开一次客户端。"
         self.lbl_login_badge.configure(text=badge, text_color=color)
-        self.lbl_login_order.configure(text=text, text_color=T.TEXT_DIM)
         self._sync_login_btn()
 
     def _open_account_gallery(self):

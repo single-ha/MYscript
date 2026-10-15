@@ -549,15 +549,18 @@ def restore_targets_size(title_substr, offset, targets, base_size):
     return (ok, len(wins), actual)
 
 
-def normalize_windows_to_base(ctx):
+def normalize_windows_to_base(ctx, move_windows=False):
     """
-    统一把选中的游戏窗口调整到 targets.base_size 并按 2列×2行 排布（第1排贴顶、最后1排贴任务栏、第5个居中）。
+    统一把选中的游戏窗口调整到 targets.base_size。
+    move_windows=False 时仅调整尺寸到基准，不改变位置；
+    move_windows=True 时按 2列×2行 排布（第1排贴顶、最后1排贴任务栏、第5个居中）。
     供任务执行上下文调用（无 GUI 依赖，日志走 ctx.log）。
     
     Args:
         ctx: TaskContext，需包含 cfg、select_windows()、log()、should_stop()
+        move_windows: 是否同时移动窗口到网格位置。默认 False（仅调整尺寸）。
     Returns:
-        (ok_count, total, actual_sizes) 同 restore_targets_size
+        (ok_count, total, actual_sizes)
     """
     base = (ctx.cfg.get("targets") or {}).get("base_size")
     if not base or len(base) < 2:
@@ -579,8 +582,11 @@ def normalize_windows_to_base(ctx):
         if ctx.should_stop():
             break
         w.activate()
-        x, y = arrange_slot(i, bw, bh, work=wa, margin=margin)
-        success = w.resize_to(bw, bh, move_to=(x, y))
+        if move_windows:
+            x, y = arrange_slot(i, bw, bh, work=wa, margin=margin)
+            success = w.resize_to(bw, bh, move_to=(x, y))
+        else:
+            success = w.resize_to(bw, bh)
         r = w.rect()
         actual.append([r[2], r[3]] if r else None)
         if success:
@@ -593,20 +599,20 @@ def normalize_windows_to_base(ctx):
     return (ok, len(wins), actual)
 
 
-def ensure_windows_normalized_once(ctx, key="base_size_checked"):
+def ensure_windows_normalized_once(ctx, key="base_size_checked", move_windows=False):
     """本次任务运行内只做一次窗口基准尺寸归一化。
 
     通过 ctx.runtime 记忆是否已执行：
-    - 首次调用：执行 normalize_windows_to_base(ctx)
+    - 首次调用：执行 normalize_windows_to_base(ctx, move_windows)
     - 后续调用：直接返回 (None, None, None)，表示已跳过
     """
     rt = getattr(ctx, "runtime", None)
     if not isinstance(rt, dict):
-        return normalize_windows_to_base(ctx)
+        return normalize_windows_to_base(ctx, move_windows=move_windows)
     if rt.get(key):
         return (None, None, None)
     rt[key] = True
-    return normalize_windows_to_base(ctx)
+    return normalize_windows_to_base(ctx, move_windows=move_windows)
 
 
 def arrange_slot(index, bw, bh, work=None, margin=100):

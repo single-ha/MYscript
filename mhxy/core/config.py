@@ -69,6 +69,8 @@ SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(�
                       "activity_ui_flag": "活动界面标志",
                       DAILY_ACTIVITY_TAB_TPL_KEY: "日常活动标签",
                       POPUP_CLOSE_TPL_KEY: "弹窗关闭按钮(×)"}
+# 共享模板键常量（用于标定对话框与配置卡片计数对齐）
+JOIN_DONE_TPL_KEY = "join_done"
 # 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟；shop/activity 由 ui_state 直接读 shared，
 # 不叠加，避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
 SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)

@@ -476,8 +476,12 @@ def shared_template_hint(templates, task_name):
 
 def calib_status(*, regions, templates, task_name,
                  region_keys=(), tpl_keys=(), tpl_opt_keys=(), label="标定", extra="", extra_ready=None):
-    """统一的任务页「标定」状态文本格式。
+    """统一的任务页「标定」状态文本格式（新格式）。
 
+    格式：必要区域：x/X, 必要模板：m/M, 可选区域：y/Y, 可选模板：n/N (总数为0的项不显示)
+    颜色：红=有必要项未标，黄=必要全标但可选未全标，绿=全标
+    兼容原有参数签名，内部自动识别必要/可选分类。
+    
     regions/templates 应为已叠加 tasks.shared 的 task_config（见 core/config.task_config）。
     region_keys/tpl_keys 只传任务**自身**的必标区域/模板（公共区域不传，由内部按
     TASK_SHARED_REQ 自动补判并附加提示）；tpl_opt_keys 传**可选**模板键——缺失不影响就绪，
@@ -488,36 +492,77 @@ def calib_status(*, regions, templates, task_name,
     「✓ 可运行/（还需标定）」判定；不给则只看自身必标＋公共区域。
     返回 (ready, text, color)：
       - ready：自身必标（不算可选）＋公共区域＋(extra_ready 若给定) 都齐。
-      - text：统一格式「{label}：必要模板 x/y（另有可选 n 未标）{extra}　✓ 可运行/（还需标定）
-         ＋公共区域未标定提示」。无区域时省略「必要区域」段、无模板时省略「必要模板」段；
-        可选模板全标齐则省略「另有可选」段。
-      - color：已就绪=SUCCESS（绿）/ 还需标定=WARN（黄），供标定状态标签着色的主题令牌。"""
+      - text：新格式「必要区域：x/X, 必要模板：m/M, 可选模板：n/N, ...」
+      - color：绿=全标，黄=必要全标但可选未全标，红=有必要项未标。"""
     region_keys = list(region_keys)
     tpl_keys = list(tpl_keys)
     tpl_opt_keys = [k for k in tpl_opt_keys if k not in tpl_keys]
+    
     rdone = sum(1 for k in region_keys if regions.get(k))
     tdone = sum(1 for k in tpl_keys if templates.get(k))
     tdone_opt = sum(1 for k in tpl_opt_keys if templates.get(k))
-    r_ok = (not region_keys) or rdone == len(region_keys)
-    t_ok = (not tpl_keys) or tdone == len(tpl_keys)
+    
+    # 必选区域/模板
+    req_reg_done = sum(1 for k in region_keys if regions.get(k))
+    req_reg_total = len(region_keys)
+    req_tpl_done = sum(1 for k in tpl_keys if templates.get(k))
+    req_tpl_total = len(tpl_keys)
+    
+    # 可选区域/模板
+    opt_reg_done = 0  # 目前无可选区域
+    opt_reg_total = 0
+    opt_tpl_done = sum(1 for k in tpl_opt_keys if templates.get(k))
+    opt_tpl_total = len(tpl_opt_keys)
+    
+    # 公共区域/模板提示
     shared_msg = shared_region_hint(regions, task_name)
     shared_tpl_msg = shared_template_hint(templates, task_name)
-    ready = r_ok and t_ok and not shared_msg and not shared_tpl_msg
+    
+    # 就绪判定
+    req_all_done = (req_reg_done == req_reg_total) and (req_tpl_done == len(tpl_keys))
+    opt_all_done = (opt_tpl_done == len(tpl_opt_keys))
+    shared_all_ok = not shared_msg and not shared_template_hint(templates, task_name)
+    
+    ready = req_all_done and opt_all_done and shared_all_ok
     if extra_ready is not None:
         ready = ready and bool(extra_ready)
-    seg = []
-    if region_keys:
-        seg.append(f"必要区域 {rdone}/{len(region_keys)}")
+    
+    # 构建文本
+    parts = []
+    if req_reg_total > 0:
+        parts.append(f"必要区域：{req_reg_done}/{req_reg_total}")
+    # 可选区域目前为0，不显示
     if tpl_keys:
-        seg.append(f"必要模板 {tdone}/{len(tpl_keys)}")
-    opt_txt = ""
-    if tpl_opt_keys and tdone_opt < len(tpl_opt_keys):
-        opt_txt = f"（另有可选 {len(tpl_opt_keys) - tdone_opt} 未标）"
-    body = "，".join(seg) if seg else "无必标项"
-    text = (f"{label}：{body}{opt_txt}{extra}"
-            + ("　✓ 可运行" if ready else "　（还需标定）")
-            + shared_msg + shared_tpl_msg)
-    color = T.SUCCESS if ready else T.WARN
+        parts.append(f"必要模板：{sum(1 for k in tpl_keys if templates.get(k))}/{len(tpl_keys)}")
+    if tpl_opt_keys:
+        opt_done = sum(1 for k in tpl_opt_keys if templates.get(k))
+        parts.append(f"可选模板：{sum(1 for k in tpl_opt_keys if templates.get(k))}/{len(tpl_opt_keys)}")
+    
+    body = "，".join(parts) if parts else "无必标项"
+    
+    # 颜色判定
+    req_all_done = (sum(1 for k in region_keys if regions.get(k)) == len(region_keys)) and \
+                   (sum(1 for k in tpl_keys if templates.get(k)) == len(tpl_keys))
+    opt_all_done = sum(1 for k in tpl_opt_keys if templates.get(k)) == len(tpl_opt_keys)
+    shared_all_ok = not shared_region_hint(regions, task_name) and not shared_template_hint(templates, task_name)
+    
+    if not (sum(1 for k in region_keys if regions.get(k)) == len(region_keys) and \
+            sum(1 for k in tpl_keys if templates.get(k)) == len(tpl_keys)):
+        color = T.DANGER  # 红：有必要项未标
+    elif not (sum(1 for k in tpl_opt_keys if templates.get(k)) == len(tpl_opt_keys)):
+        color = T.WARN  # 黄：必要全标但可选未全标
+    else:
+        color = T.SUCCESS  # 绿：全标
+    
+    body = "，".join(parts) if parts else "无必标项"
+    text = f"{label}：" + body
+    if extra:
+        text += extra
+    if shared_region_hint(regions, task_name):
+        text += shared_region_hint(regions, task_name)
+    if shared_template_hint(templates, task_name):
+        text += shared_template_hint(templates, task_name)
+    
     return ready, text, color
 
 
