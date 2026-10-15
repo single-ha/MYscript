@@ -233,7 +233,8 @@ class InventoryItemsDialog(ctk.CTkToplevel):
     def _add_item(self):
         from .calibrate_dialog import grab_roi_on_app   # 延迟导入避免循环依赖
         rel, crop = grab_roi_on_app(self.app, self.cfg, "框选要整理的物品（图标+名字）",
-                                    with_crop=True, toast=self._toast)
+                                    with_crop=True, toast=self._toast,
+                                    alpha_windows=(self.app, self))
         if rel is None:
             return
         if crop is None or crop.size == 0:
