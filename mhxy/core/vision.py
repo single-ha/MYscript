@@ -5,6 +5,7 @@
 
 import os
 import datetime
+import json
 
 import numpy as np
 import cv2
@@ -59,7 +60,42 @@ def save_image(path, img):
     return ok
 
 
-def match(scene_bgr, template_bgr, threshold):
+def _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, window_rect, max_val):
+    """匹配失败时保存诊断截图到 captures/，并打印日志。
+    不受 debug_log 控制，仅失败时触发。"""
+    if scene_bgr is None:
+        return
+    try:
+        day = datetime.datetime.now().strftime("%Y-%m-%d")
+        ts = datetime.datetime.now().strftime("%H%M%S_%f")[:-3]
+        safe_template = template_name.replace("/", "_").replace("\\", "_")
+        safe_task = task_name.replace("/", "_").replace("\\", "_")
+        fname = f"match_fail_{safe_task}_{safe_template}_{day}_{ts}.png"
+        fpath = str(CAPTURES_DIR / day / fname)
+        os.makedirs(os.path.dirname(fpath), exist_ok=True)
+        
+        ext = ".png"
+        ok, buf = cv2.imencode(ext, scene_bgr)
+        if ok:
+            buf.tofile(fpath)
+            # 同时写元数据 JSON
+            meta = {
+                "template": template_name,
+                "task": task_name,
+                "threshold": float(threshold),
+                "max_val": float(max_val),
+                "window_rect": window_rect,
+                "timestamp": datetime.datetime.now().isoformat(),
+            }
+            meta_path = fpath.replace(".png", ".json")
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+            print(f"[诊断] 匹配失败已留证：{fpath}  (模板={template_name}, 任务={task_name}, 阈值={threshold:.2f}, 最高分={max_val:.3f})")
+    except Exception as e:
+        print(f"[诊断] 保存匹配失败截图异常：{e}")
+
+
+def match(scene_bgr, template_bgr, threshold, template_name="", task_name="", window_rect=None, **_):
     """
     在 scene 里找 template。命中返回 (cx, cy, score)，cx/cy 为命中中心相对 scene 左上角；
     未命中返回 None。
@@ -73,10 +109,13 @@ def match(scene_bgr, template_bgr, threshold):
     _, max_val, _, max_loc = cv2.minMaxLoc(res)
     if max_val >= threshold:
         return (max_loc[0] + tw // 2, max_loc[1] + th // 2, float(max_val))
+    # 匹配失败 → 诊断留证
+    _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, window_rect, max_val)
     return None
 
 
-def match_multi(scene_bgr, template_bgr, threshold, max_hits=32, nms_iou=0.4, sort_origin_top_left=True):
+def match_multi(scene_bgr, template_bgr, threshold, max_hits=32, nms_iou=0.4, sort_origin_top_left=True,
+                template_name="", task_name="", window_rect=None, **_):
     """在 scene 里找 template 的【所有】命中点（多个同款按钮——如进副本列表里几个长一样的「进入」）。
 
     - 用 TM_CCOEFF_NORMED 全图扫，取所有 >= threshold 的局部峰值（非极大值抑制 NMS 防同一按钮重复圈中）
@@ -95,6 +134,8 @@ def match_multi(scene_bgr, template_bgr, threshold, max_hits=32, nms_iou=0.4, so
     # 局部极大值（邻居不比自己大才算峰值），再把低于阈值的滤掉
     ys, xs = np.where(res >= threshold)
     if ys.size == 0:
+        # 完全无峰值 → 诊断留证
+        _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, window_rect, 0.0)
         return []
     peaks = []
     for y, x in zip(ys, xs):
@@ -104,6 +145,7 @@ def match_multi(scene_bgr, template_bgr, threshold, max_hits=32, nms_iou=0.4, so
         if v >= float(res[y0:y1, x0:x1].max()):
             peaks.append((x + tw / 2, y + th / 2, v))
     if not peaks:
+        _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, window_rect, 0.0)
         return []
 
     # NMS：命中框按得分从高到低，凡与已接受结果重叠过大(IoU 超 nms_iou)就丢弃
@@ -124,6 +166,10 @@ def match_multi(scene_bgr, template_bgr, threshold, max_hits=32, nms_iou=0.4, so
             accepted.append((int(cx), int(cy), s))
         if len(accepted) >= max_hits:
             break
+    if not accepted:
+        # NMS 后全被过滤 → 诊断留证
+        _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, window_rect, 0.0)
+        return []
     if sort_origin_top_left:
         # 先 y（上→下）、再 x（左→右），即按行列排好
         accepted.sort(key=lambda p: (p[1], p[0]))

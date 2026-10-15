@@ -206,7 +206,7 @@ class GuildCheckinTask(Task):
         tpl = self.flags.get(key)
         if cur is None or tpl is None or scene_rect is None:
             return None
-        m = vision.match(cur, tpl, threshold)
+        m = vision.match(cur, tpl, threshold, template_name=key, task_name=self.name, window_rect=scene_rect)
         if m is None:
             return None
         return (scene_rect[0] + m[0], scene_rect[1] + m[1], m[2])
@@ -216,7 +216,7 @@ class GuildCheckinTask(Task):
         if cur is None or tpl is None:
             return None
         try:
-            m = vision.match(cur, tpl, 0.0)
+            m = vision.match(cur, tpl, 0.0, template_name=key, task_name=self.name, window_rect=cur.shape[:2][::-1] if cur is not None else None)
         except Exception:
             return None
         return m[2] if m is not None else None

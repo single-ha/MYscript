@@ -241,7 +241,7 @@ class Task:
                 return False
             rect = ctx.window.region_to_screen_rect(region) if region else ctx.window.rect()
             scene = ctx.window.grab_screen(rect) if rect is not None else None
-            if scene is not None and vision.match(scene, tpl, threshold) is not None:
+            if scene is not None and vision.match(scene, tpl, threshold, template_name="daily_activity_tab", task_name=self.name, window_rect=rect) is not None:
                 return True
             self._interruptible_sleep(ctx, self._jitter(0.2, ctx))
         return False
@@ -262,7 +262,7 @@ class Task:
                 return False
             scene = ctx.window.grab_screen(rect)
             if scene is not None:
-                hit = vision.match(scene, tpl, threshold)
+                hit = vision.match(scene, tpl, threshold, template_name="daily_activity_tab", task_name=self.name, window_rect=rect)
                 if hit is not None:
                     cx, cy = hit[0], hit[1]
                     ctx.mouse.click(rect[0] + cx, rect[1] + cy)
@@ -457,7 +457,8 @@ class Task:
             return None
         col = scene[:, x0:x1]
         lo_thr = max(float(threshold), 0.7)
-        hits = vision.match_multi(col, join_tpl, lo_thr, max_hits=64, sort_origin_top_left=True)
+        hits = vision.match_multi(col, join_tpl, lo_thr, max_hits=64, sort_origin_top_left=True,
+                                   template_name="join_button", task_name=self.name, window_rect=rect)
         if not hits:
             self._diag_join_miss(ctx, scene, rect, col, x0, col_idx, join_tpl,
                                  ex_local, ey_local, loop, hits, 0.0)

@@ -272,7 +272,7 @@ class LoginTask(Task):
             rect = ctx.window.rect()
             scene = ctx.window.grab_screen(rect) if rect is not None else None
             if scene is not None:
-                m = vision.match(scene, tpl, threshold)
+                m = vision.match(scene, tpl, threshold, template_name=label, task_name=self.name, window_rect=rect)
                 if m is not None:
                     x, y = rect[0] + m[0], rect[1] + m[1]
                     if ctx.window.is_foreground() or ctx.window.activate():
@@ -293,7 +293,7 @@ class LoginTask(Task):
         while not ctx.should_stop() and time.time() < end:
             rect = ctx.window.rect()
             scene = ctx.window.grab_screen(rect) if rect is not None else None
-            if scene is not None and vision.match(scene, tpl, threshold) is not None:
+            if scene is not None and vision.match(scene, tpl, threshold, template_name=label, task_name=self.name, window_rect=rect) is not None:
                 return True
             self._interruptible_sleep(ctx, poll)
         return False
@@ -369,7 +369,7 @@ class LoginTask(Task):
         def probe(scene, rect):
             if scene is None:
                 return scan.SCROLL, None
-            m = vision.match(scene, tpl, threshold)
+            m = vision.match(scene, tpl, threshold, template_name=card_kind, task_name=self.name, window_rect=rect)
             if m is None:
                 s, _ = vision.best_score(scene, tpl)   # 没到阈值时记最高分（诊断用，判断是「图不对」还是「阈值太高」）
                 if s > best[0]:

@@ -270,7 +270,8 @@ class SecretRealmTask(Task):
                     if list_region else ctx.window.rect())
 
         def probe(scene, rect):
-            hit = vision.match(scene, self.flags.get("sr_entry"), threshold) if scene is not None else None
+            hit = vision.match(scene, self.flags.get("sr_entry"), threshold,
+                               template_name="sr_entry", task_name=self.name, window_rect=rect) if scene is not None else None
             if hit is None:
                 rec["_join_warned"] = False
                 rec["_nudges"] = 0
@@ -676,7 +677,7 @@ class SecretRealmTask(Task):
         tpl = self.flags.get(flag_key)
         if cur is None or tpl is None or scene_rect is None:
             return None
-        m = vision.match(cur, tpl, threshold)
+        m = vision.match(cur, tpl, threshold, template_name=flag_key, task_name=self.name, window_rect=scene_rect)
         if m is None:
             return None
         return (scene_rect[0] + m[0], scene_rect[1] + m[1], m[2])

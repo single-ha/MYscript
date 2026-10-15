@@ -390,7 +390,8 @@ class DungeonBaseTask(Task):
 
             # ② 结算界面（优先级最高；识别到即判副本结束、进收尾）
             if cur is not None and stpl is not None:
-                sm = vision.match(cur, stpl, settle_th)
+                sm = vision.match(cur, stpl, settle_th,
+                                  template_name="settlement", task_name=self.name, window_rect=cur.shape[:2][::-1] if cur is not None else None)
                 if sm is not None:
                     ctx.log(f"识别到结算界面（{sm[2]:.3f}，阈值{settle_th:.2f}），副本结束。", level="hit")
                     return True
@@ -1064,7 +1065,7 @@ class DungeonBaseTask(Task):
         tpl = self.flags.get(flag_key)
         if cur is None or tpl is None or scene_rect is None:
             return None
-        m = vision.match(cur, tpl, threshold)
+        m = vision.match(cur, tpl, threshold, template_name=flag_key, task_name=self.name, window_rect=scene_rect)
         if m is None:
             return None
         return (scene_rect[0] + m[0], scene_rect[1] + m[1], m[2])

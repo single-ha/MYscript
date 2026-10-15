@@ -8,9 +8,10 @@
 
 每个窗口渲成一张卡片，带【实时缩略图】帮你认出哪个号（号按屏幕位置左→右编号，
 和 window.locate_all 的排序一致）。选择结果写入 cfg["targets"]：
-  multi / single_index / multi_indices。
+  multi / single_index / multi_indices / selected_hwnds。
 
-窗口身份用「位置序号」而非 HWND——三个号标题相同、HWND 重启会变，按摆放位置认号最稳。
+窗口身份优先用「HWND（会话内稳定）」，找不到回退「位置序号」——HWND 重启会变，
+但同一次会话内移动窗口不会变；重启后自动按位置重新匹配并更新 HWND 记录。
 """
 
 import time
@@ -270,12 +271,16 @@ class WindowPickerDialog(ctk.CTkToplevel):
     def _confirm(self):
         self.targets["multi"] = self._multi
         captain_index = None
+        selected_hwnds = []
         if self._multi:
             idxs = sorted(i for i, v in self._multi_vars.items() if v.get())
             if not idxs:                       # 没勾任何号 → 视为「全部」
                 idxs = list(range(len(self._wins)))
             # 存所选绝对序号＝勾选名单是权威（运行时不再被 max_windows 截断）；空列表＝自动全部
             self.targets["multi_indices"] = idxs
+            # 记录所选窗口的 HWND（会话内稳定标识）
+            selected_hwnds = [self._wins[i][0]._win._hWnd for i in idxs
+                              if hasattr(self._wins[i][0], '_win') and hasattr(self._wins[i][0]._win, '_hWnd')]
             if self.captain_ns:
                 cap_abs = self._captain_var.get()
                 if cap_abs not in idxs:        # 队长没在所选里 → 落到第一个所选号
@@ -283,6 +288,13 @@ class WindowPickerDialog(ctk.CTkToplevel):
                 captain_index = idxs.index(cap_abs) if cap_abs in idxs else 0
         else:
             self.targets["single_index"] = int(self._single_var.get())
+            # 单开也记录 HWND
+            idx = int(self._single_var.get())
+            if 0 <= idx < len(self._wins):
+                w = self._wins[idx][0]
+                if hasattr(w, '_win') and hasattr(w._win, '_hWnd'):
+                    selected_hwnds = [w._win._hWnd]
+        self.targets["selected_hwnds"] = selected_hwnds
         # 读盘再写，避免覆盖其它地方刚改的配置
         cfg = cfg_mod.load_config()
         cfg["targets"] = {**cfg.get("targets", {}), **self.targets}

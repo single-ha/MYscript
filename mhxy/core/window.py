@@ -467,6 +467,16 @@ def wait_new_game_window(before, title_substr, offset=(0, 0), timeout=60.0, poll
             time.sleep(poll)
 
 
+def _hwnd_of_win(w):
+    """取 GameWindow / pygetwindow 窗口对象的句柄（int）；取不到返回 None。"""
+    try:
+        raw = getattr(w, "_win", None) or w
+        h = getattr(raw, "_hWnd", None)
+        return int(h) if h else None
+    except Exception:
+        return None
+
+
 def resolve_targets(title_substr, offset, targets):
     """按 targets 配置从 locate_all 结果里选出要操作的窗口列表（纯函数，供任务与 GUI 共用）。
 
@@ -474,28 +484,63 @@ def resolve_targets(title_substr, offset, targets):
       - 单开(multi=False)：返回 [第 single_index 个窗口]（序号越界自动回退 0）。
       - 多开(multi=True) ：按 multi_indices 选子集（空=自动跟踪全部，此时才受 max_windows 上限）。
         手动勾选的一组序号是权威，不再被 max_windows 截断（勾 5 个就跑 5 个）。
+    优先按 selected_hwnds（会话内稳定 HWND）匹配；未命中回退位置索引。
+    返回的列表会按 selected_hwnds 的顺序排序；仅位置索引时按 locate_all 顺序。
     找不到任何窗口返回 []。
     """
     targets = targets or {}
     wins = locate_all(title_substr, offset)
     if not wins:
         return []
+
+    # 建立 HWND -> 窗口 映射
+    hwnd_map = {}
+    for w in wins:
+        h = _hwnd_of_win(w)
+        if h:
+            hwnd_map[h] = w
+
+    stored_hwnds = targets.get("selected_hwnds") or []
+
+    def pick_by_hwnds():
+        """按 stored_hwnds 顺序取窗口，找不到的跳过。"""
+        out = []
+        for h in stored_hwnds:
+            w = hwnd_map.get(h)
+            if w:
+                out.append(w)
+        return out
+
     if targets.get("multi"):
-        idxs = targets.get("multi_indices") or []
-        if idxs:
-            sel = [wins[i] for i in idxs if 0 <= i < len(wins)]
-        else:                             # 空=自动全部：只有这个兜底分支受 max_windows 限制
-            sel = wins
-        if not sel:                       # 选中的序号全失效 → 兜底用全部
+        # 多开：优先按 HWND 选；HWND 全失效时回退 multi_indices
+        sel = pick_by_hwnds()
+        if not sel:
+            idxs = targets.get("multi_indices") or []
+            if idxs:
+                sel = [wins[i] for i in idxs if 0 <= i < len(wins)]
+            else:
+                sel = wins
+        if not sel:
             sel = wins
         cap = targets.get("max_windows", 0)
-        if cap and cap > 0 and not idxs:
+        if cap and cap > 0 and not (targets.get("selected_hwnds") or targets.get("multi_indices")):
             sel = sel[:cap]
+        # 更新 selected_hwnds 为实际选中的 HWND（保持顺序）
+        targets["selected_hwnds"] = [_hwnd_of_win(w) for w in sel if _hwnd_of_win(w)]
         return sel
+
+    # 单开：优先按 HWND 选第一个；失败回退 single_index
+    if stored_hwnds:
+        w = hwnd_map.get(stored_hwnds[0])
+        if w:
+            targets["selected_hwnds"] = [stored_hwnds[0]]
+            return [w]
     i = targets.get("single_index", 0)
     if not (isinstance(i, int) and 0 <= i < len(wins)):
         i = 0
-    return [wins[i]]
+    w = wins[i]
+    targets["selected_hwnds"] = [_hwnd_of_win(w)] if _hwnd_of_win(w) else []
+    return [w]
 
 
 def window_at_point(title_substr, offset, x, y):

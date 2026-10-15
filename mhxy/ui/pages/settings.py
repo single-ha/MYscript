@@ -169,7 +169,7 @@ class SettingsPage(ctk.CTkFrame):
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
                       text_color=T.TEXT, border_width=1, border_color=T.BORDER,
                       command=self._import_config).pack(side="left")
-        hint = ctk.CTkLabel(box, text="导出把 config.json 和 templates/（标定的模板图）打成 zip；导入用 zip 覆盖还原，"
+        hint = ctk.CTkLabel(box, text="导出把 config.json 和 templates/（标定模板图 + 账号库账号/角色图）打成 zip；导入用 zip 覆盖还原，"
                                       "换机/换号搬标定就靠它。导入会覆盖当前配置。",
                             font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         hint.grid(row=1, column=0, sticky="ew", pady=(4, 0))
@@ -367,17 +367,30 @@ class SettingsPage(ctk.CTkFrame):
             self.app.toast("没有可导出的配置（config.json 不存在）。", T.WARN)
             return
         try:
+            tpl_dir = cfg_mod.DATA_ROOT / "templates"
+            tpl_count = 0
+            acct_count = 0
+            role_count = 0
             with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
                 zf.write(str(cfg_file), arcname="config.json")
-                tpl_dir = cfg_mod.DATA_ROOT / "templates"
                 if tpl_dir.is_dir():
                     for p in sorted(tpl_dir.rglob("*")):
                         if p.is_file():
                             zf.write(str(p), arcname="templates/" + p.relative_to(tpl_dir).as_posix())
+                            tpl_count += 1
+                            name = p.name
+                            if name.startswith("tm_login_account") and name.endswith(".png"):
+                                acct_count += 1
+                            elif name.startswith("tm_login_char") and name.endswith(".png"):
+                                role_count += 1
         except Exception as e:
             self.app.toast(f"导出配置失败：{e}", T.DANGER)
             return
-        self.app.toast(f"已导出配置 → {path}", T.SUCCESS)
+        parts = [f"模板图 {tpl_count} 张"]
+        if acct_count or role_count:
+            parts.append(f"账号图 {acct_count} 张" if acct_count else "")
+            parts.append(f"角色图 {role_count} 张" if role_count else "")
+        self.app.toast(f"已导出配置 → {path} （{'、'.join(parts)}）", T.SUCCESS)
 
     def _import_config(self):
         from tkinter import filedialog, messagebox
@@ -390,10 +403,22 @@ class SettingsPage(ctk.CTkFrame):
             self.app.toast("选中的文件不是配置文件", T.WARN)
             return
         if not messagebox.askyesno("导入配置",
-                                   f"该压缩包是工具配置包：{detail}\n导入会用它覆盖当前 config.json 与标定模板，是否继续？"):
+                                    f"该压缩包是工具配置包：{detail}\n导入会用它覆盖当前 config.json 与标定模板（含账号库图片），是否继续？"):
             return
         try:
+            tpl_count = 0
+            acct_count = 0
+            role_count = 0
             with zipfile.ZipFile(path, "r") as zf:
+                for info in zf.infolist():
+                    name = info.filename.replace("\\", "/")
+                    if name.startswith("templates/") and not info.is_dir():
+                        tpl_count += 1
+                        fname = name.split("/")[-1]
+                        if fname.startswith("tm_login_account") and fname.endswith(".png"):
+                            acct_count += 1
+                        elif fname.startswith("tm_login_char") and fname.endswith(".png"):
+                            role_count += 1
                 self._extract_safely(zf, cfg_mod.DATA_ROOT)
         except Exception as e:
             self.app.toast(f"导入配置失败：{e}", T.DANGER)
@@ -403,7 +428,17 @@ class SettingsPage(ctk.CTkFrame):
             self.refresh()
         except Exception:
             pass
-        self.app.toast("已导入配置（其它页面切过去会自动刷新）", T.SUCCESS)
+        # 刷新账号库弹窗（如果开着）
+        if hasattr(self.app, "_account_gallery"):
+            try:
+                self.app._account_gallery._render()
+            except Exception:
+                pass
+        parts = [f"模板图 {tpl_count} 张"]
+        if acct_count or role_count:
+            parts.append(f"账号图 {acct_count} 张" if acct_count else "")
+            parts.append(f"角色图 {role_count} 张" if role_count else "")
+        self.app.toast(f"已导入配置 （{'、'.join(parts)}）", T.SUCCESS)
 
     def _probe_config_zip(self, path):
         """校验 zip 是不是本工具配置文件包：内含 config.json 且 JSON 为 dict 且带 tasks 键。
