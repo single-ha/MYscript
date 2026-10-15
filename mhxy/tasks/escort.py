@@ -441,7 +441,7 @@ class EscortTask(Task):
         按钮变「已参加」后重开活动连环卡死。"""
         rec["recover"] += 1
         ctx.log(f"卡住（第 {rec['recover']}/{loop.get('max_stuck_recover', 3)} 次），尝试恢复…", level="warn")
-        self._save_capture(self._grab_scene(ctx, regions), f"stuck_{rec['state']}")
+        self._save_capture(ctx, self._grab_scene(ctx, regions), f"stuck_{rec['state']}")
         if rec["recover"] >= loop.get("max_stuck_recover", 3):
             ctx.log("多次卡死仍无进展，放弃该号。", level="error")
             rec["done"] = True

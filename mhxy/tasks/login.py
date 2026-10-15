@@ -469,7 +469,7 @@ class LoginTask(Task):
         """确认不到进游戏成功：存现场截图 + 商城图标对照分，供分辨「遮挡 vs 标定偏差」后放行。"""
         rect = ctx.window.rect()
         scene = ctx.window.grab_screen(rect) if rect is not None else None
-        cap = self._save_capture(scene, "login_entered_unconfirmed") if scene is not None else None
+        cap = self._save_capture(ctx, scene, "login_entered_unconfirmed") if scene is not None else None
         score = self._shop_icon_best_score(ctx, scene) if scene is not None else None
         sc = ("，商城图标对照分 %.3f（阈值 0.8）" % score) if score is not None else ""
         extra = ("（截图 %s）" % cap) if cap else ""

@@ -339,7 +339,7 @@ class SanjieTask(Task):
             rec["done"] = True
             return
         ctx.log(f"卡住（第 {rec['recover']}/{loop.get('max_stuck_recover', 3)} 次），关面板重新开活动…", level="warn")
-        self._save_capture(self._grab_scene(ctx, regions), f"stuck_{rec['state']}")
+        self._save_capture(ctx, self._grab_scene(ctx, regions), f"stuck_{rec['state']}")
         self._focus(ctx)
         if ctx.send_hotkey("close_panel"):
             self._interruptible_sleep(ctx, self._jitter(0.25, ctx))

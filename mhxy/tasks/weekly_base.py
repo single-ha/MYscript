@@ -479,7 +479,7 @@ class WeeklyBaseTask(Task):
     def _abort_capture(self, ctx, regions):
         """中止存证截图（状态下发前抓一张现场图，方便核对该号卡在哪）。"""
         try:
-            self._save_capture(self._grab_scene(ctx, regions), "weekly_abort")
+            self._save_capture(ctx, self._grab_scene(ctx, regions), "weekly_abort")
         except Exception:
             pass
 

@@ -165,7 +165,7 @@ class Task:
             # 回不去：存一张现场截图，方便核对到底是「面板真没关掉」还是「其实已主界面但商城图标没认到」。
             rect = ctx.window.rect()
             scene = ctx.window.grab_screen(rect) if rect is not None else None
-            cap = self._save_capture(scene, "main_screen_fail") if scene is not None else None
+            cap = self._save_capture(ctx, scene, "main_screen_fail") if scene is not None else None
             ctx.log(f"未能回到主界面（面板没关掉或商城图标没认到），截图 {cap} 供核对，按任务原流程继续。",
                     level="warn")
 
@@ -340,7 +340,7 @@ class Task:
         if not ep.get("warned"):
             ep["warned"] = True
             scene = ctx.window.grab_screen(window.rect()) if window.rect() else None
-            cap = self._save_capture(scene, "popup_stuck") if scene is not None else None
+            cap = self._save_capture(ctx, scene, "popup_stuck") if scene is not None else None
             ctx.log(f"弹窗守卫：同一弹窗「×」+Esc 都关不掉，已放弃（截图 {cap} 供核对，任务照常继续）。",
                     level="warn")
 
@@ -409,7 +409,7 @@ class Task:
         scene = ctx.window.grab_screen(rect) if rect is not None else None
         if scene is None:
             return
-        cap = self._save_capture(scene, f"join_unknown_{self.name}")
+        cap = self._save_capture(ctx, scene, f"join_unknown_{self.name}")
         ex, ey = int(entry_screen_xy[0]), int(entry_screen_xy[1])
         ctx.log(f"认出卡片但既没识别到「参加」也没识别到「完成」，已留证截图 {cap}（卡片点≈{ex},{ey}）。",
                 level="warn")
@@ -613,7 +613,7 @@ class Task:
         ctx.mouse.click(center[0], center[1], speed=speed)
         return True
 
-    def _save_capture(self, scene, name):
+    def _save_capture(self, ctx, scene, name):
         fname = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_") + str(name) + ".png"
         vision.save_image(str(CAPTURES_DIR / fname), scene)
         ctx.log(f"截图已保存: {CAPTURES_DIR / fname}", level="info")
