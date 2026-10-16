@@ -120,7 +120,8 @@ class TeamFormation:
         return {"ctx": wctx, "role": role,
                 "state": C_OPEN_TEAM if role == TeamFormation.ROLE_CAPTAIN else M_WAIT_READY,
                 "t_state": 0.0, "scrolls": 0, "recover": 0,
-                "done": False, "ok": False, "dead_logged": False, "fg_warned": False}
+                "done": False, "ok": False, "dead_logged": False, "fg_warned": False,
+                "ensured_main": False}
 
     # ------------------------------------------------------------------
     # 拟人化等待/抖动（core 不依赖 tasks，故自带一份等价实现）
@@ -207,6 +208,12 @@ class TeamFormation:
 
     def _step_once(self, rec):
         """按该号当前 state 推进【一小步】后立刻返回（好轮转到下一个号）。"""
+        # 首次轮到该号（轮转已把它切到前台）：先确保它回到主界面——不在就逐层 ESC 关掉遗留面板，
+        # 否则后面发的队伍/好友快捷键在子面板里不生效。本步只做这一件事，下一步再进状态机。
+        if not rec.get("ensured_main"):
+            rec["ensured_main"] = True
+            self._ensure_main_screen(rec)
+            return
         handlers = {
             C_OPEN_TEAM: self._cap_open, C_CREATE: self._cap_create,
             C_APPLY: self._cap_apply, C_ACCEPT: self._cap_accept, C_CLOSE: self._cap_close,
@@ -216,6 +223,21 @@ class TeamFormation:
         h = handlers.get(rec["state"])
         if h is not None:
             h(rec)
+
+    def _ensure_main_screen(self, rec):
+        """首次操作某号前把它带回主界面（复用 ui_state.back_to_main_screen：逐层 ESC 关面板直到认出商城图标）。
+
+        未标定「商城图标」→ 返回 None，不盲按 Esc、静默跳过（向后兼容：不标也照常组队）；
+        连按仍回不去 → 只告警、不阻断，交后续状态机自行处理。core 不依赖 tasks，故此处懒加载 ui_state。"""
+        from ..ui import ui_state
+        ctx = rec["ctx"]
+        st = ui_state.back_to_main_screen(self.cfg, ctx.window)
+        if st is True:
+            ctx.log("已在主界面，开始组队。", level="info")
+        elif st is None:
+            ctx.log("无法判定主界面（未标定「商城图标」），跳过回主界面这步。", level="info")
+        else:
+            ctx.log("连按 Esc 仍未回主界面（可能有弹窗卡住），照常尝试组队。", level="warn")
 
     # ------------------------------------------------------------------
     # 队长分支

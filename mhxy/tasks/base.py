@@ -241,7 +241,7 @@ class Task:
                 return False
             rect = ctx.window.region_to_screen_rect(region) if region else ctx.window.rect()
             scene = ctx.window.grab_screen(rect) if rect is not None else None
-            if scene is not None and vision.match(scene, tpl, threshold, template_name="daily_activity_tab", task_name=self.name, window_rect=rect) is not None:
+            if scene is not None and vision.match(scene, tpl, threshold, template_name=ACTIVITY_UI_TPL_KEY, task_name=self.name, window_rect=rect) is not None:
                 return True
             self._interruptible_sleep(ctx, self._jitter(0.2, ctx))
         return False

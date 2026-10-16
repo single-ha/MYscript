@@ -633,10 +633,17 @@ class TreasureMapTask(Task):
         return (full[0] + m[0], full[1] + m[1], m[2])
 
     def _close_bag(self, ctx):
-        """收尾关背包：聚焦后按一次「关闭面板」(Esc)。"""
+        """收尾关背包：聚焦后走 ui_state.back_to_main_screen 逐层 ESC 关面板直到回主界面
+        （与 appreciation._do_done 同款收尾）——按完还会验证真回了主界面，比单按一次 Esc 可靠。"""
         self._focus(ctx)
-        if ctx.send_hotkey("close_panel"):
-            self._interruptible_sleep(ctx, self._jitter(0.25, ctx))
+        st = ui_state.back_to_main_screen(ctx.cfg, ctx.window)
+        if st is True:
+            ctx.log("背包已关，已返回主界面。", level="info")
+        elif st is None:
+            ctx.log("无法判定主界面（大概率没标定「商城图标」），不盲按 Esc；按原流程收尾。",
+                    level="warn")
+        else:
+            ctx.log("连按 Esc 仍未回主界面（可能有弹窗卡住），按原流程收尾。", level="warn")
 
     def _dry_run_selfcheck(self, ctx, contexts, multi, regions, threshold, switch_delay,
                            deadline):
