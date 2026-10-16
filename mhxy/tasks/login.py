@@ -285,7 +285,7 @@ class LoginTask(Task):
             self._interruptible_sleep(ctx, poll)
         return False
 
-    def _wait_present(self, ctx, tpl, threshold, timeout, poll):
+    def _wait_present(self, ctx, tpl, label, threshold, timeout, poll):
         """只等不点：timeout 内轮询抓图，模板出现返回 True（超时/被停返回 False）。"""
         if tpl is None:
             return False
@@ -321,7 +321,7 @@ class LoginTask(Task):
         def _click_tab():
             return self._wait_click(ctx, tab, tab_label, threshold, step_t, poll, settle)
 
-        if self._wait_present(ctx, tab, threshold, wait, poll):
+        if self._wait_present(ctx, tab, tab_label, threshold, wait, poll):
             return _click_tab()
         for n in range(2, tries + 1):
             if ctx.should_stop():
@@ -331,11 +331,11 @@ class LoginTask(Task):
             if not self._wait_click(ctx, sw, sw_label, threshold, step_t, poll, settle):
                 ctx.log(f"「{sw_label}」按钮点不到，本号跳过。", level="warn")
                 return False
-            if self._wait_present(ctx, tab, threshold, wait, poll):
+            if self._wait_present(ctx, tab, tab_label, threshold, wait, poll):
                 return _click_tab()
         if ctx.should_stop():
             return False
-        if not self._wait_present(ctx, tab, threshold, step_t, poll):
+        if not self._wait_present(ctx, tab, tab_label, threshold, step_t, poll):
             return False
         return _click_tab()
 
