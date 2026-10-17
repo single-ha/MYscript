@@ -34,12 +34,9 @@ class DungeonTask(Task):
     # ------------------------------------------------------------------
     def preflight(self, ctx):
         problems = []
-        targets = ctx.cfg.get("targets", {})
         wins = ctx.select_windows()
-        if not targets.get("multi"):
-            problems.append("组队需多开模式：请在「选择窗口」切到多开并选 2~5 个号")
         if len(wins) < 2:
-            problems.append(f"组队至少 2 人，当前选中 {len(wins)} 个号（队长+≥1 队员）")
+            problems.append("组队需先选中 2~5 个号：请在「选择窗口」勾选队长+至少 1 个队员")
         elif len(wins) > 5:
             problems.append(f"最多 5 人，当前选中 {len(wins)} 个号，请减少")
 

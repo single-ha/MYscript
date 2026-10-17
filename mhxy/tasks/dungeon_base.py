@@ -148,7 +148,6 @@ class DungeonBaseTask(Task):
     def preflight(self, ctx):
         problems = []
         tc = ctx.task_cfg(DUNGEON_NS)
-        targets = ctx.cfg.get("targets", {})
         wins = ctx.select_windows()
         team_tc = ctx.task_cfg("teaming")
         skip_team = team_tc.get("skip_team", False)
@@ -157,10 +156,8 @@ class DungeonBaseTask(Task):
             if not wins:
                 problems.append("没找到/没选中目标窗口 —— 请先「选择窗口」选好队长所在的号")
         else:
-            if not targets.get("multi"):
-                problems.append(f"{self.title} 需先组队：请在「选择窗口」切到多开并选好队长+队员（≥2 个号）")
             if len(wins) < 2:
-                problems.append(f"组队至少 2 人（队长+队员），当前选中 {len(wins)} 个号")
+                problems.append(f"{self.title} 需先组队：请在「选择窗口」勾选队长+至少 1 个队员（≥2 个号）")
 
         cap = team_tc.get("captain_index", 0)
         # 队长序号只在有多个窗口时才有意义：单开（1 个号）不校验，run 里自动把唯一的号当队长

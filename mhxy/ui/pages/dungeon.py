@@ -156,11 +156,12 @@ class DungeonConfig(ctk.CTkFrame):
         if self._windows_pending:
             return
         targets = self.app.cfg.get("targets", {})
-        if not targets.get("multi"):
-            self._set_wins_line(1 if targets else 0, quiet)
-            return
         title = self.app.cfg.get("window_title", "梦幻西游")
         offset = self.app.cfg.get("window_offset", [0, 0])
+        wins_check = win_mod.resolve_targets(title, offset, targets)
+        if len(wins_check) <= 1:
+            self._set_wins_line(len(wins_check), quiet)
+            return
         self._windows_tokens += 1
         token = self._windows_tokens
         self._windows_pending = True
@@ -194,7 +195,7 @@ class DungeonConfig(ctk.CTkFrame):
         try:
             txt = f"🎮 已选中 {n} 个号"
             if n == 0 and not quiet:
-                txt += "（点左下角连接状态按钮「未检测到目标窗口」选择多开）"
+                txt += "（点左下角连接状态按钮「未检测到目标窗口」选择要操作的窗口）"
             self.lbl_wins.configure(text=txt)
         except Exception:
             pass

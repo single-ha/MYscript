@@ -3,17 +3,15 @@
 选择窗口对话框（基础特性）。
 
 让用户从「桌面上检测到的同名游戏窗口」里选择脚本要操作的目标：
-  · 单开：选 1 个号（单选）。
-  · 多开：勾多个号（轮流操作）。
+  · 勾选几个窗口就操作几个窗口（选中 1 个 → 单号行为；选中 ≥ 2 个 → 多开号行为）
 
 每个窗口渲成一张卡片，带【实时缩略图】帮你认出哪个号（号按屏幕位置左→右编号，
 和 window.locate_all 的排序一致）。选择结果写入 cfg["targets"]：
-  multi / single_index / multi_indices / selected_hwnds。
+  multi_indices / selected_hwnds / multi（按选中数量派生：len>1 时 True）/ single_index
 
 窗口身份优先用「HWND（会话内稳定）」，找不到回退「位置序号」——HWND 重启会变，
 但同一次会话内移动窗口不会变；重启后自动按位置重新匹配并更新 HWND 记录。
 """
-
 import time
 
 import customtkinter as ctk
@@ -48,8 +46,6 @@ class WindowPickerDialog(ctk.CTkToplevel):
 
         self._wins = []          # [(GameWindow, rect, ctk_thumb_or_None)]
         self._thumbs = []        # 防 GC
-        self._multi = bool(self.targets.get("multi", False))
-        self._single_var = ctk.IntVar(value=int(self.targets.get("single_index", 0) or 0))
         self._multi_vars = {}    # index -> BooleanVar
         self._captain_var = ctk.IntVar(value=0)   # 队长的【绝对窗口序号】(0起)；仅 captain_ns 时用
         self._captain_inited = False
@@ -80,28 +76,19 @@ class WindowPickerDialog(ctk.CTkToplevel):
         top = ctk.CTkFrame(self, fg_color="transparent")
         top.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 6))
         ctk.CTkLabel(top, text="选择窗口", font=self.fonts["title"], text_color=T.TEXT).pack(anchor="w")
-        base_hint = ("单开选 1 个号，多开勾多个号轮流操作。号按屏幕从左到右编号。"
+        base_hint = ("勾选要操作的窗口（可多选），选中几个就操作几个。号按屏幕从左到右编号。"
                      "检测区可在「标定」里留空＝整窗，无需框大区域。")
         if self.captain_ns:
-            base_hint += "  组队请用「多开」，并在要当队长的那个号上勾「队长」。"
+            base_hint += "  组队请在要当队长的那个号上勾「队长」。"
         sub = ctk.CTkLabel(top, text=base_hint,
-                     font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
+                           font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub.pack(fill="x", pady=(4, 0))
         T.bind_wraplength(sub)
 
-        # 模式切换
-        modebar = ctk.CTkFrame(self, fg_color="transparent")
-        modebar.grid(row=1, column=0, sticky="ew", padx=20, pady=(4, 6))
-        ctk.CTkLabel(modebar, text="模式", font=self.fonts["body_b"], text_color=T.TEXT).pack(side="left")
-        self.seg_mode = ctk.CTkSegmentedButton(
-            modebar, values=["单开", "多开"], command=self._on_mode,
-            font=self.fonts["body"], fg_color=T.SURFACE_2,
-            text_color=T.TEXT,
-            selected_color=T.ACCENT, selected_hover_color=T.ACCENT_HOVER,
-            unselected_color=T.BTN, unselected_hover_color=T.BTN_HOVER)
-        self.seg_mode.set("多开" if self._multi else "单开")
-        self.seg_mode.pack(side="left", padx=(10, 0))
-        ctk.CTkButton(modebar, text="刷新", font=self.fonts["body"], width=72, height=30,
+        # 顶部栏：刷新
+        topbar = ctk.CTkFrame(self, fg_color="transparent")
+        topbar.grid(row=1, column=0, sticky="ew", padx=20, pady=(4, 6))
+        ctk.CTkButton(topbar, text="刷新", font=self.fonts["body"], width=72, height=30,
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
                       command=self._enumerate).pack(side="right")
@@ -125,11 +112,6 @@ class WindowPickerDialog(ctk.CTkToplevel):
         ctk.CTkButton(bottom, text="确定", font=self.fonts["btn"], width=110, height=36,
                       corner_radius=T.RADIUS_SM, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, text_color=T.ON_ACCENT,
                       command=self._confirm).grid(row=0, column=2)
-
-    # ------------------------------------------------------------------
-    def _on_mode(self, value):
-        self._multi = (value == "多开")
-        self._render()
 
     def _set_alpha(self, a):
         for w in (self.app, self):
@@ -188,23 +170,31 @@ class WindowPickerDialog(ctk.CTkToplevel):
         if not self._wins:
             empty = ctk.CTkLabel(self.body, text=f"没检测到标题含「{self.title_substr}」的窗口。\n"
                                          "请先打开游戏（可多开），再点上方「刷新」。",
-                         font=self.fonts["body"], text_color=T.TEXT_DIM, justify="left")
+                                 font=self.fonts["body"], text_color=T.TEXT_DIM, justify="left")
             empty.grid(row=0, column=0, sticky="ew", padx=12, pady=24)
             T.bind_wraplength(empty)
             self.status_lbl.configure(text="未检测到窗口")
             return
 
-        # 单开：若记忆的序号越界则回退 0
-        if self._single_var.get() >= len(self._wins):
-            self._single_var.set(0)
+        # 初始选择集：优先 multi_indices；否则若历史是单开且 single_index 合法，只勾选它；否则全选
         sel_multi = set(self.targets.get("multi_indices") or [])
+        targets_multi_flag = bool(self.targets.get("multi", False))
+        single_idx = int(self.targets.get("single_index", 0) or 0)
+        init_all = False
+        if sel_multi:
+            init_set = set(sel_multi)
+        elif (not targets_multi_flag) and 0 <= single_idx < len(self._wins):
+            init_set = {single_idx}
+        else:
+            init_all = True
+            init_set = set(range(len(self._wins)))
 
-        # 队长初值：把存的 captain_index（所选窗口里的序号）映射回【绝对窗口序号】，只算一次。
+        # 队长初值：把存的 captain_index（所选窗口里的序号）映射回【绝对窗口序号】
         if self.captain_ns and not self._captain_inited:
             team_tc = cfg_mod.task_config(self.cfg, self.captain_ns)
             ci = int(team_tc.get("captain_index", 0) or 0)
-            sel = sorted(sel_multi) if sel_multi else list(range(len(self._wins)))
-            cap_abs = sel[ci] if 0 <= ci < len(sel) else (sel[0] if sel else 0)
+            sel_cand = sorted(init_set) if init_set else list(range(len(self._wins)))
+            cap_abs = sel_cand[ci] if 0 <= ci < len(sel_cand) else (sel_cand[0] if sel_cand else 0)
             self._captain_var.set(cap_abs)
             self._captain_inited = True
 
@@ -214,27 +204,24 @@ class WindowPickerDialog(ctk.CTkToplevel):
             card.grid(row=i, column=0, sticky="ew", pady=5, padx=4)
             card.grid_columnconfigure(2, weight=1)
 
-            # 选择控件
-            if self._multi:
-                var = self._multi_vars.get(i)
-                if var is None:
-                    # 默认：之前选过就沿用；没选过(空)则默认全选
-                    default_on = (i in sel_multi) if sel_multi else True
-                    var = ctk.BooleanVar(value=default_on)
-                    self._multi_vars[i] = var
-                ctk.CTkCheckBox(card, text="", width=24, variable=var,
-                                fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER).grid(
-                                    row=0, column=0, padx=(12, 6), pady=10)
-            else:
-                ctk.CTkRadioButton(card, text="", width=24, variable=self._single_var, value=i,
-                                   fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER).grid(
-                                       row=0, column=0, padx=(12, 6), pady=10)
+            # 复选框（始终）
+            var = self._multi_vars.get(i)
+            if var is None:
+                if init_all:
+                    default_on = True
+                else:
+                    default_on = (i in init_set)
+                var = ctk.BooleanVar(value=default_on)
+                self._multi_vars[i] = var
+            ctk.CTkCheckBox(card, text="", width=24, variable=var,
+                            fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER).grid(
+                                row=0, column=0, padx=(12, 6), pady=10)
 
             # 缩略图
             if thumb is not None:
                 ctk.CTkLabel(card, text="", image=thumb).grid(row=0, column=1, padx=(2, 10), pady=8)
             else:
-                ctk.CTkLabel(card, text="🖥", font=self.fonts["title"]).grid(
+                ctk.CTkLabel(card, text="", font=self.fonts["title"]).grid(
                     row=0, column=1, padx=(2, 10), pady=8)
 
             # 信息
@@ -251,12 +238,12 @@ class WindowPickerDialog(ctk.CTkToplevel):
             ttl = (w.title or "").strip()
             if ttl:
                 ttl_lbl = ctk.CTkLabel(info, text=ttl, font=self.fonts["small"], text_color=T.TEXT_DIM,
-                             justify="left")
+                                       justify="left")
                 ttl_lbl.pack(fill="x")
                 T.bind_wraplength(ttl_lbl)
 
-            # 队长单选（仅在带缩略图的卡上直接指定）——多开 + 需要选队长时才出现
-            if self.captain_ns and self._multi:
+            # 队长单选（仅 captain_ns 时）
+            if self.captain_ns:
                 ctk.CTkRadioButton(card, text="队长", width=24, variable=self._captain_var, value=i,
                                    font=self.fonts["small"], fg_color=T.ACCENT,
                                    hover_color=T.ACCENT_HOVER).grid(row=0, column=3, padx=(6, 12))
@@ -269,32 +256,37 @@ class WindowPickerDialog(ctk.CTkToplevel):
 
     # ------------------------------------------------------------------
     def _confirm(self):
-        self.targets["multi"] = self._multi
         captain_index = None
         selected_hwnds = []
-        if self._multi:
-            idxs = sorted(i for i, v in self._multi_vars.items() if v.get())
-            if not idxs:                       # 没勾任何号 → 视为「全部」
-                idxs = list(range(len(self._wins)))
-            # 存所选绝对序号＝勾选名单是权威（运行时不再被 max_windows 截断）；空列表＝自动全部
-            self.targets["multi_indices"] = idxs
-            # 记录所选窗口的 HWND（会话内稳定标识）
-            selected_hwnds = [self._wins[i][0]._win._hWnd for i in idxs
-                              if hasattr(self._wins[i][0], '_win') and hasattr(self._wins[i][0]._win, '_hWnd')]
-            if self.captain_ns:
-                cap_abs = self._captain_var.get()
-                if cap_abs not in idxs:        # 队长没在所选里 → 落到第一个所选号
-                    cap_abs = idxs[0] if idxs else 0
-                captain_index = idxs.index(cap_abs) if cap_abs in idxs else 0
-        else:
-            self.targets["single_index"] = int(self._single_var.get())
-            # 单开也记录 HWND
-            idx = int(self._single_var.get())
-            if 0 <= idx < len(self._wins):
-                w = self._wins[idx][0]
-                if hasattr(w, '_win') and hasattr(w._win, '_hWnd'):
-                    selected_hwnds = [w._win._hWnd]
+        idxs = sorted(i for i, v in self._multi_vars.items() if v.get())
+        if not idxs:                       # 没勾任何号 → 视为「全部」
+            idxs = list(range(len(self._wins)))
+        # 存所选绝对序号（运行时不再被 max_windows 截断）
+        self.targets["multi_indices"] = idxs
+        # 记录所选窗口的 HWND（会话内稳定标识）
+        for i in idxs:
+            if 0 <= i < len(self._wins):
+                w = self._wins[i][0]
+                try:
+                    hwnd = w._win._hWnd
+                except Exception:
+                    hwnd = None
+                if hwnd is not None:
+                    selected_hwnds.append(hwnd)
         self.targets["selected_hwnds"] = selected_hwnds
+        # 派生：按选中数量决定是否多开
+        self.targets["multi"] = len(idxs) > 1
+        if len(idxs) == 1:
+            self.targets["single_index"] = idxs[0]
+        else:
+            # 保留旧的 single_index，不强行改写
+            if "single_index" not in self.targets:
+                self.targets["single_index"] = int(self.targets.get("single_index", 0) or 0)
+        if self.captain_ns:
+            cap_abs = self._captain_var.get()
+            if cap_abs not in idxs:        # 队长没在所选里 → 落到第一个所选号
+                cap_abs = idxs[0] if idxs else 0
+            captain_index = idxs.index(cap_abs) if cap_abs in idxs else 0
         # 读盘再写，避免覆盖其它地方刚改的配置
         cfg = cfg_mod.load_config()
         cfg["targets"] = {**cfg.get("targets", {}), **self.targets}
