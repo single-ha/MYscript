@@ -75,6 +75,22 @@ JOIN_DONE_TPL_KEY = "join_done"
 # 不叠加，避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
 SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)
 
+# 周常（门派闯关/海底世界/迷魂塔）per-task 模板键都是通用的
+# card/join/confirm/enter/claim_task，若只按键名落盘 templates/tm_<key>.png 会让三任务共用
+# 同一个文件、互相覆盖（尤其 card/confirm 各活动图样不同）。故这些任务的模板文件
+# 按任务名加前缀 templates/tm_<task>_<key>.png（见 task_template_rel）。
+# dungeon 等其它任务键名已自带前缀或本就该跨副本共用，不在此列。
+TASK_SCOPED_TPL_TASKS = ("sect_gate", "maze_tower", "underwater")
+
+
+def task_template_rel(task_name, key):
+    """模板文件的落盘相对路径。默认 templates/tm_<key>.png；对
+    TASK_SCOPED_TPL_TASKS 里的任务用 templates/tm_<task>_<key>.png，避免多任务共用同名 key
+    时标定互相覆盖。标定对话框与迁移都走这里。"""
+    if task_name in TASK_SCOPED_TPL_TASKS:
+        return f"templates/tm_{task_name}_{key}.png"
+    return f"templates/tm_{key}.png"
+
 # 各任务「就绪判定」还要查的共享区域键（这些键已从任务自身 CALIBRATION 移走、只在
 # 任务配置页「全局共享标定」卡里标定一次）。key 与任务名一致；dungeon 指共享 tasks.dungeon。
 TASK_SHARED_REQ = {
@@ -556,7 +572,8 @@ DEFAULT_CONFIG = {
                 "time_limit_min": 45,        # 时间上限（分钟）安全网，0=不限；每轮主终止是 失败/离开 或 时长判超时。
                                              # ⚠ 必须 > battle_timeout_sec/60（单轮上限），否则多开时最后扛住的号永远等不到自己那轮自然结束就被总上限砍掉
                 "match_threshold": 0.85,     # 标志模板匹配阈值
-                "max_runs": 1,               # 每个号连跑几轮秘境（每轮=开活动→挑战→直到 失败/超时离开）
+                "battle_rounds": 3,          # 难度关卡战斗次数：累计点「进入战斗」达 N 次、且当前非战斗态即点「离开」收尾
+                                             #   （每号只进一次秘境，不再重开活动多轮）
                 "tick_interval_sec": 0.5,    # 多开轮转节拍：所有号各推进一步后的间隔（带抖动）
                 "dialog_timeout_sec": 30,    # 点「参加」后等「秘境降妖」对话框出现的超时
                 "dungeon_select_wait_sec": 6,  # 等「选择副本-进入」出现的短超时；没出现=本次无需选副本，跳过
@@ -831,7 +848,7 @@ DEFAULT_CONFIG = {
                 "sell_confirm_button": None,     # 商会出售弹窗里最终确认的「出售」按钮
                 "stall_sell_button": None,       # 「摆摊出售」按钮
                 "stall_shelf_button": None,      # 摆摊出售的「本服上架」按钮
-                "confirm_button": None,          # 丢弃的「确定」确认按钮
+                "discard_confirm_button": None,  # 丢弃的「确定」确认按钮
                 "bag_full_icon": None            # 背包满时常驻屏幕上的「满」图标（自动整理靠它判背包满）
             },
             "items": []                          # [{name, template, action}]，action ∈ use/discard/shop_sell/stall_sell（兼容旧 sell）
@@ -950,6 +967,12 @@ def load_config():
         save_config(cfg)
     if _migrate_dungeon_ready(cfg):
         save_config(cfg)
+    if _migrate_weekly_scoped_tpl(cfg):
+        save_config(cfg)
+    if _migrate_ob_confirm_key(cfg):
+        save_config(cfg)
+    if _migrate_sr_rounds_and_victory(cfg):
+        save_config(cfg)
     if _migrate_tuoying_rounds(cfg):
         save_config(cfg)
     return cfg
@@ -991,6 +1014,115 @@ def _migrate_dungeon_ready(cfg):
                 tpl[new] = tpl[old]
             tpl.pop(old, None)
             changed = True
+    # 路径修正：改名后 ready 的路径一度沿用旧键的 templates/tm_confirm.png，
+    # 与周常 NPC「参加活动」按钮（键 confirm → 同名文件）撞车、互相覆盖。改成与键名
+    # 一致的 tm_ready.png，不复制旧图（强制重标，免得误把周常按钮图当准备按钮）。
+    rp = tpl.get("ready")
+    if rp and str(rp).replace("\\", "/").endswith("templates/tm_confirm.png"):
+        tpl["ready"] = "templates/tm_ready.png"
+        changed = True
+    return changed
+
+
+def _migrate_weekly_scoped_tpl(cfg):
+    """一次性迁移：把周常（门派闯关/海底世界/迷魂塔）per-task 模板从
+    templates/tm_<key>.png 搬到带任务名前缀的 templates/tm_<task>_<key>.png，避免三任务
+    共用同名 key（card/join/confirm/enter/claim_task）时标定互相覆盖。旧图 best-effort 复制一份（谁最后
+    标的谁对，其余需重标）。跳过 None 与共享叠加键（battle_flag/clock）。返回是否改动。"""
+    tasks = cfg.get("tasks") or {}
+    changed = False
+    for tname in TASK_SCOPED_TPL_TASKS:
+        tpl = (tasks.get(tname) or {}).get("templates")
+        if not isinstance(tpl, dict):
+            continue
+        for key, rel in list(tpl.items()):
+            if not rel or key in SHARED_TPL_KEYS:
+                continue
+            norm = str(rel).replace("\\", "/")
+            if norm != f"templates/tm_{key}.png":
+                continue
+            new_rel = f"templates/tm_{tname}_{key}.png"
+            dst = PROJECT_ROOT / new_rel
+            if not dst.exists():
+                src = PROJECT_ROOT / norm
+                if src.exists():
+                    try:
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(src), str(dst))
+                    except OSError:
+                        pass
+            tpl[key] = new_rel
+            changed = True
+    return changed
+
+
+def _migrate_ob_confirm_key(cfg):
+    """一次性迁移：整理背包的确认按钮原键 `confirm_button` 与商城（抢关注）的
+    `confirm_button` 撞车（同一文件 templates/tm_confirm_button.png，互相覆盖）。改名为
+    `discard_confirm_button`（与 sell_confirm_button 对称），全局唯一。旧图 best-effort 复制。返回是否改动。"""
+    tpl = (cfg.get("tasks") or {}).get("organize_bag", {}).get("templates")
+    if not isinstance(tpl, dict) or "confirm_button" not in tpl:
+        return False
+    old_rel = tpl.pop("confirm_button")
+    if not tpl.get("discard_confirm_button") and old_rel:
+        norm = str(old_rel).replace("\\", "/")
+        tpl["discard_confirm_button"] = norm
+        new_rel = "templates/tm_discard_confirm_button.png"
+        dst = PROJECT_ROOT / new_rel
+        if not dst.exists():
+            src = PROJECT_ROOT / norm
+            if src.exists():
+                try:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(src), str(dst))
+                except OSError:
+                    pass
+        tpl["discard_confirm_button"] = new_rel
+    return True
+
+
+def _migrate_sr_rounds_and_victory(cfg):
+    """一次性迁移（秘境降妖）：
+    · loop.max_runs → battle_rounds（含义由「重开活动轮数」改为「难度关卡战斗次数」；
+      旧值若为历史默认 1 则改用新默认 3，其余保留原值）；删旧键 max_runs。
+    · 删除已废弃的通关/胜利标定 sr_victory（及遗留键 sr_challenge/sr_battle），并删掉其模板图。
+    返回是否改动。"""
+    tc = (cfg.get("tasks") or {}).get("secret_realm")
+    if not isinstance(tc, dict):
+        return False
+    changed = False
+    loop = tc.get("loop")
+    if isinstance(loop, dict) and "max_runs" in loop:
+        old = loop.pop("max_runs")
+        if "battle_rounds" not in loop:
+            try:
+                oldv = int(float(old))
+            except (TypeError, ValueError):
+                oldv = 1
+            loop["battle_rounds"] = 3 if oldv == 1 else oldv   # 旧默认 1 已无意义，改用新默认 3
+        changed = True
+    tpl = tc.get("templates")
+    if isinstance(tpl, dict):
+        for k in ("sr_victory", "sr_challenge", "sr_battle"):
+            if k not in tpl:
+                continue
+            rel = tpl.pop(k)
+            changed = True
+            if k == "sr_victory" and rel:
+                norm = str(rel).replace("\\", "/")
+                # 只删本任务自己的模板图（tm_sr_*），避免误删共享
+                if norm.startswith("templates/tm_sr_"):
+                    try:
+                        (PROJECT_ROOT / norm).unlink()
+                    except OSError:
+                        pass
+    # 兜底：固定路径的 sr_victory 图（若存在）
+    try:
+        p = PROJECT_ROOT / "templates/tm_sr_victory.png"
+        if p.exists():
+            p.unlink()
+    except OSError:
+        pass
     return changed
 
 

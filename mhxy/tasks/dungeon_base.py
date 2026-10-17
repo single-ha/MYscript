@@ -490,7 +490,7 @@ class DungeonBaseTask(Task):
         while not ctx.should_stop():
             rect = self._scene_rect(ctx, regions)
             scene = ctx.window.grab_screen(rect) if rect else None
-            hits = vision.match_multi(scene, tpl, threshold) if scene is not None else []
+            hits = vision.match_multi(scene, tpl, threshold, template_name=self._enter_key(), task_name=self.name, window_rect=rect, diagnose_on_miss=True) if scene is not None else []
             if hits:
                 if pos < len(hits):
                     hx, hy, score = hits[pos]
@@ -559,7 +559,7 @@ class DungeonBaseTask(Task):
                 # _occluded 会拿队员矩形去比对队长的 GA_ROOT → 恒判「被遮」→ 反把队长切前台，
                 # 随后点击落到已失去焦点的队员号上，准备点不进。user 2026-10-09 修。
                 cur = wctx.window.grab_screen(rect) if rect else None
-                hit = vision.match(cur, tpl, threshold) if cur is not None else None
+                hit = vision.match(cur, tpl, threshold, template_name="ready", task_name=self.name, window_rect=rect, diagnose_on_miss=True) if cur is not None else None
                 if hit is not None:
                     sx, sy = (rect[0] if rect else 0), (rect[1] if rect else 0)
                     wctx.mouse.click(sx + hit[0], sy + hit[1])

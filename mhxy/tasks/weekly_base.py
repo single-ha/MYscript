@@ -235,6 +235,7 @@ class WeeklyBaseTask(Task):
         clean_since = None    # 做任务阶段三样轮询标识全无的累计起点
         clock_cool_until = 0.0
         enter_cool_until = 0.0
+        leave_cool_until = 0.0
         last_diag = 0.0
 
         while not ctx.should_stop():
@@ -269,7 +270,24 @@ class WeeklyBaseTask(Task):
                     clean_since = None
                     clock_cool_until = 0.0
                     enter_cool_until = 0.0
+                    leave_cool_until = 0.0
                 else:
+                    # ★ 迷魂塔：检测「离开迷魂塔」（战斗不在时，优先级高于 enter/clock）
+                    leave_tpl = self.flags.get("leave_maze_tower")
+                    if leave_tpl is not None and now >= leave_cool_until:
+                        h_leave = self._match_scene(cur, rect, "leave_maze_tower", threshold)
+                        if h_leave is not None:
+                            ctx.mouse.click(h_leave[0], h_leave[1])
+                            ctx.log(f"检测到「离开迷魂塔」（{h_leave[2]:.3f}），点击后判定本轮结束。", level="hit")
+                            self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
+                            self._back_to_main(ctx)
+                            accepted = False
+                            clean_since = None
+                            fights = 0
+                            clock_cool_until = 0.0
+                            enter_cool_until = 0.0
+                            leave_cool_until = now + 2.0
+                            continue
                     hit = self._match_scene(cur, rect, "enter", threshold)
                     if hit is not None and now >= enter_cool_until:
                         ctx.mouse.click(hit[0], hit[1])

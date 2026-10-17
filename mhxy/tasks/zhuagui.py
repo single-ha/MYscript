@@ -394,7 +394,7 @@ class ZhuaguiTask(Task):
         while not ctx.should_stop():
             scene_rect = self._scene_rect(ctx, regions)
             cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
-            hit = self._match_scene(cur, scene_rect, flag_key, threshold)
+            hit = self._match_scene(cur, scene_rect, flag_key, threshold, diagnose_on_miss=True)
             if hit is not None:
                 ctx.mouse.click(hit[0], hit[1])
                 ctx.log(f"点「{label}」（{hit[2]:.3f}）。", level="hit")
@@ -438,7 +438,7 @@ class ZhuaguiTask(Task):
                     self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
                     continue
 
-            hit = self._match_scene(cur, scene_rect, target_key, threshold)
+            hit = self._match_scene(cur, scene_rect, target_key, threshold, diagnose_on_miss=True)
             if hit is not None:
                 ctx.mouse.click(hit[0], hit[1])
                 ctx.log(f"点「{target_label}」（{hit[2]:.3f}）。", level="hit")
@@ -516,11 +516,11 @@ class ZhuaguiTask(Task):
         rect = self._scene_rect(ctx, regions)
         return ctx.window.grab_screen(rect) if rect else None
 
-    def _match_scene(self, cur, scene_rect, flag_key, threshold):
+    def _match_scene(self, cur, scene_rect, flag_key, threshold, diagnose_on_miss=False):
         tpl = self.flags.get(flag_key)
         if cur is None or tpl is None or scene_rect is None:
             return None
-        m = vision.match(cur, tpl, threshold, template_name=flag_key, task_name=self.name, window_rect=scene_rect)
+        m = vision.match(cur, tpl, threshold, template_name=flag_key, task_name=self.name, window_rect=scene_rect, diagnose_on_miss=diagnose_on_miss)
         if m is None:
             return None
         return (scene_rect[0] + m[0], scene_rect[1] + m[1], m[2])

@@ -272,7 +272,7 @@ class LoginTask(Task):
             rect = ctx.window.rect()
             scene = ctx.window.grab_screen(rect) if rect is not None else None
             if scene is not None:
-                m = vision.match(scene, tpl, threshold, template_name=label, task_name=self.name, window_rect=rect)
+                m = vision.match(scene, tpl, threshold, template_name=label, task_name=self.name, window_rect=rect, diagnose_on_miss=True)
                 if m is not None:
                     x, y = rect[0] + m[0], rect[1] + m[1]
                     if ctx.window.is_foreground() or ctx.window.activate():
@@ -293,7 +293,7 @@ class LoginTask(Task):
         while not ctx.should_stop() and time.time() < end:
             rect = ctx.window.rect()
             scene = ctx.window.grab_screen(rect) if rect is not None else None
-            if scene is not None and vision.match(scene, tpl, threshold, template_name=label, task_name=self.name, window_rect=rect) is not None:
+            if scene is not None and vision.match(scene, tpl, threshold, template_name=label, task_name=self.name, window_rect=rect, diagnose_on_miss=True) is not None:
                 return True
             self._interruptible_sleep(ctx, poll)
         return False

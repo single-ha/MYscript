@@ -4,7 +4,8 @@
 
 按任务的 `CALIBRATION` spec 驱动渲染（见 tasks/base.py Task.CALIBRATION），三类卡片：
 1. 区域与按钮：框选区域 → 存为相对游戏窗口的 [x,y,w,h]，写入 tc["regions"][key]。
-2. 标志模板：框选并裁图 → 存成 templates/tm_<key>.png，写入 tc["templates"][key]。
+2. 标志模板：框选并裁图 → 存成 templates/tm_<key>.png（周常等共用同名 key 的任务按任务名加前缀，
+   路径由 config.task_template_rel 给出），写入 tc["templates"][key]。
 3. 监控清单（仅抢关注等 watchlist=True 的任务）：框选装备图标+名字加入清单。
 
 框选时把本助手窗口透明化，确保截图里只有游戏画面。新增任务无需改本文件，只要在 Task 上写 CALIBRATION。
@@ -158,7 +159,7 @@ def calibrate_template_direct(app, task_name, key, name, toast=None, out_rel=Non
         if toast:
             toast("截图失败，请重试。", T.DANGER)
         return False
-    rel_path = out_rel or f"templates/tm_{key}.png"
+    rel_path = out_rel or cfg_mod.task_template_rel(task_name, key)
     if not vision.save_image(rel_path, crop):
         if toast:
             toast("保存截图失败。", T.DANGER)
@@ -486,7 +487,7 @@ class CalibrateDialog(ctk.CTkToplevel):
         if crop is None or crop.size == 0:
             self._toast("截图失败，请重试。", T.DANGER)
             return
-        rel_path = f"templates/tm_{key}.png"
+        rel_path = cfg_mod.task_template_rel(self.task_name, key)
         if not vision.save_image(rel_path, crop):
             self._toast("保存模板图失败。", T.DANGER)
             return

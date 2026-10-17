@@ -37,7 +37,7 @@ from . import scan
 #   open : 点物品方式 left/right/double；None=用 loop.open_item_click（缺省 right）。
 #   steps: 逐步在【整窗】里找并点的按钮模板；每步 {tpl 模板键, label 显示名, optional 可选(缺了跳过),
 #          button 点法(默认 left), wait 点后等待秒(缺省 step_wait_sec)}。
-#   confirm: True 时走旧式 confirm_button 确认框（丢弃/旧出售）；显式步骤序列的出售不用它。
+#   confirm: True 时走旧式 discard_confirm_button 确认框（丢弃）；显式步骤序列的出售不用它。
 #   close: panel=发 close_panel(ESC) 关菜单/确认框——用于「会一直开着等你 ESC」的右键菜单（使用/丢弃）；
 #          right =在窗口中心右键关弹窗——用于「会一直开着等你右键」的弹窗（摆摊出售窗）；
 #          auto  =动作末步会【自我关闭】其窗口（如商会出售点「出售」后窗口自动关回包裹）→ 默认**啥都不做**，
@@ -82,7 +82,7 @@ ACTION_LABELS = {k: v["label"] for k, v in _ACTION_SPECS.items()}
 
 # 所有动作步骤会用到的按钮模板键（含旧式确认框，及整理末尾点的游戏「整理」按钮）——__init__ 据此一次性加载。
 _ALL_BTN_KEYS = {s["tpl"] for spec in _ACTION_SPECS.values() for s in spec["steps"]}
-_ALL_BTN_KEYS.add("confirm_button")
+_ALL_BTN_KEYS.add("discard_confirm_button")
 _ALL_BTN_KEYS.add("sort_button")   # 游戏自带「整理」按钮：实战整理跑完点它把背包重新排列收拢（非任何动作的步骤）
 
 
@@ -94,13 +94,13 @@ def action_label(action):
 
 def required_templates(action):
     """该动作【必需】标定的按钮模板，返回 [(tpl_key, 中文名), ...]。
-    可选步骤(optional，如「更多」)不计；confirm 动作追加 confirm_button。供 preflight 校验缺哪些标定。"""
+    可选步骤(optional，如「更多」)不计；confirm 动作追加 discard_confirm_button。供 preflight 校验缺哪些标定。"""
     spec = _ACTION_SPECS.get(action)
     if not spec:
         return []
     out = [(s["tpl"], s["label"]) for s in spec["steps"] if not s.get("optional")]
     if spec.get("confirm"):
-        out.append(("confirm_button", "确定"))
+        out.append(("discard_confirm_button", "确定"))
     return out
 
 
@@ -339,16 +339,16 @@ class InventoryOrganizer:
         return False
 
     def _confirm_if_present(self):
-        if self._btn.get("confirm_button") is None:
+        if self._btn.get("discard_confirm_button") is None:
             return
         # 复用统一的「带超时轮询」：在 confirm_timeout_sec 内反复找「确定」，命中即点。
-        hit = self._find_full_wait("confirm_button", self.loop.get("confirm_timeout_sec", 6))
+        hit = self._find_full_wait("discard_confirm_button", self.loop.get("confirm_timeout_sec", 6))
         if hit is not None:
             self.ctx.mouse.click(hit[0], hit[1])
             self.ctx.log(f"点「确定」确认（{hit[2]:.2f}）。", level="hit")
             return
         # 确认框确实弹了但没匹配到「确定」：告警，靠 _do_action 收尾的 close_panel 关掉模态，不留模态继续滚。
-        self.ctx.log("等「确定」确认超时（没匹配到确认按钮），将关菜单跳过该物品（请检查 confirm_button 标定）。",
+        self.ctx.log("等「确定」确认超时（没匹配到确认按钮），将关菜单跳过该物品（请检查 discard_confirm_button 标定）。",
                      level="warn")
 
     def _find_full(self, tpl_key):

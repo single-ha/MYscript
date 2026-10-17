@@ -30,7 +30,7 @@ class SecretRealmConfig(ctk.CTkFrame):
         txt = ctk.CTkFrame(head, fg_color="transparent")
         txt.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(txt, text="秘境降妖", font=self.fonts["h2"], text_color=T.TEXT).pack(anchor="w")
-        ctk.CTkLabel(txt, text="开活动→参加→挑战→盯「进入战斗」续战，可连跑", font=self.fonts["small"],
+        ctk.CTkLabel(txt, text="开活动→参加→挑战→盯「进入战斗」续战，战满即退", font=self.fonts["small"],
                      text_color=T.TEXT_DIM).pack(anchor="w", pady=(2, 0))
         btns = ctk.CTkFrame(head, fg_color="transparent")
         btns.grid(row=0, column=1, sticky="e")
@@ -49,8 +49,9 @@ class SecretRealmConfig(ctk.CTkFrame):
         self.lbl_calib.pack(fill="x", padx=16, pady=(8, 0))
         bind_wraplength(self.lbl_calib)
 
-        self.var_runs, _ = param_entry(card, self.fonts, "连跑轮数", "3", self._on_max_runs,
-                                       tooltip="连续挑战「进入战斗」直到打到第几轮就停")
+        self.var_runs, _ = param_entry(card, self.fonts, "难度关卡战斗次数", "3", self._on_battle_rounds,
+                                       tooltip="累计点「进入战斗」达这么多次、且已是非战斗态，就点「离开」收尾"
+                                               "（每号只进一次秘境）")
         self.var_time, _ = param_entry(card, self.fonts, "时间上限（分钟）", "30", self._on_time_limit,
                                        tooltip="跑满这么久即收尾停（0=不限时）")
 
@@ -63,7 +64,7 @@ class SecretRealmConfig(ctk.CTkFrame):
         self.app.cfg = cfg_mod.load_config()
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         loopc = tc.get("loop", {})
-        self.var_runs.set(str(loopc.get("max_runs", 3)))
+        self.var_runs.set(str(loopc.get("battle_rounds", 3)))
         self.var_time.set(str(loopc.get("time_limit_min", 30)))
         regions = tc.get("regions", {})
         templates = tc.get("templates", {})
@@ -76,8 +77,8 @@ class SecretRealmConfig(ctk.CTkFrame):
         self.lbl_calib.configure(text=txt, text_color=color)
 
     # ---- 参数保存（改动即保存）----
-    def _on_max_runs(self, raw):
-        self._save_loop(raw, "max_runs", lambda v: max(1, int(float(v))), "3", self.var_runs)
+    def _on_battle_rounds(self, raw):
+        self._save_loop(raw, "battle_rounds", lambda v: max(1, int(float(v))), "3", self.var_runs)
 
     def _on_time_limit(self, raw):
         self._save_loop(raw, "time_limit_min", lambda v: max(0, int(float(v))), "30", self.var_time)
