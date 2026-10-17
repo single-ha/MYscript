@@ -68,6 +68,10 @@ class TuoyingPage(ctk.CTkFrame):
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
                       command=self._open_tuoying_calibrate).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(tools, text="离线预览描摹…", font=self.fonts["body"], height=36, width=136,
+                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
+                      border_width=1, border_color=T.BORDER,
+                      command=self._open_trace_preview).pack(side="left", padx=(0, 8))
         ctk.CTkButton(tools, text="刷新配置", font=self.fonts["body"], height=36, width=104,
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
@@ -87,10 +91,11 @@ class TuoyingPage(ctk.CTkFrame):
         self.lbl_ready = ctk.CTkLabel(txt, text="", font=self.fonts["body"], text_color=T.TEXT_DIM, anchor="w")
         self.lbl_ready.pack(fill="x", anchor="w", pady=(4, 0))
         sub = ctk.CTkLabel(txt, text="就绪要求：框选好「拓印描摹绘制区」+ 标定「上传」按钮即可全自动"
-                                     "（描→上传→确认界面关闭）；「界面标题」可选但建议标，用于上传后自动"
-                                     "确认界面已关闭（还会重现就多描多传几遍）。"
-                                     "对所选窗口里的第一个号操作：把拓印临摹界面调到前台再点「开始拓印」，"
-                                     "脚本会沿图案描一遍并自动点「上传」、确认界面关闭。",
+                                     "（描→上传→判定界面关闭/新图案）。强烈建议再标一个「未完成状态按钮」"
+                                     "（临摹未完成时按钮的样子；描完会变「完成」态）：点「上传」后拓印弹窗通常"
+                                     "不会关，靠这个按钮能准确判定「新图案已生成、要描下一遍」，比等标题消失快得多。"
+                                     "对所选窗口里的第一个号操作：把拓印临摹界面调到前台再点「开始拓印」。"
+                                     "绘制区要**尽量贴着图案所在的纸面框**（别把对话框边框/分割线框进来）。",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub.pack(fill="x", anchor="w", pady=(2, 0))
         bind_wraplength(sub)
@@ -104,7 +109,9 @@ class TuoyingPage(ctk.CTkFrame):
 
         tip = ctk.CTkLabel(c, text="说明：拓印只由刷副本的队长窗口触发，队员不弹；自动临摹会认图案、描两遍并点上传，"
                                    "是全部副本共用的共享能力。它和整理背包一样是「共享能力」，平时不用特意来这个页——"
-                                   "只有首次标定、或想验证描摹手感时才需要这里。",
+                                   "只有首次标定、或想验证描摹手感时才需要这里。"
+                                   "认不出图案时会把调试图（frame/mask/skel/strokes/trace）自动存到 "
+                                   "captures_debug/拓印描摹/，也可点「离线预览描摹…」拿任意截图先离线验证。",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         tip.pack(fill="x", padx=16, pady=(0, 14))
         bind_wraplength(tip)
@@ -122,10 +129,12 @@ class TuoyingPage(ctk.CTkFrame):
         area_ok = bool(reg.get("tuoying_area"))
         up_ok = bool(tpl.get("tuoying_upload"))
         title_ok = bool(tpl.get("tuoying_title"))
+        todo_ok = bool(tpl.get("tuoying_todo"))
         ready = area_ok and up_ok
         self.lbl_ready.configure(
             text=f"绘制区：{'● 已框选' if area_ok else '○ 未标定'}；上传按钮：{'● 已标定' if up_ok else '○ 未标定'}"
-                 + (f"；标题模板：{'●' if title_ok else '○'}(可选建议)" if title_ok else "；标题模板：○(可选建议)")
+                 + f"；未完成状态按钮：{'●' if todo_ok else '○'}(可选建议)"
+                 + f"；标题模板：{'●' if title_ok else '○'}(可选建议)"
                  + ("　✓ 可全自动临摹" if ready else "　（需框选绘制区 + 上传按钮）"),
             text_color=T.SUCCESS if ready else T.WARN)
 
@@ -148,6 +157,46 @@ class TuoyingPage(ctk.CTkFrame):
             self.var_rounds.set(str(val))
         except Exception:
             pass
+
+    def _open_trace_preview(self):
+        """离线预览描摹：选一张拓印界面截图，跑一遍图案提取、把诊断图落 captures_debug（按日期），
+        控制台/日志只给摘要（ASCII 缩略图在命令行工具 `python -m mhxy.tools.trace_preview` 里看）。"""
+        import os
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="选择一张拓印临摹界面截图",
+            filetypes=[("图片", "*.png *.jpg *.jpeg *.bmp"), ("所有文件", "*.*")])
+        if not path:
+            return
+        self._log_line("开始离线预览描摹（不驱动鼠标）…", "info")
+
+        def _work():
+            import io
+            try:
+                from ...tools import trace_preview
+                frame, src = trace_preview.resolve_client_frame()
+                buf = io.StringIO()
+                summary = trace_preview.run(path, ascii_width=0, stream=buf, client_frame=frame)
+                lines = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+                lines.append(f"已补偿窗口边框（{src}）：客户区偏移 -{int(frame[0])},-{int(frame[1])}"
+                             f"（截图不含标题栏/边框时用；游戏窗口在跑会按实测值）。")
+                files = summary.get("files") or []
+                if files:
+                    d = os.path.dirname(files[0])
+                    lines.append(f"预览完成：识别到 {summary['strokes']} 条笔画。"
+                                 f"诊断图已写入：{d}")
+                else:
+                    lines.append(f"预览完成：识别到 {summary['strokes']} 条笔画（未写出诊断图）。")
+                lines.append("打开看：*_mask(前景) / *_skel(骨架) / *_strokes(识别出的笔画) / *_trace(实际走笔)。"
+                             "若不对，把 *_strokes 的包围盒或哪几笔错了告诉开发者调阈值。")
+                level = "hit" if summary["strokes"] else "warn"
+                self.app.after(0, lambda: [self._log_line(m, level if m.startswith("预览完成") else "info")
+                                           for m in lines])
+            except Exception as e:
+                self.app.after(0, lambda: self._log_line(f"离线预览失败：{e}", "error"))
+
+        import threading
+        threading.Thread(target=_work, daemon=True).start()
 
     def _open_tuoying_calibrate(self):
         """打开拓印标定（共享命名空间 tuoying），按 _tuo_cal_dialog 去重。"""

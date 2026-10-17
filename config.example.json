@@ -492,7 +492,8 @@
             },
             "templates": {
                 "tuoying_title": null,
-                "tuoying_upload": null
+                "tuoying_upload": null,
+                "tuoying_todo": null
             }
         },
         "login": {

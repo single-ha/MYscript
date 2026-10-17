@@ -23,7 +23,7 @@
        （曾把队长也放进等待队列 → 永远等不齐 → 每次都超时重试 → 最后一律中止，user 2026-09-28）；
        ⚠ 队长窗口的准备弹窗里**没有「准备」按钮**（user 2026-10-11 拍板），识别「准备已弹出」靠
        **弹窗本身的标志** `ready_popup`（可选标定），它只作信号、不点任何人。
-       「拓印弹窗」→ 临摹两遍+上传（`_auto_trace`）→ **队长重新点「进入」**（第一次进入被拓印拦截，
+       「拓印弹窗」→ 临摹+上传（`_auto_trace`，按「未完成状态按钮」判定要不要描下一遍、直到界面关闭）→ **队长重新点「进入」**（第一次进入被拓印拦截，
        描完回到列表再点一次）→ 再等弹窗；都没弹 → 队员窗可能弹准备 → 准备轮询兜底。
        某队员准备超时 → 返回队长窗口重新点「进入」（本基类在 enter+ready 外套一层重试）。
   ⑤ 「拓印」临摹弹窗（user 2026-09-08 反馈）：点「进入」后队长窗口【偶发】弹「拓印」临摹界面
@@ -33,7 +33,7 @@
      普通副本路径顺带补「已进本验证（settlement/跳过/小闹钟任一出现）+ 超时重试」，拓印掩盖的失败不再傻等。
      标定位置（全部在「工具」页「拓印」里标，存 tasks.tuoying，所有副本共用；只读这份新值，
      旧 tasks.shared / tasks.dungeon 里残留的旧值一律不沿用）：
-     tuoying_title / tuoying_upload 模板存 tasks.tuoying.templates；tuoying_area 绘制区存 tasks.tuoying.regions
+     tuoying_title / tuoying_upload / tuoying_todo 模板存 tasks.tuoying.templates；tuoying_area 绘制区存 tasks.tuoying.regions
      （run() 里单独并入本任务 regions）。
 
 子类只写：name / title / cat。其余完全通用。
@@ -72,7 +72,7 @@ DUNGEON_NS = "dungeon"                       # 共享配置命名空间（tasks.
 SHARED_TPL_KEYS = ["entry_common", "entry_xiashi", "join", "select",
                    "xiashi_tab", "enter_dungeon", "ready", "ready_popup",
                    "skip", "skip_new", "clock", "enter",
-                   "settlement", "tuoying_title", "tuoying_upload", "battle_flag"]
+                   "settlement", "tuoying_title", "tuoying_upload", "tuoying_todo", "battle_flag"]
 
 # 标定向导/就绪判据用的共享标定 spec（一次标定所有副本）
 DUNGEON_CALIBRATION = {
@@ -619,7 +619,8 @@ class DungeonBaseTask(Task):
           队长点「进入」后，留在【队长窗口】等「准备弹窗」或「拓印弹窗」二选一（互斥，弹一不弹二）——
           · 「准备弹窗」（识别靠弹窗本身的标志 `ready_popup`，**不是「准备」按钮**——队长窗口的
             准备弹窗里没有准备按钮）→ 轮询各队员窗口点侠士「准备」按钮 → 继续进本；
-          · 「拓印弹窗」→ 临摹图案→上传→临摹图案→上传（`_auto_trace` 描两遍）→ **队长重新点「进入」**
+          · 「拓印弹窗」→ 临摹图案→上传→（按「未完成状态按钮」判定要不要再描一遍，直到界面关闭）
+            （`_auto_trace`）→ **队长重新点「进入」**
             （第一次进入被拓印拦截，描完回到列表再点一次）→ 再等弹窗，直到走准备路或直接进本；
           · 都没弹（队长窗没等到）→ 队员窗口可能弹了准备（队长窗不一定弹）→ 准备轮询兜底。
 
@@ -663,7 +664,7 @@ class DungeonBaseTask(Task):
         """在【队长窗口】等「准备弹窗」或「拓印弹窗」二选一（互斥）依次处置：
           · "ready" → 轮询各队员点「准备」按钮（准备弹窗识别靠 `ready_popup` 弹窗标志，见
             _wait_captain_enter_popup）→ 返回 "ok"（可进 verify）；队员准备未收齐 → 返回 "retry"（外层重进）。
-          · "tuoying" → 临摹两遍+上传（_auto_trace 内部描两遍）→ **队长重新点「进入」**
+          · "tuoying" → 临摹+上传（_auto_trace 内部按「未完成状态按钮」判定要不要再描一遍、直到界面关闭）→ **队长重新点「进入」**
             → 再等弹窗，循环到走准备路或都没弹（队员准备兜底）。
           · None（队长窗在 wait_sec 内没等到弹窗）→ 队员窗可能弹了准备 → 准备轮询兜底。
         返回 "ok" / "retry" / "abort"（反复弹窗收不了口则中止）。"""
@@ -743,6 +744,13 @@ class DungeonBaseTask(Task):
             return self._wait_tuoying_gone(ctx, loop, regions, threshold)
         max_rounds = self._tuoying_max_rounds(ctx, loop)
         confirm_sec = loop.get("tuoying_gone_confirm_sec", 1.2)
+        # 图案提取参数在拓印工具自己的命名空间（tasks.tuoying.loop.tuoying_*），与工具页单独跑同源。
+        tuo_loop = (((ctx.cfg or {}).get("tasks", {}) or {}).get("tuoying", {}) or {}).get("loop", {}) or {}
+        params = scribble.params_from_loop(tuo_loop)
+        polarity = scribble.polarity_from_loop(tuo_loop)
+        save_debug = scribble.debug_enabled(tuo_loop)
+        lateral = loop.get("tuoying_lateral", 3.0)
+        sample_step = loop.get("tuoying_sample_step", 5.0)
         for rnd in range(1, max_rounds + 1):
             if ctx.should_stop():
                 return False
@@ -758,12 +766,19 @@ class DungeonBaseTask(Task):
                             level="warn")
                     return self._wait_tuoying_gone(ctx, loop, regions, threshold)
                 ok = scribble.trace_pattern(ctx.mouse, rect, frame,
-                                        lateral=loop.get("tuoying_lateral", 3.0),
-                                        sample_step=loop.get("tuoying_sample_step", 5.0),
-                                        speed=1.0)
+                                        lateral=lateral,
+                                        sample_step=sample_step,
+                                        speed=1.0, polarity=polarity, params=params)
                 if not ok:
                     ctx.log("⚠ 没能从画面识别出图案笔画——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
                             level="warn")
+                    if save_debug:
+                        files = scribble.dump_failure(scribble.debug_dir(),
+                                                      scribble.debug_tag("tuoying_nopat"),
+                                                      frame, params=params, polarity=polarity,
+                                                      lateral=lateral, sample_step=sample_step)
+                        if files:
+                            ctx.log(f"已存识别失败调试图（frame/mask/skel/strokes/trace）：{files[0]}", level="info")
                     return self._wait_tuoying_gone(ctx, loop, regions, threshold)
                 if _pass == 0:
                     time.sleep(self._jitter(0.15, ctx))
@@ -772,17 +787,55 @@ class DungeonBaseTask(Task):
             if not self._click_tuoying_upload(ctx, loop, regions, threshold):
                 ctx.log("⚠ 描完没点到「上传」，请手动临摹并点「上传」；脚本会等界面消失后自动继续。", level="warn")
                 return self._wait_tuoying_gone(ctx, loop, regions, threshold)
-            # 上传后：等界面消失，并在确认窗口内盯住「不再重现」才算真过。
-            # 拓印实际要描两遍：上传一次后图案相同的临摹界面会再次弹出，须再来一轮。
-            if self._tuoying_confirmed_gone(ctx, loop, regions, threshold,
-                                            confirm_sec=confirm_sec,
-                                            upload_timeout=loop.get("tuoying_upload_sec", 6.0)):
+            # 上传后判定：新图案已生成（「未完成」状态按钮重现）→ 接着描下一遍；
+            # 服务器判定通过、界面关闭 → 完成。带「未完成状态按钮」时用它驱动（比等标题消失快也更准）。
+            res = self._tuoying_await_next(ctx, loop, regions, threshold,
+                                           confirm_sec=confirm_sec,
+                                           upload_timeout=loop.get("tuoying_upload_sec", 6.0))
+            if res == "closed":
                 ctx.log("拓印临摹通过，界面已关闭。", level="hit")
                 return True
-            ctx.log(f"拓印界面在上传后再次出现（可能需要拓印多遍），进入第 {rnd + 1} 遍…", level="warn")
+            if res == "ready":
+                ctx.log(f"上传后检测到「未完成状态按钮」——新图案已生成，进入第 {rnd + 1} 遍…", level="hit")
+                self._interruptible_sleep(ctx, self._jitter(loop.get("tuoying_ready_settle_sec", 0.5), ctx))
+            else:
+                ctx.log(f"上传后未判断出新图案或界面关闭（可能没识别到），进入第 {rnd + 1} 遍…", level="warn")
         ctx.log("⚠ 自动描完多遍后拓印界面仍会重现（校验可能没通过）——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
                 level="warn")
         return self._wait_tuoying_gone(ctx, loop, regions, threshold)
+
+    def _tuoying_await_next(self, ctx, loop, regions, threshold, confirm_sec, upload_timeout):
+        """上传后判定：新图案已生成（「未完成状态按钮」重现）→ "ready"（接着描下一遍）；
+        服务器判定通过、界面关闭 → "closed"（完成）；超时都判断不出 → "timeout"。
+
+        没标「未完成状态按钮」时退回旧判据（等标题消失，见 _tuoying_confirmed_gone）——但拓印弹窗上传后
+        通常**不关**、标题一直在，故旧判据基本只会超时（=再描一遍）。"""
+        todo_tpl = self.flags.get("tuoying_todo")
+        if todo_tpl is None:
+            return "closed" if self._tuoying_confirmed_gone(ctx, loop, regions, threshold,
+                                                             confirm_sec=confirm_sec,
+                                                             upload_timeout=upload_timeout) else "timeout"
+        title_tpl = self.flags.get("tuoying_title")
+        ready_sec = loop.get("tuoying_ready_sec", 10.0)
+        scene_rect = self._scene_rect(ctx, regions)
+        deadline = time.time() + ready_sec
+        no_gone_since = None
+        while not ctx.should_stop():
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
+            if self._match_scene(cur, scene_rect, "tuoying_todo", threshold) is not None:
+                return "ready"
+            if title_tpl is not None:
+                if self._match_scene(cur, scene_rect, "tuoying_title", threshold) is None:
+                    if no_gone_since is None:
+                        no_gone_since = time.time()
+                    elif time.time() - no_gone_since >= confirm_sec:
+                        return "closed"
+                else:
+                    no_gone_since = None
+            if time.time() > deadline:
+                return "timeout"
+            self._interruptible_sleep(ctx, self._jitter(0.25, ctx))
+        return "timeout"
 
     def _tuoying_confirmed_gone(self, ctx, loop, regions, threshold, confirm_sec, upload_timeout):
         """上传后判定拓印界面「真消失」：先等界面不再出现（upload_timeout 内），
@@ -1044,7 +1097,7 @@ class DungeonBaseTask(Task):
         tasks.tuoying.templates（「工具」页「拓印」里标定，所有副本共用）——旧 tasks.shared / tasks.dungeon
         里残留的 tuoying 值一律不沿用，先从合并模板里摘干净再只填入新值。"""
         templates = dict(tc.get("templates", {}) or {})
-        for k in ("tuoying_title", "tuoying_upload"):
+        for k in ("tuoying_title", "tuoying_upload", "tuoying_todo"):
             templates.pop(k, None)
         tasks = (ctx.cfg or {}).get("tasks", {}) or {}
         tuo_t = ((tasks.get("tuoying", {}) or {}).get("templates") or {})

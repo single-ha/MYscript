@@ -41,6 +41,12 @@ def get_captures_dir(debug: bool = False):
     return CAPTURES_DEBUG_DIR if debug else CAPTURES_DIR
 
 
+def dated_path(path):
+    """返回该路径按日期归档后的**真实**落盘路径（captures/captures_debug 下会插入 YYYY-MM-DD 子目录）。
+    与 save_image 实际写入的位置一致，供日志/返回给调用方显示。"""
+    return _with_daily_dir(_abspath(path))
+
+
 def load_template(path):
     """读取模板图（兼容中文路径）。失败返回 None。"""
     p = _abspath(path)

@@ -310,7 +310,9 @@ class AppreciationTask(Task):
         cur = ctx.window.grab_screen(rect)
         hit = self._match_region(cur, rect, "appr_heart", threshold)
         if hit is not None:
-            # 二次确认：再抓一帧同区域，心形若在 ±3px 内才点；否则视为已滚动、下一轮重试
+            # 先等 confirm_delay_sec（默认 1s，带抖动）再做二次确认：给画面一点落定时间，
+            # 再抓一帧同区域，心形若仍在 ±3px 内才点；否则视为画面已滚动/未落定，下一轮重试。
+            self._interruptible_sleep(ctx, self._jitter_at_least(float(loop.get("confirm_delay_sec", 1.0)), ctx))
             confirm_frame = ctx.window.grab_screen(rect)
             hit2 = self._match_region(confirm_frame, rect, "appr_heart", threshold)
             if hit2 is None or abs(hit2[0] - hit[0]) > 3 or abs(hit2[1] - hit[1]) > 3:

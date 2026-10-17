@@ -36,7 +36,7 @@ SHARED_REGION_LABELS = {"activity_list": "活动列表区域", "bag_list": "背�
 # 拓印临摹资产（存 tasks.tuoying，在「工具」页「拓印」里标定，所有副本共用）：
 # 点「进入」偶发的「拓印」临摹弹窗（队长窗）的标题/上传按钮模板。可选：标了刷副本遇弹窗自动描摹，
 # 不标遇弹窗转手动。读方 = dungeon_base._load_flags / 拓印页，只读 tasks.tuoying。
-TUOYING_TPL_KEYS = ("tuoying_title", "tuoying_upload")
+TUOYING_TPL_KEYS = ("tuoying_title", "tuoying_upload", "tuoying_todo")
 
 # 主界面判断资产（tasks.shared.templates，在「任务配置」页「全局共享标定」卡里标定）：商城图标 / 活动图标。
 # 判断「当前界面是否是主界面」= 在窗口画面里能否找到商城图标（ui/ui_state.is_main_screen）。可选：不标则
@@ -171,9 +171,13 @@ enter_dungeon                选择副本对话框里的「进入」按钮（普
             "tuoying_lateral": 3.0,      # 拓印临摹：随描轨迹垂直于笔画走向的横向偏移上限(像素)，笔迹加宽更易达标
             "tuoying_sample_step": 5.0,  # 拓印临摹：骨架采样间距(像素)，越小越贴笔画(也更慢)
             "tuoying_stripe_spacing": 8.0,  # 已废弃（拓印改骨架描摹）——保留兼容旧配置读取
-            "tuoying_upload_sec": 6.0,   # 点完「上传」后等拓印界面关闭的超时；超时=自动描未被认可→转手动
+            "tuoying_upload_sec": 6.0,   # 点「上传」后等按钮出现/消失的超时（点上传按钮的轮询用）
             "tuoying_gone_confirm_sec": 1.2,  # 判定拓印界面「真消失」的确认窗口：消失后再持续观察这么久都不重现，
                                           #   才算通过（防止上传后界面一闪即认定成功、实则第二遍还等着描）
+            "tuoying_ready_sec": 10.0,   # 点「上传」后等「未完成状态按钮」重现(新图案已生成→接着描下一遍)
+                                          #   或界面关闭(服务器判定通过→完成)的时长；超时都判断不出→再描一遍。
+                                          #   需标定「未完成状态按钮」才生效；没标则退回等标题消失的旧判据。
+            "tuoying_ready_settle_sec": 0.5,  # 检测到「未完成状态按钮」重现(=新图案就绪)后、开描前的安定等待
             "enter_check_sec": 10.0,     # 普通副本点「进入」后验证已进本的时长（出现结算/跳过剧情等即算进）；超时重试点「进入」
             "scroll_step": -3,           # 活动列表每次滚轮格数(负=向下翻)
             "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
@@ -667,6 +671,8 @@ DEFAULT_CONFIG = {
                 "target_clicks": 5,          # 点击心形图案的目标次数，点满即停
                 "heart_timeout_sec": 120,    # 鉴赏环节超时（秒）：这么久没点满也收尾该号
                 "post_click_sec": 1.0,       # 每点中心形图案后的间隔（秒，带抖动），用户拍板：每次点击延迟 1s
+                "confirm_delay_sec": 1.0,    # 匹配到心形图案后、做二次确认前的延迟（秒，带抖动）：先等 1s 再抓帧复核
+                                             #   位置是否稳定（防画面滚动/动画未落定就把点落到了旧坐标上）
                 "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
                 "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
                 "scroll_wait_sec": 0.8,      # 当前屏没匹配到心形图案后，等这么久才开始滚动（防刚点完画面未落定就滚）
@@ -865,6 +871,24 @@ DEFAULT_CONFIG = {
                 "tuoying_max_rounds": 2,     # 临摹最大轮次：一次「上传」后界面可能再次弹出（要描两次才过），
                                              #   每轮=描+上传+确认界面不再重现；超过轮数仍弹→转手动不复描。
                                              #   ⚠ 归拓印工具自己（进本逻辑直接读这份，dungeon.loop 不再放）
+                # 图案提取参数（core/scribble）：拓印图案对比低、又嵌在对话框里，用「局部对比双极性」识别、
+                # 剔框线/直线；坏画面时按下图调这些即可（标定不准也先看调试图）。详见 scribble.DEFAULTS。
+                "tuoying_bg_kernel": 41,     # 局部背景中值核(像素)：越大越只压大面积渐变、保留中等笔画
+                "tuoying_polarity": "dark",  # 图案极性：深墨画浅底=dark(默认)/浅线画深底=light/两侧都试=auto
+                "tuoying_ink_contrast": 12.0,  # 绝对对比下限(灰度差)：低于此不算笔画
+                "tuoying_ink_frac": 0.25,    # 相对局部std比例：阈值=max(ink_contrast, frac*std)
+                "tuoying_min_area_ratio": 0.0004,  # 连通域面积下限/画幅面积（滤噪点，随框大小自适应）
+                "tuoying_skel_max_dim": 480,  # 骨架化前长边上限（超了先缩放再算，坐标还原；纯Python全窗会卡）
+                "tuoying_drop_straight": True,  # 丢「近似完美直线且几乎横贯整幅」的笔画（残留框线/网格）
+                "tuoying_straight_ratio": 0.99,  # 直线度阈值：|端点距|/路径长 ≥ 此值视为直线（放很严）
+                "tuoying_straight_len_frac": 0.8,  # 且长度 ≥ 此比例·max(w,h) 才算框线丢弃
+                "tuoying_spur_len": 6,       # 骨架毛刺剪枝长度(像素)：剪掉短分叉/噪点枝，避免笔画数被撑爆
+                "tuoying_stroke_min_len": 4,  # 单条笔画最短采样点数：短于此的碎片当噪点丢弃
+                "tuoying_max_strokes": 14,   # 笔画数上限（游戏要求「少于15笔」）：超了合并最近端点直到 < 上限
+                "tuoying_save_debug": True,  # 识别失败时把 frame/mask/skel/strokes/trace 图落 captures_debug
+                "tuoying_client_frame": [8, 31],  # 离线预览的边框补偿默认值(dx,dy)：截图是「客户区」(不含标题栏/
+                                             #   左边框)时，把 config 里的绘制区减去它才对齐。游戏窗口在跑时用
+                                             #   ClientToScreen 实测覆盖此值；没跑就用这份兜底（16:9 100%缩放≈8,31）。
             },
             "regions": {
                 "tuoying_area": None,    # 「拓印」临摹界面的图案绘制区（留空=检测到拓印时无法自动描、转手动）
@@ -872,6 +896,8 @@ DEFAULT_CONFIG = {
             "templates": {
                 "tuoying_title": None,   # 「拓印」临摹界面的标题/标志（点「进入」后被它拦截时识别用）
                 "tuoying_upload": None,  # 拓印临摹完要点的「上传」按钮
+                "tuoying_todo": None,    # 「未完成状态按钮」：临摹未描完时该按钮呈此样子；描完变「完成」态。
+                                         #   点「上传」后新图案生成时它重现 → 据此判定「新图案已就绪、描下一遍」。
             },
         },
 

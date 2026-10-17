@@ -31,6 +31,8 @@ _user32.WindowFromPoint.restype = ctypes.wintypes.HWND
 _user32.WindowFromPoint.argtypes = [ctypes.wintypes.POINT]
 _user32.GetAncestor.restype = ctypes.wintypes.HWND
 _user32.GetAncestor.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint]
+_user32.ClientToScreen.argtypes = [ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.POINT)]
+_user32.ClientToScreen.restype = ctypes.wintypes.BOOL
 GA_ROOT = 0x2
 
 _kernel32 = ctypes.windll.kernel32
@@ -372,6 +374,27 @@ class GameWindow:
         if sr is None:
             return None
         return (sr[0] + sr[2] // 2, sr[1] + sr[3] // 2)
+
+    def client_frame(self):
+        """返回 (dx, dy)：窗口【客户区左上角】相对【窗口 rect 左上角】的偏移 = 左边框宽 + 标题栏高。
+
+        用途：标定把区域存成「相对整个窗口 rect（含标题栏/边框）」的坐标（见 calibrate_dialog），
+        而离线预览常拿到的是**客户区截图**（不含标题栏/边框）——二者原点差这一截。把存储区域减去
+        本偏移即可映射到客户区截图的像素坐标。取不到返回 None。
+        """
+        if not self._win:
+            return None
+        try:
+            hwnd = int(self._win._hWnd)
+            wl, wt = self._win.left, self._win.top
+        except Exception:
+            return None
+        if not hwnd:
+            return None
+        pt = ctypes.wintypes.POINT(0, 0)
+        if not _user32.ClientToScreen(hwnd, ctypes.byref(pt)):
+            return None
+        return (pt.x - (wl + self.offset[0]), pt.y - (wt + self.offset[1]))
 
 
 # ---- 多窗口枚举与目标选择（多开/选择窗口基础特性）----
