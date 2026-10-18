@@ -68,12 +68,15 @@ mhxy/
                       daily._organize_between 在换下一个任务前调用；单个任务执行中绝不触发，曾每 tick/切前台检测被打断）——rotation 的
                       between_steps 钩子已不再挂这功能
     account_history.py 账号库（登录游戏用）：10 个固定物理槽 + 有序登录队列（最多 5 个），纯逻辑零 GUI；详见文件 docstring
+    tuoying_flow.py TuoyingFlow mixin：拓印临摹弹窗的共享编排（探测「拓印」界面→沿图案描→点「上传」→必要时描两遍，
+                    直到界面消失）；刷副本(dungeon_base)与宝图(treasure_map)共用，资产/参数只读 tasks.tuoying；详见文件 docstring
   tasks/  可插拔任务
     base.py     Task 基类 + 注册表（register/get_task/all_tasks）+ _make_rotation()（包多开轮转）+ dungeon_tasks()
     sniper.py   SniperTask（抢关注；内部名仍叫 sniper，tasks.sniper 不改名）：preflight() 自检 + run() 主循环；刷新=每轮重进货架 _enter_shelf()
     escort.py        EscortTask（运镖）：开活动→参加→押送普通镖银→循环押满次数
     treasure_map.py  TreasureMapTask（宝图）：开活动→自动判是否已有宝图(找不到「参加」或翻完全列表没认出卡片=已有,
-                      跳过领取直接挖)→收图/挖宝 领奖 两阶段状态机
+                      跳过领取直接挖)→收图/挖宝 领奖 两阶段状态机。点「听听无妨」后检测「拓印」弹窗（TuoyingFlow），
+                      命中则自动临摹、完成该号**整条任务从头重跑**（回开活动）；没弹继续原流程
     appreciation.py AppreciationTask（趣味鉴赏）：开活动→参加→匹配并点击心形图案，点满 target_clicks 或鉴赏
                       超时即停；当前屏没匹配到就在「图文列表区域」滚动再找（滚动只在该区内，反向滚回防漏）
     secret_realm.py  SecretRealmTask（秘境降妖）：开活动→参加→挑战→盯「进入战斗」续战，可连跑 max_runs 轮
@@ -109,7 +112,7 @@ mhxy/
     organize_bag.py     OrganizeBagTask（整理背包）：工具页(OrganizeBagPage)可单独跑的共享能力封装，逐号 activate→core/inventory 整理；详见 memory organize-bag-task
     tuoying.py          TuoyingTask（拓印）：刷副本偶发「拓印」临摹弹窗的自动描摹能力封装，工具页「拓印」可单独跑一遍完整临摹
                         （标定存 tasks.tuoying；描→自动点「上传」→确认界面不再重现，与 dungeon_base 判据一致）；
-                        完整自动流程（探测→描→上传→确认）参照 server 在 dungeon_base._auto_trace（本文件是『手动把临摹界面调到前台再跑』的单窗版）
+                        完整自动流程（探测→描→上传→确认）参照 core/tuoying_flow.py 的 TuoyingFlow（本文件是『手动把临摹界面调到前台再跑』的单窗版）
   tools/
     calibrate.py 旧的命令行标定（已不被 GUI 调用，仅留作 CLI 备用）
   ui/
@@ -214,11 +217,11 @@ mhxy/
     （先截绘制区画面、形态学分离前景线条→Zhang-Suen 细化取骨架→确定性贪心拆成尽量少的连续笔画→每笔按住沿骨架走+横向
     锯齿加宽笔迹；只描图案本身，**不盖满整区**——拓印判「完成度>60%」，描到图案外会拉低完成度）→ 点 `tuoying_upload` → 等界面消失；
     **资产全可选、不标不拖累就绪度**（人不标=遇弹窗转手动，描完脚本自动续跑；3 种触发见
-    `tasks/dungeon_base.py` `_auto_trace`）。识别不出图案/截图失败 → 转手动兜底（等界面消失自动续跑），绝不盲目乱描。
+    `core/tuoying_flow.py` 的 `TuoyingFlow`——刷副本(dungeon_base)/宝图(treasure_map)共用）。识别不出图案/截图失败 → 转手动兜底（等界面消失自动续跑），绝不盲目乱描。
     ⚠ **拓印要描两遍（user 2026-09-11 反馈）**：一次「上传」后**图案相同的界面会再次弹出**，须再描一遍+再传一次才算过——
-    `_auto_trace` 已做成「描→上传→**确认界面不再重现**（`tuoying_gone_confirm_sec` 窗口内持续观察）→ 还弹就再来一轮」，
+    `TuoyingFlow._auto_trace` 已做成「描→上传→**确认界面不再重现**（`tuoying_gone_confirm_sec` 窗口内持续观察）→ 还弹就再来一轮」，
     轮数上限归**拓印工具自己**：`tasks.tuoying.loop.tuoying_max_rounds`（默认2，在「工具」页「拓印」里改），
-    进本侧 `dungeon_base._auto_trace` 直接读这份、不再自设（旧 `tasks.dungeon.loop.tuoying_max_rounds` 有一次性迁移搬过来）；确认窗口防「界面一闪即误判通过」。
+    进本/宝图侧 `core.tuoying_flow.TuoyingFlow` 直接读这份、不再自设（旧 `tasks.dungeon.loop.tuoying_max_rounds` 有一次性迁移搬过来）；确认窗口防「界面一闪即误判通过」。
     `scribble.trace_pattern` 是通用能力：任何「沿图案描一遍」类校验都能复用。
     ⚠ **标定位置（user 2026-09-08 拍板、2026-09-18 迁工具页、同日拍板只读新值）**：`tuoying_title`/`tuoying_upload`/`tuoying_area` 在**「工具」页「拓印」**里标，
     存 `tasks.tuoying`（模板键集 `TUOYING_TPL_KEYS`），一次标定覆盖全部副本；读取 = `dungeon_base._load_flags` +
@@ -301,3 +304,5 @@ mhxy/
 - 日志除全局面板外逐行同步写 `logs/日志-YYYYMMDD_HHMMSS.log`（每次启动一个，崩溃/强杀不丢；
   `config.log_to_file` 可关、`log_keep_files` 自动清理保留 N 份，设置页「基础」区可调）。
 - 记忆目录有更详细背景：game-mhxy-shikong / sniper-design-decisions / project-architecture。
+- **调试/预览产物一律写仓库内默认位置（`captures_debug/…`）或临时目录 `C:\Users\hq\AppData\Local\Temp\opencode`**，
+  命令行工具（如 `trace_preview`）**不要传 `--out` 指到桌面**（user 2026-10-18 拍板：不碰桌面）。

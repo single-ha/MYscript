@@ -223,6 +223,24 @@ def best_score(scene_bgr, template_bgr):
     return (float(max_val), (max_loc[0] + tw // 2, max_loc[1] + th // 2))
 
 
+def sqdiff_score(scene_bgr, template_bgr):
+    """返回 TM_SQDIFF_NORMED 的最小值（0=逐像素相同，越小越像）。场景/模板不可用返回 1.0。
+
+    用途：区分**同一元素的两态外观**（如「拓印」按钮的未完成↔完成态）。两态差异往往只是**局部亮度**
+    变化（未完成处偏灰、完成处偏白），整体亮度近乎一样——TM_CCOEFF_NORMED 会减均值、对均匀亮度不敏感，
+    **分不开两态**（实测两个模板在两种状态下都能 ~0.98 命中）。SQDIFF 直接比像素值、对亮度敏感，可清晰判别。
+
+    ⚠ SQDIFF 对像素对齐极敏感，需模板与画面渲染逐像素一致（同分辨率窗口、无损截屏）。
+    """
+    if scene_bgr is None or template_bgr is None:
+        return 1.0
+    th, tw = template_bgr.shape[:2]
+    if scene_bgr.shape[0] < th or scene_bgr.shape[1] < tw:
+        return 1.0
+    res = cv2.matchTemplate(scene_bgr, template_bgr, cv2.TM_SQDIFF_NORMED)
+    return float(cv2.minMaxLoc(res)[0])
+
+
 def save_debug_image(scene, path, col_x0=None, col_x1=None,
                      card_xy=None, hits=None, tpl_wh=None, note="",
                      click_kind=None, card_color=None):

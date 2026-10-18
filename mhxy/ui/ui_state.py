@@ -7,8 +7,9 @@
     （商城/活动图标在「任务配置」页「全局共享标定」卡里标，tasks.shared.templates，见 MAIN_ICON_TPL_KEYS）。
   · is_present()——「标志是否在画面里」判定：任务级通用（如 battle_flag 战斗标志），
     运镖/宝图/秘境等都共用这一份，不再各任务复制 _present。
-  · back_to_main_screen()——「确保回到主界面」：已在主界面直接返回，否则反复按 ESC 关面板
-    直到回主界面；回不去/无法判断时返回 False/None 交调用方兜底。
+  · back_to_main_screen()——「确保回到主界面」：已在主界面直接返回，否则交替「按 ESC」与
+    「鼠标右键」关面板直到回主界面（有的界面只认右键取消、ESC 关不掉）；回不去/无法判断时
+    返回 False/None 交调用方兜底。
 
 用法（任务内）：
     from ..ui import ui_state
@@ -116,28 +117,35 @@ def find_popup_close(cfg, window, threshold=0.85):
 
 
 def back_to_main_screen(cfg, window, max_tries=6, settle=0.6, threshold=0.8):
-    """确保回到主界面：已在主界面直接返回 True，否则反复按 ESC（SendInput）关面板直到回主界面。
+    """确保回到主界面：已在主界面直接返回 True，否则交替「按 ESC」与「鼠标右键」关面板直到回主界面。
+
+    有的界面按 ESC 关不掉（部分面板/弹窗只认右键取消），故两种关闭方式交替尝试，覆盖更全。
 
     cfg: 整份配置（透传给 is_main_screen）。
     window: core/window.GameWindow 实例。
-    max_tries: 最多按几层 ESC 还回不去就当失败（默认 6）。
-    settle: 每次按 ESC 后等画面落定的秒数。
+    max_tries: 最多尝试几轮（ESC、右键各算一轮）还回不去就当失败（默认 6）。
+    settle: 每次操作后等画面落定的秒数。
     threshold: 主界面判定门槛（透传 is_main_screen，默认 0.8）。
 
     返回：
       True  = 已回主界面（含一开始就在）
-      False = 连按 max_tries 次 ESC 还没在主界面（多半有模态弹窗关不掉、或商城图标没认到）
+      False = 连试 max_tries 轮还没在主界面（多半有模态弹窗关不掉、或商城图标没认到）
       None  = 无法判断（shop_icon 未标定 / 窗口没定位 / 抓图失败）——与 is_main_screen 一致，
-              不去盲按 ESC，交调用方兜底。
+              不去盲操作，交调用方兜底。
     """
-    keyboard = input_mod.Mouse()
-    for _ in range(max(1, max_tries)):
+    mouse = input_mod.Mouse()
+    for i in range(max(1, max_tries)):
         st = is_main_screen(cfg, window, threshold=threshold)
         if st is True:
             return True
         if st is None:
             return None
-        # 不在主界面 → 按 ESC 关掉当前面板一层，等画面落定再判
-        keyboard.press_key("esc")
+        # 不在主界面 → 交替按 ESC / 右键关掉当前面板一层，等画面落定再判
+        if i % 2 == 0:
+            mouse.press_key("esc")
+        else:
+            rect = window.rect()
+            if rect is not None:
+                mouse.right_click(rect[0] + rect[2] // 2, rect[1] + rect[3] // 2)
         time.sleep(max(0.1, settle))
     return False

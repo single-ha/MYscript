@@ -63,12 +63,18 @@ ACTIVITY_UI_TPL_KEY = "activity_ui_flag"
 # 日常活动标签（存 tasks.shared.templates.daily_activity_tab，在「任务配置」页「全局共享标定」里标定，可选）：
 # 活动界面顶部的「日常活动」标签页。打开活动界面后先点它切到日常列表，再找卡片。不标=直接在当前列表找卡片。
 DAILY_ACTIVITY_TAB_TPL_KEY = "daily_activity_tab"
+# 面板关闭按钮（存 tasks.shared.templates.panel_close，在「任务配置」页「全局共享标定」里标定，可选）：
+# 背包/商城/人物信息等面板右上角的「×」关闭按钮。宝图挖完藏宝图后点它关背包回主界面
+# （比逐层按 Esc 更可靠——直接点面板自己的关闭按钮，不会误关别的层）。
+# 不进 SHARED_TPL_KEYS（不叠加进各任务 templates）：与 popup_close 一样直接读 tasks.shared.templates。
+PANEL_CLOSE_TPL_KEY = "panel_close"
 # 共享模板的友好中文名（就绪/标定提示用的展示名，见 ui/common.shared_template_hint）。
 SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)",
                       "join_done": "完成标识",
                       "activity_ui_flag": "活动界面标志",
                       DAILY_ACTIVITY_TAB_TPL_KEY: "日常活动标签",
-                      POPUP_CLOSE_TPL_KEY: "弹窗关闭按钮(×)"}
+                      POPUP_CLOSE_TPL_KEY: "弹窗关闭按钮(×)",
+                      PANEL_CLOSE_TPL_KEY: "面板关闭按钮(×)"}
 # 共享模板键常量（用于标定对话框与配置卡片计数对齐）
 JOIN_DONE_TPL_KEY = "join_done"
 # 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟；shop/activity 由 ui_state 直接读 shared，
@@ -170,6 +176,7 @@ enter_dungeon                选择副本对话框里的「进入」按钮（普
             "tuoying_passes": 2,         # 拓印临摹：单遍内沿图案骨架描几轮（每轮各笔画重新随机，提升覆盖）；整个拓印可能需要多遍(=弹窗会再次弹出)，见 tuoying_max_rounds
             "tuoying_lateral": 3.0,      # 拓印临摹：随描轨迹垂直于笔画走向的横向偏移上限(像素)，笔迹加宽更易达标
             "tuoying_sample_step": 5.0,  # 拓印临摹：骨架采样间距(像素)，越小越贴笔画(也更慢)
+            "tuoying_speed": 1.0,        # 拓印临摹：走笔速度倍率，越大越快(用户要求整遍描摹 < 2 分钟)
             "tuoying_stripe_spacing": 8.0,  # 已废弃（拓印改骨架描摹）——保留兼容旧配置读取
             "tuoying_upload_sec": 6.0,   # 点「上传」后等按钮出现/消失的超时（点上传按钮的轮询用）
             "tuoying_gone_confirm_sec": 1.2,  # 判定拓印界面「真消失」的确认窗口：消失后再持续观察这么久都不重现，
@@ -513,6 +520,9 @@ DEFAULT_CONFIG = {
                                              #   避免两张卡片一排时扫到右邻卡片、点错右边的「参加」
                 "join_confirm_tries": 3,     # 认出「宝图任务」后连确认几次「参加」按钮；多次都找不到
                                              #   才判定「已有宝图」(跳过领取直接挖)，防滚动/加载瞬间误判
+                "tuoying_after_tingting_wait_sec": 3.0,  # 点「听听无妨」后，最多等这么久看是否弹「拓印」临摹
+                                             #   界面：弹出→自动临摹，完成后该号从头重跑；没弹→继续原流程。
+                                             #   （未标定「拓印」标题模板时本检测直接跳过）
                 "max_stuck_recover": 3       # 连续卡死多少次就主动停
             },
             "regions": {                 # 相对游戏窗口 [x,y,w,h]，标定向导写入
@@ -766,6 +776,7 @@ DEFAULT_CONFIG = {
                 "activity_icon": None,   #   活动图标（可选，供后续界面判定复用）
                 "activity_ui_flag": None, # 活动界面标志（可选，发 open_activity 后等它出现再翻找卡片）
                 "daily_activity_tab": None, # 日常活动标签（可选，活动界面顶部的「日常活动」标签页）
+                "panel_close": None,     # 面板关闭按钮（可选，背包/商城/人物信息面板右上角「×」）
             },
         },
 
@@ -885,6 +896,10 @@ DEFAULT_CONFIG = {
                 "tuoying_spur_len": 6,       # 骨架毛刺剪枝长度(像素)：剪掉短分叉/噪点枝，避免笔画数被撑爆
                 "tuoying_stroke_min_len": 4,  # 单条笔画最短采样点数：短于此的碎片当噪点丢弃
                 "tuoying_max_strokes": 14,   # 笔画数上限（游戏要求「少于15笔」）：超了合并最近端点直到 < 上限
+                "tuoying_absorb_span": 12,   # 碎片跨度阈值(像素)：又短又贴着别的笔画 → 并进最近笔画(不是删，保覆盖)
+                "tuoying_absorb_gap": 3,     # 碎片到最近笔画的最短像素距离上限：超过=孤立的真·点画，保留独立一笔
+                "tuoying_fill": 0.9,         # 描摹横向铺宽比例：按局部半宽(距离变换)的此比例摆动，把粗笔画/实心块描满(非只走中线)
+                "tuoying_lateral_max": 40.0, # 横向摆动幅度上限(像素)：防止极宽块摆太远、描到图案外
                 "tuoying_save_debug": True,  # 识别失败时把 frame/mask/skel/strokes/trace 图落 captures_debug
                 "tuoying_client_frame": [8, 31],  # 离线预览的边框补偿默认值(dx,dy)：截图是「客户区」(不含标题栏/
                                              #   左边框)时，把 config 里的绘制区减去它才对齐。游戏窗口在跑时用

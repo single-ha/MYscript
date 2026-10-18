@@ -52,12 +52,15 @@ class TuoyingTask(Task):
             ("tuoying_title", "「拓印」界面标题", "(可选但建议)刷副本点「进入」后，队长窗口偶尔会弹「拓印」临摹界面："
              "框标题或独特边框即可识别。所有副本共用。标了=上传后能自动确认界面已关闭/还会重现再描；"
              "不标=上传后按固定等待兜底。", True),
-            ("tuoying_upload", "「上传」按钮", "(必标)拓印临摹完要点的「上传」按钮。所有副本共用。"
-             "工具页独立跑&副本内全自动都靠它提交，标好不会卡在手动。", False),
-            ("tuoying_todo", "「未完成」状态按钮", "(可选但强烈建议)临摹未描完时按钮的样子——描完它会变成「完成」态。"
-             "别填「上传」按钮：框那个随描摹进度变样的状态按钮的「未完成」外观。"
-             "标了=点「上传」后靠它判定「新图案已生成」→ 立刻描下一遍，比等标题消失快得多、也更准"
-             "（拓印弹窗上传后通常不关、标题一直在）。不标=退回旧判据（等标题消失，通常只能靠超时）。", True),
+            ("tuoying_upload", "「上传/完成」按钮（完成态）", "(必标)拓印临摹达成后按钮的样子——即「完成」态，也是要点击的按钮。"
+             "全部副本共用。它**一直存在**、只在未完成↔完成两态间改外观（差异只是局部亮度），故单靠它没法判「是否达标」；"
+             "达标靠它与下面「未完成态」模板做像素比对（谁更接近），再由坐标点击。", False),
+            ("tuoying_todo", "「未完成」状态按钮（未完成态）", "(可选但强烈建议)临摹**未描完**时按钮的样子（描够会切成「完成」态）。"
+             "别框「上传」那张：只框那个随进度变样的「未完成」外观。两个用处：①描摹时**每描完一笔查一次**——"
+             "按钮一旦从「未完成」态切成「完成」态就立即点它并停止描摹（描够一笔就停，省时又不会描过头）；"
+             "②点「上传」后靠它判「新图案已生成」→ 立刻描下一遍，比等标题消失快也更准"
+             "（弹窗上传后通常不关、标题一直在）。⚠ 两态差异极微、TM_CCOEFF 分不开（都 ~0.98 命中），"
+             "判态走像素级 SQDIFF 比对。不标=两处都退回旧办法（描完全部笔画再点上传／靠等标题超时）。", True),
         ],
         "watchlist": False,
     }
@@ -150,11 +153,16 @@ class TuoyingTask(Task):
         upload_timeout = loop.get("tuoying_upload_sec", 6.0)
         lateral = loop.get("tuoying_lateral", 3.0)
         sample_step = loop.get("tuoying_sample_step", 5.0)
+        trace_speed = loop.get("tuoying_speed", 1.0)
+        if todo_tpl is None:
+            ctx.log("⚠ 未标定「未完成状态按钮」→ 描摹中途无法判定图案是否达标，只能描完再点「上传」。"
+                    "想「描够一笔就停」请在本页补标该项。", level="warn")
         for rnd in range(1, max_rounds + 1):
             if ctx.should_stop():
                 return
             ctx.log(f"拓印临摹（第 {rnd}/{max_rounds} 遍）：沿图案骨架描 {loop.get('tuoying_passes', 2)} 轮…",
                     level="warn")
+            clicked = False
             for _pass in range(max(1, int(loop.get("tuoying_passes", 2)))):
                 if ctx.should_stop():
                     return
@@ -163,11 +171,30 @@ class TuoyingTask(Task):
                 if frame is None:
                     ctx.log("⚠ 绘制区截图失败，未描摹。请确认临摹界面已弹出。", level="warn")
                     return
+                done = {"v": False}
+
+                def _check_upload(_i, _n, _done=done):
+                    # 每描完一笔判图案是否达标（按钮由「未完成」态切成「完成」态）→ 点它并停止描摹。
+                    # 判据用 SQDIFF 比两态外观（CCOEFF 分不开，见 _button_ready）。
+                    if self._button_ready(ctx, win_rect, todo_tpl, loop, up_tpl) and \
+                            self._click_upload(ctx, up_tpl, win_rect, loop, timeout=0.8):
+                        ctx.log("描完一笔后图案已达标（按钮已变为「完成」态）——已点「上传/完成」，停止描摹。",
+                                level="hit")
+                        _done["v"] = True
+                        return True
+                    return False
+
                 ok = scribble.trace_pattern(ctx.mouse, rect, frame,
                                             lateral=lateral,
                                             sample_step=sample_step,
-                                            speed=1.0, label="拓印绘制区",
-                                            polarity=polarity, params=params)
+                                            speed=trace_speed, label="拓印绘制区",
+                                            polarity=polarity, params=params,
+                                            on_stroke=_check_upload, should_stop=ctx.should_stop)
+                if ok is None or ctx.should_stop():
+                    return                     # 急停：描摹被中断
+                if done["v"]:
+                    clicked = True
+                    break
                 if not ok:
                     ctx.log("⚠ 没能识别出图案笔画，未描摹——请确认临摹界面已弹出、绘制区框得对。", level="warn")
                     if save_debug:
@@ -181,12 +208,12 @@ class TuoyingTask(Task):
                     self._interruptible_sleep(ctx, self._jitter(0.15, ctx))
             if ctx.should_stop():
                 return
-            if not self._click_upload(ctx, up_tpl, win_rect, loop, timeout=upload_timeout):
+            if not clicked and not self._click_upload(ctx, up_tpl, win_rect, loop, timeout=upload_timeout):
                 ctx.log("⚠ 没点到「上传」（上传按钮模板没标定/没找到），请手动点「上传」。", level="warn")
                 self._wait_gone(ctx, title_tpl, win_rect, loop)
                 return
             # 上传后判定：见 dungeon_base._tuoying_await_next 的判据。
-            res = self._await_next(ctx, title_tpl, todo_tpl, win_rect, loop,
+            res = self._await_next(ctx, title_tpl, todo_tpl, up_tpl, win_rect, loop,
                                    confirm_sec=confirm_sec, upload_timeout=upload_timeout)
             if res == "closed":
                 ctx.log("拓印临摹通过，界面已关闭。", level="hit")
@@ -205,12 +232,16 @@ class TuoyingTask(Task):
         ctx.log("⚠ 自动描完多遍后拓印界面仍会重现（校验可能没通过）——请手动临摹并点「上传」。", level="warn")
         self._wait_gone(ctx, title_tpl, win_rect, loop)
 
-    def _await_next(self, ctx, title_tpl, todo_tpl, win_rect, loop, confirm_sec, upload_timeout):
-        """上传后判定：新图案已生成（「未完成状态按钮」重现）→ "ready"（接着描下一遍）；
+    def _await_next(self, ctx, title_tpl, todo_tpl, up_tpl, win_rect, loop, confirm_sec, upload_timeout):
+        """上传后判定：新图案已生成（按钮回到「未完成」态）→ "ready"（接着描下一遍）；
         服务器判定通过、界面关闭 → "closed"（完成）；超时都判断不出 → "timeout"；没有任何可判据 → "unknown"。
 
         没标「未完成状态按钮」时退回旧判据（等标题消失，见 _confirmed_gone）——但拓印弹窗上传后通常不关、
-        标题一直在，故旧判据基本只会超时。判据同 dungeon_base._tuoying_await_next。"""
+        标题一直在，故旧判据基本只会超时。判据同 dungeon_base._tuoying_await_next。
+
+        ⚠ 「新图案就绪」不能只查「未完成模板命中」——TM_CCOEFF 下**未完成/完成两态模板都命中**（实测都 ~0.98），
+        上传后旧图案的「完成」态也会被误判成 ready。故带 upload 模板时用 SQDIFF 比两态（vision.sqdiff_score）：
+        仅当更接近「未完成」态才算新图案就绪。"""
         if todo_tpl is None:
             gone = self._confirmed_gone(ctx, title_tpl, win_rect, loop,
                                         confirm_sec=confirm_sec, upload_timeout=upload_timeout)
@@ -220,13 +251,20 @@ class TuoyingTask(Task):
                 return "unknown"
             return "timeout"
         threshold = loop.get("match_threshold", 0.85)
+        cap = loop.get("tuoying_state_max_sqdiff", 0.06)
         ready_sec = loop.get("tuoying_ready_sec", 10.0)
         deadline = time.time() + ready_sec
         no_gone_since = None
         while not ctx.should_stop():
             cur = ctx.window.grab_screen(win_rect)
             if cur is not None:
-                if vision.match(cur, todo_tpl, threshold) is not None:
+                if up_tpl is not None:
+                    s_todo = vision.sqdiff_score(cur, todo_tpl)
+                    s_up = vision.sqdiff_score(cur, up_tpl)
+                    ready = (min(s_todo, s_up) <= cap) and (s_todo < s_up)
+                else:
+                    ready = vision.match(cur, todo_tpl, threshold) is not None
+                if ready:
                     return "ready"
                 if title_tpl is not None:
                     if vision.match(cur, title_tpl, threshold) is None:
@@ -242,6 +280,27 @@ class TuoyingTask(Task):
         return "timeout"
 
     # ---- 小工具：找并点上传 / 盯界面消失（判据与 dungeon_base 一致，只把 scene 换成整窗）----
+    def _button_ready(self, ctx, win_rect, todo_tpl, loop, up_tpl=None):
+        """判图案是否已达标（按钮由「未完成」态切成「完成」态）→ True/False；没法判 → None。
+
+        ⚠ 两态外观**只有局部亮度差**（未完成处偏灰、完成处偏白），整体亮度近乎一样——TM_CCOEFF 减均值、
+        对均匀亮度不敏感，**分不开两态**（实测两个模板在两种状态下都能 ~0.98 命中）。故改用 SQDIFF 比像素
+        （vision.sqdiff_score）：分别对「未完成」todo 与「完成」upload 取最小分，「完成」分更低=已达标。
+        实测 未完成: todo=0.000 / upload=0.010；完成: upload=0.0005 / todo=0.012，判别清晰。
+        两个分都偏高（按钮根本不在，如别的界面）→ 视为未达标，绝不误判。
+        """
+        if todo_tpl is None or up_tpl is None:
+            return None
+        cap = loop.get("tuoying_state_max_sqdiff", 0.06)
+        cur = ctx.window.grab_screen(win_rect)
+        if cur is None:
+            return None
+        s_todo = vision.sqdiff_score(cur, todo_tpl)
+        s_up = vision.sqdiff_score(cur, up_tpl)
+        if min(s_todo, s_up) > cap:
+            return False
+        return s_up < s_todo
+
     def _click_upload(self, ctx, up_tpl, win_rect, loop, timeout=None):
         """在【整窗】里找「上传」按钮并点（按钮不在绘制区内，不能只搜绘制区）。"""
         if up_tpl is None:

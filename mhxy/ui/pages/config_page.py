@@ -13,8 +13,8 @@ from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...core.config import (ACTIVITY_UI_TPL_KEY, BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY,
                              DAILY_ACTIVITY_TAB_TPL_KEY, JOIN_DONE_TPL_KEY,
-                             MAIN_ICON_TPL_KEYS, POPUP_CLOSE_TPL_KEY, SHARED_REGION_KEYS,
-                             SINGLE_TASK_ORDER)
+                             MAIN_ICON_TPL_KEYS, PANEL_CLOSE_TPL_KEY, POPUP_CLOSE_TPL_KEY,
+                             SHARED_REGION_KEYS, SINGLE_TASK_ORDER)
 from ...core.teaming import TEAM_CALIB_TPL_KEYS, TEAM_REQUIRED_REGIONS
 from ...tasks import get_task
 from .treasure_map import TreasureMapConfig
@@ -311,7 +311,8 @@ class SharedCalibrationCard(ctk.CTkFrame):
 
         # 模板：必要 vs 可选
         req_tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)
-        opt_tpl_keys = (JOIN_DONE_TPL_KEY,) + MAIN_ICON_TPL_KEYS + (POPUP_CLOSE_TPL_KEY, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY)
+        opt_tpl_keys = ((JOIN_DONE_TPL_KEY,) + MAIN_ICON_TPL_KEYS
+                        + (POPUP_CLOSE_TPL_KEY, PANEL_CLOSE_TPL_KEY, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY))
         all_tpl_keys = req_tpl_keys + opt_tpl_keys
 
         req_tpl_done = sum(1 for k in req_tpl_keys if stpl.get(k))

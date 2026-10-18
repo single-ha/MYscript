@@ -224,6 +224,26 @@ class Mouse:
             time.sleep(random.uniform(0.004, 0.018) / spd)
         return tx, ty
 
+    def glide(self, x, y, speed=None):
+        """按住拖动/描摹时用的**轻量平滑移动**：到 (x,y) 只走 1~3 个小步 + 轻微抖动。
+
+        比 human_move 少一个数量级的步数——描摹采样点本就很密（每步几像素），若每点都重算一次
+        贝塞尔（human_move 会走 6~14 步）会慢到分钟级。这里按距离给 1~3 步、带小抖动与变时延，
+        仍不是等速直线，但足够快（★2026-10-18：用户要求描摹 < 2 分钟）。"""
+        sx, sy = get_cursor()
+        spd = self._speed(speed)
+        r = int(self.hz.get("click_radius", 4))
+        tx, ty = x + random.randint(-r, r), y + random.randint(-r, r)
+        dist = math.hypot(tx - sx, ty - sy)
+        sub = 1 if dist < 8 else (2 if dist < 24 else 3)
+        for i in range(1, sub + 1):
+            t = i / sub
+            mx = sx + (tx - sx) * t + random.uniform(-1.2, 1.2)
+            my = sy + (ty - sy) * t + random.uniform(-1.2, 1.2)
+            self._move(mx, my)
+            time.sleep(random.uniform(0.003, 0.009) / spd)
+        return tx, ty
+
     def click(self, x, y, speed=None):
         """拟人化移动并点击。speed 非空时整段按该倍率提速（命中下单的极速直击）。"""
         spd = self._speed(speed)

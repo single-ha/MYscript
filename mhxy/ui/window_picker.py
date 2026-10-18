@@ -47,6 +47,8 @@ class WindowPickerDialog(ctk.CTkToplevel):
         self._wins = []          # [(GameWindow, rect, ctk_thumb_or_None)]
         self._thumbs = []        # 防 GC
         self._multi_vars = {}    # index -> BooleanVar
+        self._all_var = ctk.BooleanVar(value=False)   # 「全选」toggle 的状态
+        self._all_switch = None   # 「全选」toggle 控件（构建后赋值）
         self._captain_var = ctk.IntVar(value=0)   # 队长的【绝对窗口序号】(0起)；仅 captain_ns 时用
         self._captain_inited = False
 
@@ -85,9 +87,14 @@ class WindowPickerDialog(ctk.CTkToplevel):
         sub.pack(fill="x", pady=(4, 0))
         T.bind_wraplength(sub)
 
-        # 顶部栏：刷新
+        # 顶部栏：全选 toggle + 刷新
         topbar = ctk.CTkFrame(self, fg_color="transparent")
         topbar.grid(row=1, column=0, sticky="ew", padx=20, pady=(4, 6))
+        self._all_switch = ctk.CTkCheckBox(topbar, text="全选", font=self.fonts["body"], text_color=T.TEXT,
+                                           fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+                                           onvalue=True, offvalue=False,
+                                           variable=self._all_var, command=self._on_all_toggle)
+        self._all_switch.pack(side="left")
         ctk.CTkButton(topbar, text="刷新", font=self.fonts["body"], width=72, height=30,
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
@@ -173,6 +180,9 @@ class WindowPickerDialog(ctk.CTkToplevel):
                                  font=self.fonts["body"], text_color=T.TEXT_DIM, justify="left")
             empty.grid(row=0, column=0, sticky="ew", padx=12, pady=24)
             T.bind_wraplength(empty)
+            self._all_var.set(False)
+            if self._all_switch is not None:
+                self._all_switch.configure(state="disabled")
             self.status_lbl.configure(text="未检测到窗口")
             return
 
@@ -214,7 +224,8 @@ class WindowPickerDialog(ctk.CTkToplevel):
                 var = ctk.BooleanVar(value=default_on)
                 self._multi_vars[i] = var
             ctk.CTkCheckBox(card, text="", width=24, variable=var,
-                            fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER).grid(
+                            fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+                            command=self._sync_all_toggle).grid(
                                 row=0, column=0, padx=(12, 6), pady=10)
 
             # 缩略图
@@ -248,11 +259,33 @@ class WindowPickerDialog(ctk.CTkToplevel):
                                    font=self.fonts["small"], fg_color=T.ACCENT,
                                    hover_color=T.ACCENT_HOVER).grid(row=0, column=3, padx=(6, 12))
 
+        # 走到这必有窗口 → 启用「全选」toggle，并按当前勾选状态同步它
+        if self._all_switch is not None:
+            self._all_switch.configure(state="normal")
+        self._sync_all_toggle()
+
         # 尺寸一致性提示（多开共用一套标定要求同尺寸）
         sizes = {(r[2], r[3]) for _, r, _ in self._wins if r}
         warn = "" if len(sizes) <= 1 else "  ⚠ 窗口尺寸不一致，多开共用标定可能点错，建议统一分辨率"
         self.status_lbl.configure(text=f"检测到 {len(self._wins)} 个窗口" + warn,
                                   text_color=T.WARN if warn else T.TEXT_DIM)
+
+    # ------------------------------------------------------------------
+    def _on_all_toggle(self):
+        """用户点「全选」toggle：勾选→选中全部窗口；取消→只选中窗口1（号1）。"""
+        if self._all_var.get():
+            for v in self._multi_vars.values():
+                v.set(True)
+        else:
+            for i in sorted(self._multi_vars):
+                self._multi_vars[i].set(i == 0)
+        # 勾选数反推 toggle 状态（如只有 1 个窗口时「只选号1」=全选，保持一致性）
+        self._sync_all_toggle()
+
+    def _sync_all_toggle(self):
+        """按各窗口复选框的实际状态同步「全选」toggle：全部勾选→选中，否则未勾选。"""
+        vals = [v.get() for v in self._multi_vars.values()]
+        self._all_var.set(bool(vals) and all(vals))
 
     # ------------------------------------------------------------------
     def _confirm(self):

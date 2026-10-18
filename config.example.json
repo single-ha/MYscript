@@ -274,6 +274,8 @@
                 "scroll_end_diff": 2.0,
                 "scroll_reset_max": 20,
                 "activity_columns": 2,
+                "join_confirm_tries": 3,
+                "tuoying_after_tingting_wait_sec": 3.0,
                 "max_stuck_recover": 3
             },
             "regions": {

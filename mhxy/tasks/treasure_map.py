@@ -38,6 +38,7 @@ from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
 from ..core import scan
+from ..core.tuoying_flow import TuoyingFlow
 from ..ui import ui_state
 from ..core.config import BATTLE_FLAG_TPL_KEY
 from .base import Task, register
@@ -73,11 +74,12 @@ _REQUIRED_FLAGS = ["flag_treasure_entry", "flag_join", "flag_tingting",
 
 
 @register
-class TreasureMapTask(Task):
+class TreasureMapTask(TuoyingFlow, Task):
     name = "treasure_map"
     title = "宝图"
     description = "自动开活动→收藏宝图→挖宝→领奖，日常（战斗交给游戏自动，支持多开轮转）"
     CHAINS_PER_WINDOW = True   # 可做「日常·每窗口独立链」
+    # 继承 TuoyingFlow：点「听听无妨」后若弹「拓印」临摹界面，自动处理（描+上传），完成该号从头重跑。
 
     CALIBRATION = {
         "regions": [
@@ -360,7 +362,18 @@ class TreasureMapTask(Task):
         hit = self._match_scene(cur, scene_rect, "flag_tingting", threshold)
         if hit is not None:
             ctx.mouse.click(hit[0], hit[1])
-            ctx.log(f"选择「听听无妨」（{hit[2]:.3f}），开始自动寻宝。", level="hit")
+            ctx.log(f"选择「听听无妨」（{hit[2]:.3f}）。", level="hit")
+            # 点完「听听无妨」后偶尔会弹「拓印」临摹界面（user 2026-10-18）：命中则交给共享
+            # TuoyingFlow 自动临摹（描+上传），处理完该号**整条宝图任务从头重跑**（回阶段A 开活动）；
+            # 没弹则照旧进入收集监控。未标定「拓印」标题模板时 _tuoying_present 直接返回 False、零阻塞。
+            if self._tuoying_present(ctx, regions, threshold,
+                                     wait_sec=loop.get("tuoying_after_tingting_wait_sec", 3.0)):
+                ctx.log("点「听听无妨」后检测到「拓印」临摹界面，自动处理…", level="warn")
+                self._handle_tuoying(ctx, regions, threshold)
+                if ctx.should_stop():
+                    return
+                self._restart_record(ctx, rec)
+                return
             self._enter_monitor(rec, S_COLLECTING)
             return
         # 没命中且没超时时原本完全静默 → 用户以为该号卡死。加节流诊断：每 ~6s 报一次「在等对话框」，
@@ -549,6 +562,43 @@ class TreasureMapTask(Task):
         self._goto(rec, S_DIG_OPEN_BAG if rec["phase_b"] else self._start_state)
 
     # ------------------------------------------------------------------
+    # 拓印弹窗处理（点「听听无妨」后偶发；继承自 core.tuoying_flow.TuoyingFlow）
+    # ------------------------------------------------------------------
+    def _tuoying_present(self, ctx, regions, threshold, wait_sec):
+        """点「听听无妨」后判定是否弹出「拓印」临摹界面：在 wait_sec 内轮询整屏找「拓印」标题模板，
+        命中返回 True；超时/未标定该模板（无法判定）返回 False。模板未标 → 立即 False、不阻塞。"""
+        title = self._tuo_assets(ctx)["title"]
+        if title is None:
+            return False
+        scene_rect = self._scene_rect(ctx, regions)
+        deadline = time.time() + max(0.0, float(wait_sec or 0.0))
+        while not ctx.should_stop():
+            cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
+            if self._tuo_match(cur, scene_rect, title, threshold) is not None:
+                return True
+            if time.time() > deadline:
+                return False
+            self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
+        return False
+
+    def _restart_record(self, ctx, rec):
+        """把该号重置回宝图任务开头（阶段A 开活动），从头重跑（user 2026-10-18：拓印处理完后重跑）。
+        先按一下 Esc 清掉可能残留的面板，再重置轮转状态机；**不清 recover**（防同一号反复触发拓印时无限重跑）。"""
+        self._focus(ctx)
+        if ctx.send_hotkey("close_panel"):
+            self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
+        rec["phase_b"] = False
+        rec["scrolls"] = 0
+        rec["last"] = None
+        rec["still_since"] = None
+        rec["t0"] = 0.0
+        rec["t_diag"] = 0.0
+        rec["nxt_wait_logged"] = False
+        rec["_nudges"] = 0
+        self._goto(rec, S_OPEN_ACTIVITY)
+        ctx.log("拓印处理完成，该号宝图任务从头重跑（回到开活动）。", level="warn")
+
+    # ------------------------------------------------------------------
     # 工具
     # ------------------------------------------------------------------
     def _focus(self, ctx):
@@ -633,9 +683,13 @@ class TreasureMapTask(Task):
         return (full[0] + m[0], full[1] + m[1], m[2])
 
     def _close_bag(self, ctx):
-        """收尾关背包：聚焦后走 ui_state.back_to_main_screen 逐层 ESC 关面板直到回主界面
-        （与 appreciation._do_done 同款收尾）——按完还会验证真回了主界面，比单按一次 Esc 可靠。"""
+        """收尾关背包：聚焦后优先点共享「面板关闭按钮」(panel_close)——背包/商城/人物信息面板
+        右上角同一个「×」，直接点它比逐层按 Esc 更可靠（不会误关别的层）。
+        未标定该模板时降级走 ui_state.back_to_main_screen 逐层 ESC 回主界面。"""
         self._focus(ctx)
+        if self._click_panel_close(ctx):
+            ctx.log("背包已关（点「面板关闭按钮」）。", level="info")
+            return
         st = ui_state.back_to_main_screen(ctx.cfg, ctx.window)
         if st is True:
             ctx.log("背包已关，已返回主界面。", level="info")
@@ -644,6 +698,32 @@ class TreasureMapTask(Task):
                     level="warn")
         else:
             ctx.log("连按 Esc 仍未回主界面（可能有弹窗卡住），按原流程收尾。", level="warn")
+
+    def _click_panel_close(self, ctx):
+        """点共享「面板关闭按钮」(panel_close，背包/商城/人物信息面板右上角「×」)。
+        未标定/窗口没定位/抓图失败/没找到按钮都返回 False（调用方降级走 ESC 收尾）。"""
+        try:
+            shared = ((ctx.cfg or {}).get("tasks", {}) or {}).get("shared", {}) or {}
+            tpl_path = (shared.get("templates") or {}).get("panel_close")
+        except AttributeError:
+            return False
+        if not tpl_path:
+            return False
+        tpl = vision.load_template(tpl_path)
+        if tpl is None:
+            return False
+        rect = ctx.window.rect()
+        if rect is None:
+            return False
+        scene = ctx.window.grab_screen(rect)
+        if scene is None:
+            return False
+        m = vision.match(scene, tpl, 0.85)
+        if m is None:
+            return False
+        ctx.mouse.click(rect[0] + m[0], rect[1] + m[1])
+        self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
+        return True
 
     def _dry_run_selfcheck(self, ctx, contexts, multi, regions, threshold, switch_delay,
                            deadline):
