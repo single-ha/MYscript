@@ -556,6 +556,11 @@ class DungeonBaseTask(TuoyingFlow, Task):
                 # _occluded 会拿队员矩形去比对队长的 GA_ROOT → 恒判「被遮」→ 反把队长切前台，
                 # 随后点击落到已失去焦点的队员号上，准备点不进。user 2026-10-09 修。
                 cur = wctx.window.grab_screen(rect) if rect else None
+                # 队员已跳过准备弹窗、直接进入副本 → 标记就绪，不点任何按钮
+                if self._in_dungeon_scene(wctx, regions, threshold):
+                    wctx.log(f"（{wctx.label}）已直接进入副本（跳过准备弹窗），无需点准备。", level="info")
+                    remaining.remove((wctx, role))
+                    continue
                 hit = vision.match(cur, tpl, threshold, template_name="ready", task_name=self.name, window_rect=rect, diagnose_on_miss=True) if cur is not None else None
                 if hit is not None:
                     sx, sy = (rect[0] if rect else 0), (rect[1] if rect else 0)
@@ -565,6 +570,22 @@ class DungeonBaseTask(TuoyingFlow, Task):
             if remaining:
                 self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
         return not remaining
+
+    # ---- 判断某窗口是否已进入副本内场景（battle_flag 或 clock 任一出现即算）----
+    def _in_dungeon_scene(self, wctx, regions, threshold):
+        """判断窗口是否已切入副本内场景：battle_flag（战斗标识）或 clock（小闹钟/寻路）任一出现
+        即认为已进入副本。用于兜底「侠士本点完进入后没弹准备弹窗、直接进本」的情况。
+        wctx: 窗口上下文（含 window/mouse/label）；regions/threshold 为副本标定参数。"""
+        rect = self._scene_rect(wctx, regions)
+        if rect is None:
+            return False
+        if wctx.window.rect() is None:
+            return False
+        cur = wctx.window.grab_screen(rect)
+        if cur is None:
+            return False
+        return (ui_state.is_present(cur, self.flags, "battle_flag", threshold)
+                or ui_state.is_present(cur, self.flags, "clock", threshold))
 
     # ---- 点完「进入」后在【队长窗口】等两种弹窗二选一（user 2026-10-11 拍板：准备/拓印互斥）----
     def _wait_captain_enter_popup(self, ctx, assignments, regions, threshold, wait_sec):
@@ -597,6 +618,10 @@ class DungeonBaseTask(TuoyingFlow, Task):
                 return "ready"
             if t_tuoying is not None and vision.match(cur, t_tuoying, threshold) is not None:
                 return "tuoying"
+            # 队长已直接进入副本（无准备弹窗，直接切到副本内场景）
+            if self._in_dungeon_scene(cap, regions, threshold):
+                ctx.log("队长已直接进入副本（未见准备弹窗），跳过弹窗等待。", level="info")
+                return "direct"
             self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
         return None
 
@@ -642,6 +667,11 @@ class DungeonBaseTask(TuoyingFlow, Task):
             if self._verify_entered(ctx, loop, regions, threshold,
                                     loop.get("enter_check_sec", 10.0)):
                 return True
+            # 队长可能已直接进入副本（没弹准备弹窗）但 verify 未识别到 → 再判一次直接进本
+            cap = next((w for w, r in assignments if r == TeamFormation.ROLE_CAPTAIN), None)
+            if cap is not None and self._in_dungeon_scene(cap, regions, threshold):
+                ctx.log("队长已直接进入副本（verify 未识别但副本内标志存在），视为进本成功。", level="info")
+                return True
             ctx.log(f"点「进入」后未确认已进本（第 {attempt} 次），返回队长重新点「进入」…", level="warn")
             self._focus(ctx)
             self._interruptible_sleep(ctx, self._jitter(retry_pause, ctx))
@@ -681,6 +711,9 @@ class DungeonBaseTask(TuoyingFlow, Task):
                 ctx.log("拓印临摹完成，队长重新点「进入」…", level="info")
                 self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
                 continue
+            # 队长已直接进入副本 → 无需队员确认，直接算 ok
+            if popup == "direct":
+                return "ok"
             # 队长窗没等到弹窗 → 队员可能弹了准备（队长窗不一定弹）→ 准备轮询兜底
             ok = self._ready_all_windows(ctx, assignments, regions, threshold, confirm_sec)
             self._focus(ctx)
