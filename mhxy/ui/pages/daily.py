@@ -1026,8 +1026,8 @@ class DailyPage(ctk.CTkFrame):
     # ------------------------------------------------------------------
     @staticmethod
     def _sched_wait_target(sched, now):
-        """把定时串 "HH:MM" 换算成「今天的该时刻 datetime」。非法/空=不等待(None)。
-        由调用方判断已过与否（已过 → 立即执行）。"""
+        """把定时串 "HH:MM" 换算成「下一次该时刻 datetime」：今天的该时刻还没到就用今天的；
+        已过（含恰好到点）则顺延到**明天**该时刻。非法/空=不等待(None)。"""
         if not sched or ":" not in sched:
             return None
         try:
@@ -1037,12 +1037,10 @@ class DailyPage(ctk.CTkFrame):
             return None
         if not (0 <= hh <= 23 and 0 <= mm <= 59):
             return None
-        return now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-
-    @staticmethod
-    def _schedule_target_passed(target, now):
-        """定时目标时刻是否已过（含恰好到点→视为已过=立即执行）。"""
-        return target is not None and target <= now
+        target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return target
 
     # ------------------------------------------------------------------
     # 运行控制
@@ -1069,15 +1067,13 @@ class DailyPage(ctk.CTkFrame):
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         sched = (tc.get("loop", {}) or {}).get("schedule", "") or ""
         target = self._sched_wait_target(sched, datetime.now())
-        if target is not None and not self._schedule_target_passed(target, datetime.now()):
-            # 设了定时且还没到 → 进入等待
-            self._wait_until = target
-            self.btn_run.configure(text=f"等待到 {target:%H:%M}…（再点取消）",
-                                   fg_color=T.WARN, hover_color=T.WARN_HOVER, state="normal")
-            self._log_line(f"已设定时延迟执行：将等到 {target:%H:%M} 才开始（再点一次按钮可取消）。", "warn")
-            return
         if target is not None:
-            self._log_line(f"定时时刻 {target:%H:%M} 已过，立即开始执行。", "warn")
+            # 设了定时 → 进入等待（已过则 _sched_wait_target 自动顺延到明天）
+            self._wait_until = target
+            self.btn_run.configure(text=f"等待到 {target:%m-%d %H:%M}…（再点取消）",
+                                   fg_color=T.WARN, hover_color=T.WARN_HOVER, state="normal")
+            self._log_line(f"已设定时延迟执行：将等到 {target:%Y-%m-%d %H:%M} 才开始（再点一次按钮可取消）。", "warn")
+            return
         self._start_runner()
 
     def _start_runner(self):
