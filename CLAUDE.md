@@ -76,8 +76,9 @@ mhxy/
                       daily._organize_between 在换下一个任务前调用；单个任务执行中绝不触发，曾每 tick/切前台检测被打断）——rotation 的
                       between_steps 钩子已不再挂这功能
     account_history.py 账号库（登录游戏用）：10 个固定物理槽 + 有序登录队列（最多 5 个），纯逻辑零 GUI；详见文件 docstring
-    tuoying_flow.py TuoyingFlow mixin：拓印临摹弹窗的共享编排（探测「拓印」界面→沿图案描→点「上传」→必要时描两遍，
-                    直到界面消失）；刷副本(dungeon_base)与宝图(treasure_map)共用，资产/参数只读 tasks.tuoying；详见文件 docstring
+    tuoying_flow.py TuoyingFlow mixin：拓印临摹弹窗的共享编排（探测「拓印」界面→沿图案描→点「上传」→
+                    轮询「未完成态/拓印标题」判定是否续描或完成，直到界面消失）；刷副本(dungeon_base)与宝图(treasure_map)共用，
+                    资产/参数只读 tasks.tuoying；详见文件 docstring
   tasks/  可插拔任务
     base.py     Task 基类 + 注册表（register/get_task/all_tasks）+ _make_rotation()（包多开轮转）+ dungeon_tasks()
     sniper.py   SniperTask（抢关注；内部名仍叫 sniper，tasks.sniper 不改名）：preflight() 自检 + run() 主循环；刷新=每轮重进货架 _enter_shelf()
@@ -235,10 +236,10 @@ mhxy/
     锯齿加宽笔迹；只描图案本身，**不盖满整区**——拓印判「完成度>60%」，描到图案外会拉低完成度）→ 点 `tuoying_upload` → 等界面消失；
     **资产全可选、不标不拖累就绪度**（人不标=遇弹窗转手动，描完脚本自动续跑；3 种触发见
     `core/tuoying_flow.py` 的 `TuoyingFlow`——刷副本(dungeon_base)/宝图(treasure_map)共用）。识别不出图案/截图失败 → 转手动兜底（等界面消失自动续跑），绝不盲目乱描。
-    ⚠ **拓印要描两遍（user 2026-09-11 反馈）**：一次「上传」后**图案相同的界面会再次弹出**，须再描一遍+再传一次才算过——
-    `TuoyingFlow._auto_trace` 已做成「描→上传→**确认界面不再重现**（`tuoying_gone_confirm_sec` 窗口内持续观察）→ 还弹就再来一轮」，
-    轮数上限归**拓印工具自己**：`tasks.tuoying.loop.tuoying_max_rounds`（默认2，在「工具」页「拓印」里改），
-    进本/宝图侧 `core.tuoying_flow.TuoyingFlow` 直接读这份、不再自设（旧 `tasks.dungeon.loop.tuoying_max_rounds` 有一次性迁移搬过来）；确认窗口防「界面一闪即误判通过」。
+    ⚠ **上传后轮询判定续描/完成（user 2026-10-19 拍板）**：一次「上传」后**图案相同的界面可能再次弹出**，需再描一遍。
+    `TuoyingFlow._auto_trace` 改为「描→上传→轮询『未完成态/拓印标题』判定」：检测到「未完成态」→新图案生成，继续描下一遍；
+    「未完成态」缺席且「拓印标题」缺席（持续 `tuoying_gone_confirm_sec` 短确认，防单帧误判）→拓印完成；
+    判据依赖标定「拓印标题」，期间标题仍在会一直等待（未标标题时不误判完成，转手动兜底）。不再按固定「最大轮数」限制。
     `scribble.trace_pattern` 是通用能力：任何「沿图案描一遍」类校验都能复用。
     ⚠ **标定位置（user 2026-09-08 拍板、2026-09-18 迁工具页、同日拍板只读新值）**：`tuoying_title`/`tuoying_upload`/`tuoying_area` 在**「工具」页「拓印」**里标，
     存 `tasks.tuoying`（模板键集 `TUOYING_TPL_KEYS`），一次标定覆盖全部副本；读取 = `dungeon_base._load_flags` +

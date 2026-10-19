@@ -486,9 +486,7 @@
             "items": []
         },
         "tuoying": {
-            "loop": {
-                "tuoying_max_rounds": 2
-            },
+            "loop": {},
             "regions": {
                 "tuoying_area": null
             },

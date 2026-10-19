@@ -44,7 +44,7 @@ from .base import Task, register   # noqa: F401  (register 供子类用，语义
 # battle_flag / clock 在「任务配置」页全局共享标定，task_config 叠加进本任务 templates）。
 # ⚠ 模板要在这里登记，_load_flags 只按本列表建字典 —— 漏登记 = 运行期永远取不到该模板
 #   （踩过：claim_task 漏加 → 这一步永远走「没标定」分支、静默失效）。
-_FLAG_KEYS = ["card", "join", "confirm", "enter", "battle_flag", "clock", "claim_task"]
+# （现移到 WeeklyBaseTask 类属性，子类可覆盖删减步骤）
 
 
 def without_templates(spec, *drop_keys):
@@ -64,6 +64,9 @@ class WeeklyBaseTask(Task):
     title = "周常"
     description = "周常基类"
     # 多人任务：先自动组队，再由队长窗口跑两阶段循环（不做逐号轮转）
+
+    # 本任务用到的模板键（子类可覆盖以删减步骤，如门派闯关去掉 confirm/enter/battle_flag）
+    _FLAG_KEYS = ["card", "join", "confirm", "enter", "battle_flag", "clock", "claim_task"]
 
     CALIBRATION = {
         "regions": [
@@ -505,7 +508,7 @@ class WeeklyBaseTask(Task):
     def _load_flags(self, tc):
         templates = tc.get("templates", {})
         return {k: vision.load_template(templates.get(k)) if templates.get(k) else None
-                for k in _FLAG_KEYS}
+                for k in self._FLAG_KEYS}
 
     def _find_join_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop):
         """统一实现见 base.Task._find_join_in_column（整列枚举取离卡片行最近那枚「参加」）。

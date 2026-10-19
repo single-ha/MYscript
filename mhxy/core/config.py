@@ -171,20 +171,20 @@ enter_dungeon                选择副本对话框里的「进入」按钮（普
             "confirm_sec": 40,           # 侠士各队员点「准备」的总超时（队长不作为等待对象）
             "captain_confirm_probe_sec": 5.0,  # 点「进入」后留在【队长窗口】等「准备/拓印」弹窗二选一的窗口（user 2026-10-11 重构）：
                                           #   等不到才走后续确认轮询兜底；同理用于拓印描完两遍重进后再次等待
-            "tuoying_reenter_max": 3,    # 拓印描两遍完成后队长重新点「进入」的封顶轮数（防反复弹窗死循环）
+            "tuoying_reenter_max": 3,    # 拓印处理完成后队长重新点「进入」的封顶轮数（防反复弹窗死循环）
             "tuoying_detect_sec": 8.0,   # 点「进入」后轮询是否弹出「拓印」临摹界面的时长
-            "tuoying_passes": 2,         # 拓印临摹：单遍内沿图案骨架描几轮（每轮各笔画重新随机，提升覆盖）；整个拓印可能需要多遍(=弹窗会再次弹出)，见 tuoying_max_rounds
+            "tuoying_passes": 2,         # 拓印临摹：单遍内沿图案骨架描几轮（每轮各笔画重新随机，提升覆盖）
             "tuoying_lateral": 3.0,      # 拓印临摹：随描轨迹垂直于笔画走向的横向偏移上限(像素)，笔迹加宽更易达标
             "tuoying_sample_step": 5.0,  # 拓印临摹：骨架采样间距(像素)，越小越贴笔画(也更慢)
             "tuoying_speed": 1.0,        # 拓印临摹：走笔速度倍率，越大越快(用户要求整遍描摹 < 2 分钟)
             "tuoying_stripe_spacing": 8.0,  # 已废弃（拓印改骨架描摹）——保留兼容旧配置读取
             "tuoying_upload_sec": 6.0,   # 点「上传」后等按钮出现/消失的超时（点上传按钮的轮询用）
-            "tuoying_gone_confirm_sec": 1.2,  # 判定拓印界面「真消失」的确认窗口：消失后再持续观察这么久都不重现，
-                                          #   才算通过（防止上传后界面一闪即认定成功、实则第二遍还等着描）
-            "tuoying_ready_sec": 10.0,   # 点「上传」后等「未完成状态按钮」重现(新图案已生成→接着描下一遍)
-                                          #   或界面关闭(服务器判定通过→完成)的时长；超时都判断不出→再描一遍。
-                                          #   需标定「未完成状态按钮」才生效；没标则退回等标题消失的旧判据。
-            "tuoying_ready_settle_sec": 0.5,  # 检测到「未完成状态按钮」重现(=新图案就绪)后、开描前的安定等待
+            "tuoying_gone_confirm_sec": 0.4,  # 判定拓印界面「真消失」的确认窗口：上传后「未完成态」和「拓印标题」都不见时，
+                                              #   要持续观察这么久都还不见才判「拓印完成」（防单帧闪烁误判）
+            "tuoying_ready_sec": 10.0,   # 点「上传」后轮询「未完成状态按钮（未完成态）」和「拓印标题」的时长：
+                                          #   见「未完成态」→继续描下一遍；两者都不见且持续确认窗口→判完成；
+                                          #   超时→转手动兜底。期间标题仍在会一直等。
+            "tuoying_ready_settle_sec": 2.0,  # 检测到「未完成状态按钮」重现（新图案就绪）后、开描前的安定等待
             "enter_check_sec": 10.0,     # 普通副本点「进入」后验证已进本的时长（出现结算/跳过剧情等即算进）；超时重试点「进入」
             "scroll_step": -3,           # 活动列表每次滚轮格数(负=向下翻)
             "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
@@ -879,9 +879,7 @@ DEFAULT_CONFIG = {
         #   「拓印」页可单独跑一遍完整临摹（沿图案描一遍 + 自动点「上传」）。
         "tuoying": {
             "loop": {
-                "tuoying_max_rounds": 2,     # 临摹最大轮次：一次「上传」后界面可能再次弹出（要描两次才过），
-                                             #   每轮=描+上传+确认界面不再重现；超过轮数仍弹→转手动不复描。
-                                             #   ⚠ 归拓印工具自己（进本逻辑直接读这份，dungeon.loop 不再放）
+
                 # 图案提取参数（core/scribble）：拓印图案对比低、又嵌在对话框里，用「局部对比双极性」识别、
                 # 剔框线/直线；坏画面时按下图调这些即可（标定不准也先看调试图）。详见 scribble.DEFAULTS。
                 "tuoying_bg_kernel": 41,     # 局部背景中值核(像素)：越大越只压大面积渐变、保留中等笔画
@@ -1014,31 +1012,7 @@ def load_config():
         save_config(cfg)
     if _migrate_sr_rounds_and_victory(cfg):
         save_config(cfg)
-    if _migrate_tuoying_rounds(cfg):
-        save_config(cfg)
     return cfg
-
-
-def _migrate_tuoying_rounds(cfg):
-    """一次性迁移（2026-10-11）：「临摹多少遍」设置从 tasks.dungeon.loop.tuoying_max_rounds
-    挪到拓印工具自己的 tasks.tuoying.loop.tuoying_max_rounds（进本逻辑直接读这份）。把旧值
-    搬过去（新值没设时），并从 dungeon.loop 清掉。返回是否改动（改动由 load_config 存盘）。"""
-    tasks = cfg.get("tasks") or {}
-    tuo = tasks.get("tuoying") or {}
-    tloop = tuo.get("loop") or {}
-    dloop = ((tasks.get("dungeon", {}) or {}).get("loop") or {})
-    if "tuoying_max_rounds" not in dloop:
-        return False
-    # 注意：load_config 里先 deep-merge 默认配置，tloop 通常已经带默认值(2)，
-    # 不能再用「not tloop.get(...)」判断“新键是否未设置”，否则旧值会被默认值吞掉。
-    default_rounds = (((DEFAULT_CONFIG.get("tasks", {}) or {}).get("tuoying", {})
-                      or {}).get("loop", {}) or {}).get("tuoying_max_rounds", 2)
-    cur = tloop.get("tuoying_max_rounds")
-    if cur is None or cur == default_rounds:
-        tloop["tuoying_max_rounds"] = dloop["tuoying_max_rounds"]
-        tuo["loop"] = tloop
-    dloop.pop("tuoying_max_rounds", None)
-    return True
 
 
 def _migrate_dungeon_ready(cfg):

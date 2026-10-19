@@ -9,9 +9,9 @@
 在其「拓印临摹绘制区」里识别图案并沿骨架描一遍 → 点「上传」→ 判定「新图案已生成」还是「界面关闭」（见下）→
 可能要多描多传几遍。
 
-判定（user 2026-10-17 拍板）：拓印弹窗点「上传」后**通常不关闭**、界面标题一直在，故不能靠「等标题消失」。
-改标一个「未完成状态按钮」（临摹未完成时按钮的样子，描完会变「完成」态）——点「上传」后新图案生成时它重现，
-据此判定「该描下一遍」；服务器判定通过后弹窗才自动关闭，则判完成。未标该按钮时退回旧的「等标题消失」判据。
+判定（user 2026-10-19 拍板，取代旧的「固定描 N 遍」）：点「上传」后不再按固定遍数循环，改为轮询两个标志——
+① 「未完成状态按钮（未完成态）」重现=服务器已生成新图案、继续描下一遍；② 「未完成态」缺席且「拓印标题」缺席
+（持续一个短确认窗口，防单帧误判）=拓印完成、界面已关。判据依赖同时标定「未完成状态按钮」与「拓印标题」。
 
 与刷副本共用一套资产与手感：
   · 标定资产存 tasks.tuoying（绘制区 + 标题/上传/未完成状态按钮模板，在「拓印」页标一次，所有副本共用）
@@ -19,7 +19,8 @@
     图案提取参数（tuoying_polarity/ink_contrast/... 见 core/scribble.DEFAULTS）读 tasks.tuoying.loop，
     保证这里的手感=副本内自动临摹的手感。
   · 识别失败时把 frame/mask/skel/strokes/trace 诊断图落 captures_debug/拓印描摹/（tuoying_save_debug 可关）。
-完整自动流程（探测 → 描 → 上传 → 确认界面不再重现的循环）的参照实现见 dungeon_base._auto_trace。
+完整自动流程（探测 → 描 → 上传 → 轮询「未完成态/标题」决定续描还是完成）的共享实现见 core/tuoying_flow.py
+的 TuoyingFlow（刷副本/宝图共用）；这里是把临摹界面调到前台再跑的单窗版。
 资产只读 tasks.tuoying（旧 tasks.shared / tasks.dungeon 残留值不沿用）。
 """
 
@@ -49,9 +50,9 @@ class TuoyingTask(Task):
              "鼠标沿图案描一遍；所有副本共用，标一次即可。", False),
         ],
         "templates": [
-            ("tuoying_title", "「拓印」界面标题", "(可选但建议)刷副本点「进入」后，队长窗口偶尔会弹「拓印」临摹界面："
-             "框标题或独特边框即可识别。所有副本共用。标了=上传后能自动确认界面已关闭/还会重现再描；"
-             "不标=上传后按固定等待兜底。", True),
+            ("tuoying_title", "「拓印」界面标题", "(必标)刷副本点「进入」后，队长窗口偶尔会弹「拓印」临摹界面："
+             "框标题或独特边框即可识别。所有副本共用。点「上传」后靠它判「界面已关闭」——「标题不见了」且"
+             "「未完成态也不见」才算拓印完成；不标则无法自动判定完成，只能转手动兜底。", False),
             ("tuoying_upload", "「上传/完成」按钮（完成态）", "(必标)拓印临摹达成后按钮的样子——即「完成」态，也是要点击的按钮。"
              "全部副本共用。它**一直存在**、只在未完成↔完成两态间改外观（差异只是局部亮度），故单靠它没法判「是否达标」；"
              "达标靠它与下面「未完成态」模板做像素比对（谁更接近），再由坐标点击。", False),
@@ -72,6 +73,9 @@ class TuoyingTask(Task):
             problems.append("还没标定「拓印描摹绘制区」——请先点「标定（拓印）」框选它")
         if not (tc.get("templates") or {}).get("tuoying_upload"):
             problems.append("还没标定「上传」按钮——真执行要靠它自动提交临摹，请先点「标定（拓印）」框选")
+        if not (tc.get("templates") or {}).get("tuoying_title"):
+            problems.append("还没标定「拓印」界面标题——点「上传」后要靠它判「界面已关闭」才能自动收尾，"
+                            "请先点「标定（拓印）」框选")
         if not ctx.select_windows():
             problems.append("没选到任何目标窗口 —— 请先「选择窗口」")
         return (len(problems) == 0), problems
@@ -137,19 +141,11 @@ class TuoyingTask(Task):
             return
         self._trace_loop(ctx, loop, rect, win_rect, up_tpl, title_tpl, todo_tpl, params, polarity, save_debug)
 
-    def _tuoying_max_rounds(self, ctx, loop):
-        """临摹「多少遍」的设置归拓印工具自己（tasks.tuoying.loop.tuoying_max_rounds）。
-        读不到时用旧 tasks.dungeon.loop 值兜底（迁移后一般不存在）。"""
-        tuo = ((ctx.cfg or {}).get("tasks", {}) or {}).get("tuoying", {}) or {}
-        v = ((tuo.get("loop", {}) or {}).get("tuoying_max_rounds")) or loop.get("tuoying_max_rounds", 2)
-        return max(1, int(v))
-
     def _trace_loop(self, ctx, loop, rect, win_rect, up_tpl, title_tpl, todo_tpl, params, polarity, save_debug):
-        """完整临摹循环：沿图案描 → 点「上传」→ 判定「新图案就绪」还是「界面关闭」，可能要多描多传几遍。
-        判据与 dungeon_base._auto_trace 一致；这里是「手动把临摹界面调到前台再跑」的单窗版。"""
+        """完整临摹循环：沿图案描 → 点「上传」→ 轮询「未完成态/标题」决定「继续描下一遍」还是「完成」。
+        判据与 core/tuoying_flow.TuoyingFlow._tuoying_await_next 一致；这里是「手动把临摹界面调到前台再跑」的单窗版。"""
         ctx.log("拓印：按标定绘制区自动沿图案描一遍并点「上传」，跑完整次临摹…", level="warn")
-        max_rounds = self._tuoying_max_rounds(ctx, loop)
-        confirm_sec = loop.get("tuoying_gone_confirm_sec", 1.2)
+        confirm_sec = loop.get("tuoying_gone_confirm_sec", 0.4)
         upload_timeout = loop.get("tuoying_upload_sec", 6.0)
         lateral = loop.get("tuoying_lateral", 3.0)
         sample_step = loop.get("tuoying_sample_step", 5.0)
@@ -157,10 +153,10 @@ class TuoyingTask(Task):
         if todo_tpl is None:
             ctx.log("⚠ 未标定「未完成状态按钮」→ 描摹中途无法判定图案是否达标，只能描完再点「上传」。"
                     "想「描够一笔就停」请在本页补标该项。", level="warn")
-        for rnd in range(1, max_rounds + 1):
-            if ctx.should_stop():
-                return
-            ctx.log(f"拓印临摹（第 {rnd}/{max_rounds} 遍）：沿图案骨架描 {loop.get('tuoying_passes', 2)} 轮…",
+        rnd = 0
+        while not ctx.should_stop():
+            rnd += 1
+            ctx.log(f"拓印临摹（第 {rnd} 遍）：沿图案骨架描 {loop.get('tuoying_passes', 2)} 轮…",
                     level="warn")
             clicked = False
             for _pass in range(max(1, int(loop.get("tuoying_passes", 2)))):
@@ -212,68 +208,69 @@ class TuoyingTask(Task):
                 ctx.log("⚠ 没点到「上传」（上传按钮模板没标定/没找到），请手动点「上传」。", level="warn")
                 self._wait_gone(ctx, title_tpl, win_rect, loop)
                 return
-            # 上传后判定：见 dungeon_base._tuoying_await_next 的判据。
+            # 上传后判定（同一套判据，见 core/tuoying_flow.TuoyingFlow._tuoying_await_next）。
             res = self._await_next(ctx, title_tpl, todo_tpl, up_tpl, win_rect, loop,
                                    confirm_sec=confirm_sec, upload_timeout=upload_timeout)
             if res == "closed":
                 ctx.log("拓印临摹通过，界面已关闭。", level="hit")
                 return
             if res == "unknown":
-                # 没标「界面标题」也没标「未完成状态按钮」→ 无法自动确认；等上传生效的固定窗口后完成。
-                ctx.log("已点「上传」；未标定「界面标题/未完成状态按钮」，无法自动确认界面关闭，等待上传生效后完成。",
-                        level="info")
+                # 没标「界面标题」→ 无法判「界面已关闭」，也不能靠「未完成态缺席」误判；等上传生效的固定窗口后收尾。
+                ctx.log("已点「上传」；未标定「界面标题」，无法自动确认界面关闭，等待上传生效后完成。", level="info")
                 self._interruptible_sleep(ctx, self._jitter(upload_timeout, ctx))
                 return
             if res == "ready":
-                ctx.log(f"上传后检测到「未完成状态按钮」——新图案已生成，进入第 {rnd + 1} 遍…", level="hit")
-                self._interruptible_sleep(ctx, self._jitter(loop.get("tuoying_ready_settle_sec", 0.5), ctx))
-            else:
-                ctx.log(f"上传后未判断出新图案或界面关闭（可能没识别到），进入第 {rnd + 1} 遍…", level="warn")
-        ctx.log("⚠ 自动描完多遍后拓印界面仍会重现（校验可能没通过）——请手动临摹并点「上传」。", level="warn")
-        self._wait_gone(ctx, title_tpl, win_rect, loop)
+                ctx.log("上传后检测到「未完成状态按钮」——新图案已生成，继续描下一遍…", level="hit")
+                self._interruptible_sleep(ctx, self._jitter(loop.get("tuoying_ready_settle_sec", 2.0), ctx))
+                continue
+            # timeout：既没判出新图案、也没判出界面关闭（未标定「未完成态/标题」或识别不到）→ 转手动兜底
+            ctx.log("⚠ 上传后既没判出新图案、也没判出界面关闭（未标定「未完成状态按钮/标题」或识别不到）——转手动兜底。",
+                    level="warn")
+            self._wait_gone(ctx, title_tpl, win_rect, loop)
+            return
+        return
 
     def _await_next(self, ctx, title_tpl, todo_tpl, up_tpl, win_rect, loop, confirm_sec, upload_timeout):
-        """上传后判定：新图案已生成（按钮回到「未完成」态）→ "ready"（接着描下一遍）；
-        服务器判定通过、界面关闭 → "closed"（完成）；超时都判断不出 → "timeout"；没有任何可判据 → "unknown"。
+        """点「上传」后轮询判定下一步（同一套判据，见 core/tuoying_flow.TuoyingFlow._tuoying_await_next）：
+          · 检测到「未完成状态按钮（未完成态）」→ "ready"：新图案已生成，继续描下一遍；
+          · 「未完成态」缺席 且「拓印标题」缺席（持续 confirm_sec，防单帧误判）→ "closed"：拓印完成；
+          · 其余（上传后新图案尚未渲染出来的延迟、标题仍在）→ 继续轮询；
+          · ready_sec 内两样都判不出 → "timeout"；完全没标「标题」→ "unknown"（调用方按固定等待收尾）。
 
-        没标「未完成状态按钮」时退回旧判据（等标题消失，见 _confirmed_gone）——但拓印弹窗上传后通常不关、
-        标题一直在，故旧判据基本只会超时。判据同 dungeon_base._tuoying_await_next。
+        退化：未标「未完成状态按钮」→ 退回旧「等标题消失」判据（_confirmed_gone）。
 
         ⚠ 「新图案就绪」不能只查「未完成模板命中」——TM_CCOEFF 下**未完成/完成两态模板都命中**（实测都 ~0.98），
         上传后旧图案的「完成」态也会被误判成 ready。故带 upload 模板时用 SQDIFF 比两态（vision.sqdiff_score）：
         仅当更接近「未完成」态才算新图案就绪。"""
+        if title_tpl is None:
+            return "unknown"          # 没标题判不了「标题缺席」→ 交调用方按固定等待收尾，绝不误判完成
         if todo_tpl is None:
             gone = self._confirmed_gone(ctx, title_tpl, win_rect, loop,
                                         confirm_sec=confirm_sec, upload_timeout=upload_timeout)
-            if gone is True:
-                return "closed"
-            if gone is None:
-                return "unknown"
-            return "timeout"
+            return "closed" if gone is True else "timeout"
         threshold = loop.get("match_threshold", 0.85)
         cap = loop.get("tuoying_state_max_sqdiff", 0.06)
         ready_sec = loop.get("tuoying_ready_sec", 10.0)
         deadline = time.time() + ready_sec
-        no_gone_since = None
+        no_both_since = None
         while not ctx.should_stop():
             cur = ctx.window.grab_screen(win_rect)
             if cur is not None:
                 if up_tpl is not None:
                     s_todo = vision.sqdiff_score(cur, todo_tpl)
                     s_up = vision.sqdiff_score(cur, up_tpl)
-                    ready = (min(s_todo, s_up) <= cap) and (s_todo < s_up)
+                    todo_state = (min(s_todo, s_up) <= cap) and (s_todo < s_up)
                 else:
-                    ready = vision.match(cur, todo_tpl, threshold) is not None
-                if ready:
+                    todo_state = vision.match(cur, todo_tpl, threshold) is not None
+                if todo_state:
                     return "ready"
-                if title_tpl is not None:
-                    if vision.match(cur, title_tpl, threshold) is None:
-                        if no_gone_since is None:
-                            no_gone_since = time.time()
-                        elif time.time() - no_gone_since >= confirm_sec:
-                            return "closed"
-                    else:
-                        no_gone_since = None
+                if vision.match(cur, title_tpl, threshold) is None:
+                    if no_both_since is None:
+                        no_both_since = time.time()
+                    elif time.time() - no_both_since >= confirm_sec:
+                        return "closed"
+                else:
+                    no_both_since = None
             if time.time() > deadline:
                 return "timeout"
             self._interruptible_sleep(ctx, self._jitter(0.25, ctx))

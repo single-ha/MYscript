@@ -25,7 +25,7 @@ class TuoyingPage(ctk.CTkFrame):
         self.runner = None
         self._tuo_cal_dialog = None   # 「标定（拓印）」去重槽
         self.lbl_ready = None         # 就绪状态标签
-        self.var_rounds = None        # 「临摹多少遍」输入框 StringVar
+        self.var_rounds = None        # (已废弃)「临摹多少遍」输入框 StringVar
 
         self.grid_columnconfigure(0, weight=1)
 
@@ -90,10 +90,10 @@ class TuoyingPage(ctk.CTkFrame):
         txt.grid(row=0, column=0, sticky="ew")
         self.lbl_ready = ctk.CTkLabel(txt, text="", font=self.fonts["body"], text_color=T.TEXT_DIM, anchor="w")
         self.lbl_ready.pack(fill="x", anchor="w", pady=(4, 0))
-        sub = ctk.CTkLabel(txt, text="就绪要求：框选好「拓印描摹绘制区」+ 标定「上传」按钮即可全自动"
-                                     "（描→上传→判定界面关闭/新图案）。强烈建议再标一个「未完成状态按钮」"
+        sub = ctk.CTkLabel(txt, text="就绪要求：框选好「拓印描摹绘制区」+ 标定「上传」按钮 + 标定「拓印」界面标题即可全自动"
+                                     "（描→上传→轮询「未完成态/标题」判定续描或完成）。强烈建议再标一个「未完成状态按钮」"
                                      "（临摹未完成时按钮的样子；描完会变「完成」态）：点「上传」后拓印弹窗通常"
-                                     "不会关，靠这个按钮能准确判定「新图案已生成、要描下一遍」，比等标题消失快得多。"
+                                     "不会关，靠这个按钮能准确判定「新图案已生成、要描下一遍」。"
                                      "对所选窗口里的第一个号操作：把拓印临摹界面调到前台再点「开始拓印」。"
                                      "绘制区要**尽量贴着图案所在的纸面框**（别把对话框边框/分割线框进来）。",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
@@ -102,18 +102,15 @@ class TuoyingPage(ctk.CTkFrame):
 
         ctk.CTkFrame(c, fg_color=T.BORDER, height=1).pack(fill="x", padx=16, pady=(10, 0))
 
-        self.var_rounds, _ = param_entry(
-            c, self.fonts, "临摹多少遍", "2", self._on_max_rounds,
-            tooltip="一次「上传」后图案相同的临摹界面可能再次弹出、要再描一次才算过；这里设最多描几遍，"
-                    "超了转手动。刷副本点「进入」偶遇的拓印弹窗也读这份设置（不另设）。")
-
-        tip = ctk.CTkLabel(c, text="说明：拓印只由刷副本的队长窗口触发，队员不弹；自动临摹会认图案、描两遍并点上传，"
-                                   "是全部副本共用的共享能力。它和整理背包一样是「共享能力」，平时不用特意来这个页——"
+        tip = ctk.CTkLabel(c, text="说明：拓印只由刷副本的队长窗口触发，队员不弹；自动临摹会认图案、沿骨架描并自动点「上传」，"
+                                   "点完上传后轮询「未完成状态按钮」和「拓印标题」判定——见「未完成态」就继续描，"
+                                   "两者都不见（持续短暂确认后）就判完成。是全部副本共用的共享能力。"
+                                   "它和整理背包一样是「共享能力」，平时不用特意来这个页——"
                                    "只有首次标定、或想验证描摹手感时才需要这里。"
                                    "认不出图案时会把调试图（frame/mask/skel/strokes/trace）自动存到 "
                                    "captures_debug/拓印描摹/，也可点「离线预览描摹…」拿任意截图先离线验证。",
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
-        tip.pack(fill="x", padx=16, pady=(0, 14))
+        tip.pack(fill="x", padx=16, pady=(14, 14))
         bind_wraplength(tip)
 
     # ------------------------------------------------------------------
@@ -124,39 +121,19 @@ class TuoyingPage(ctk.CTkFrame):
         tuo_tc = cfg_mod.task_config(self.app.cfg, "tuoying")
         tpl = (tuo_tc.get("templates") or {}) or {}
         reg = (tuo_tc.get("regions") or {}) or {}
-        if self.var_rounds is not None:
-            self.var_rounds.set(str((tuo_tc.get("loop") or {}).get("tuoying_max_rounds", 2)))
         area_ok = bool(reg.get("tuoying_area"))
         up_ok = bool(tpl.get("tuoying_upload"))
         title_ok = bool(tpl.get("tuoying_title"))
         todo_ok = bool(tpl.get("tuoying_todo"))
-        ready = area_ok and up_ok
+        ready = area_ok and up_ok and title_ok
         self.lbl_ready.configure(
             text=f"绘制区：{'● 已框选' if area_ok else '○ 未标定'}；上传按钮：{'● 已标定' if up_ok else '○ 未标定'}"
-                 + f"；未完成状态按钮：{'●' if todo_ok else '○'}(可选建议)"
-                 + f"；标题模板：{'●' if title_ok else '○'}(可选建议)"
-                 + ("　✓ 可全自动临摹" if ready else "　（需框选绘制区 + 上传按钮）"),
+                 + f"；标题模板：{'●' if title_ok else '○'}（判定完成所必需）"
+                 + f"；未完成状态按钮：{'●' if todo_ok else '○'}（可选建议）"
+                 + ("　✓ 可全自动临摹" if ready else "　（需框选绘制区 + 上传按钮 + 标题）"),
             text_color=T.SUCCESS if ready else T.WARN)
 
-    def _on_max_rounds(self, raw):
-        """「临摹多少遍」改动即保存到 tasks.tuoying.loop.tuoying_max_rounds（进本遇拓印弹窗同读这份）。"""
-        try:
-            val = max(1, int(float(raw)))
-        except (TypeError, ValueError):
-            val = None
-        cfg = cfg_mod.load_config()
-        loopc = cfg.setdefault("tasks", {}).setdefault(self.TASK_NAME, {}).setdefault("loop", {})
-        if val is None:
-            loopc.setdefault("tuoying_max_rounds", 2)
-            val = loopc["tuoying_max_rounds"]
-        else:
-            loopc["tuoying_max_rounds"] = val
-        cfg_mod.save_config(cfg)
-        self.app.cfg = cfg
-        try:
-            self.var_rounds.set(str(val))
-        except Exception:
-            pass
+
 
     def _open_trace_preview(self):
         """离线预览描摹：选一张拓印界面截图，跑一遍图案提取、把诊断图落 captures_debug（按日期），

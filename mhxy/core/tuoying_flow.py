@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-拓印临摹弹窗的自动处理（共享编排）：探测「拓印」界面 → 沿图案描 → 点「上传/完成」→
-判定界面关闭还是再弹一遍（必要时描两遍）→ 直到界面消失。
+拓印临摹弹窗的自动处理（共享编排）：探测「拓印」界面 → 沿图案描 → 点「上传」→
+点完轮询「未完成态/拓印标题」判定（未见「未完成态」且「标题」也不见=完成；见「未完成态」=新图案→继续描）
+→ 直到界面消失或转手动兜底。
+
+判定（user 2026-10-19 拍板，取代旧的「固定描 N 遍」设计）：点「上传」后不再按固定遍数循环，
+改为轮询两个标志——① 「未完成状态按钮（未完成态）」重现=服务器已生成新图案、要继续描；
+② 「未完成态」缺席且「拓印标题」缺席（持续一个短确认窗口，防单帧误判）=拓印完成、界面已关。
+其余（如上传后新图案尚未渲染出来的延迟、标题仍在）→保持轮询。判据依赖标定「拓印标题」。
 
 背景：刷副本点「进入」后队长窗口【偶发】弹出「拓印」临摹界面（无跳过/放弃按钮，必须描完），
 宝图任务点「听听无妨」后也可能弹同一界面。两处都要同一套处理，故抽成本共享 mixin，
@@ -95,13 +101,7 @@ class TuoyingFlow:
             self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
         return False
 
-    # ---- 自动临摹：沿图案描 + 点上传 + 等界面消失；一次上传后可能再弹（要拓印两遍）→ 循环到不再重现 ----
-    def _tuoying_max_rounds(self, ctx):
-        """临摹「多少遍」的设置归拓印工具自己（tasks.tuoying.loop.tuoying_max_rounds，工具页可改）——
-        进本弹窗不再自己设。读不到时用旧 tasks.dungeon.loop 值兜底（迁移后一般不存在）。"""
-        v = (self._tuo_assets(ctx)["loop"].get("tuoying_max_rounds")) or self._tuo_loop(ctx).get("tuoying_max_rounds", 2)
-        return max(1, int(v))
-
+    # ---- 自动临摹：沿图案描 + 点上传，之后按「未完成态/标题」轮询决定继续描还是完成 ----
     def _auto_trace(self, ctx, regions, threshold):
         assets = self._tuo_assets(ctx)
         loop = self._tuo_loop(ctx)
@@ -112,8 +112,7 @@ class TuoyingFlow:
                     level="warn")
             ctx.log("想全自动就在「工具→拓印」页里补标这两项。", level="warn")
             return self._wait_tuoying_gone(ctx, regions, threshold)
-        max_rounds = self._tuoying_max_rounds(ctx)
-        confirm_sec = loop.get("tuoying_gone_confirm_sec", 1.2)
+        confirm_sec = loop.get("tuoying_gone_confirm_sec", 0.4)
         # 图案提取参数在拓印工具自己的命名空间（tasks.tuoying.loop.tuoying_*），与工具页单独跑同源。
         tuo_loop = assets["loop"]
         params = scribble.params_from_loop(tuo_loop)
@@ -125,10 +124,10 @@ class TuoyingFlow:
         if assets["todo"] is None:
             ctx.log("⚠ 未标定「未完成状态按钮」→ 描摹中途无法判定图案是否达标，只能描完再点「上传」。"
                     "想「描够一笔就停」请去「工具→拓印」补标该项。", level="warn")
-        for rnd in range(1, max_rounds + 1):
-            if ctx.should_stop():
-                return False
-            ctx.log(f"自动临摹（第 {rnd}/{max_rounds} 遍）：识别图案笔画并沿骨架描 {loop.get('tuoying_passes', 2)} 轮…",
+        rnd = 0
+        while not ctx.should_stop():
+            rnd += 1
+            ctx.log(f"自动临摹（第 {rnd} 遍）：识别图案笔画并沿骨架描 {loop.get('tuoying_passes', 2)} 轮…",
                     level="warn")
             clicked = False
             for _pass in range(max(1, int(loop.get("tuoying_passes", 2)))):
@@ -191,49 +190,56 @@ class TuoyingFlow:
                 ctx.log("拓印临摹通过，界面已关闭。", level="hit")
                 return True
             if res == "ready":
-                ctx.log(f"上传后检测到「未完成状态按钮」——新图案已生成，进入第 {rnd + 1} 遍…", level="hit")
-                self._interruptible_sleep(ctx, self._jitter(loop.get("tuoying_ready_settle_sec", 0.5), ctx))
-            else:
-                ctx.log(f"上传后未判断出新图案或界面关闭（可能没识别到），进入第 {rnd + 1} 遍…", level="warn")
-        ctx.log("⚠ 自动描完多遍后拓印界面仍会重现（校验可能没通过）——请手动临摹并点「上传」；脚本会等界面消失后自动继续。",
-                level="warn")
-        return self._wait_tuoying_gone(ctx, regions, threshold)
+                ctx.log("上传后检测到「未完成状态按钮」——新图案已生成，继续描下一遍…", level="hit")
+                self._interruptible_sleep(ctx, self._jitter(loop.get("tuoying_ready_settle_sec", 2.0), ctx))
+                continue
+            # timeout：既没判出新图案、也没判出界面关闭（未标定「未完成态/标题」或识别不到）→ 转手动兜底
+            ctx.log("⚠ 上传后既没判出新图案、也没判出界面关闭（未标定「未完成状态按钮/标题」或识别不到）——"
+                    "转手动兜底：请手动临摹并点「上传」；脚本会等拓印界面消失后自动继续。", level="warn")
+            return self._wait_tuoying_gone(ctx, regions, threshold)
+        return False
 
     def _tuoying_await_next(self, ctx, regions, threshold, confirm_sec, upload_timeout):
-        """上传后判定：新图案已生成（按钮回到「未完成」态）→ "ready"（接着描下一遍）；
-        服务器判定通过、界面关闭 → "closed"（完成）；超时都判断不出 → "timeout"。
-
-        没标「未完成状态按钮」时退回旧判据（等标题消失，见 _tuoying_confirmed_gone）——但拓印弹窗上传后
-        通常**不关**、标题一直在，故旧判据基本只会超时（=再描一遍）。
+        """点「上传」后轮询判定下一步（user 2026-10-19 拍板，取代旧的「固定描 N 遍」）：
+          · 检测到「未完成状态按钮（未完成态）」→ "ready"：服务器已生成新图案，继续描下一遍；
+          · 「未完成态」缺席 且「拓印标题」缺席（持续 confirm_sec，防单帧误判）→ "closed"：拓印完成；
+          · 其余（如上传后新图案尚未渲染出来的延迟、标题仍在）→ 继续轮询；
+          · ready_sec 内两样都判不出 → "timeout"（调用方转手动兜底）。
 
         ⚠「新图案就绪」不能只查「未完成模板命中」——TM_CCOEFF 下**两态模板都会命中**（实测都 ~0.98），上传后
-        旧图案的「完成」态会被误判成 ready。带 upload 模板时用 SQDIFF 比两态：仅当更接近「未完成」态才算就绪。"""
+        旧图案的「完成」态会被误判成 ready。故带 upload 模板时用 SQDIFF 比两态：仅当更接近「未完成」态才算就绪。
+
+        判据依赖：需标定「拓印标题」（判「标题缺席」；否则无法区分「延迟中」与「已完成」）。
+        退化：未标「未完成状态按钮」→ 退回旧「等标题消失」判据；连「标题」也没标 → 直接 "timeout"（不误判完成）。"""
         assets = self._tuo_assets(ctx)
-        loop = self._tuo_loop(ctx)
         todo_tpl = assets["todo"]
+        title_tpl = assets["title"]
+        if title_tpl is None:
+            return "timeout"          # 没标题就判不了「标题缺席」→ 交调用方转手动兜底，绝不误判完成
         if todo_tpl is None:
+            # 没法判「未完成态」→ 退回等标题消失的旧判据
             return "closed" if self._tuoying_confirmed_gone(ctx, regions, threshold,
                                                              confirm_sec=confirm_sec,
                                                              upload_timeout=upload_timeout) else "timeout"
+        loop = self._tuo_loop(ctx)
         up_tpl = assets["upload"]
-        title_tpl = assets["title"]
         cap = loop.get("tuoying_state_max_sqdiff", 0.06)
         ready_sec = loop.get("tuoying_ready_sec", 10.0)
         scene_rect = self._scene_rect(ctx, regions)
         deadline = time.time() + ready_sec
-        no_gone_since = None
+        no_both_since = None
         while not ctx.should_stop():
             cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
-            if cur is not None and self._tuoying_is_todo_state(cur, todo_tpl, up_tpl, cap):
-                return "ready"
-            if title_tpl is not None:
+            if cur is not None:
+                if self._tuoying_is_todo_state(cur, todo_tpl, up_tpl, cap):
+                    return "ready"
                 if self._tuo_match(cur, scene_rect, title_tpl, threshold) is None:
-                    if no_gone_since is None:
-                        no_gone_since = time.time()
-                    elif time.time() - no_gone_since >= confirm_sec:
+                    if no_both_since is None:
+                        no_both_since = time.time()
+                    elif time.time() - no_both_since >= confirm_sec:
                         return "closed"
                 else:
-                    no_gone_since = None
+                    no_both_since = None
             if time.time() > deadline:
                 return "timeout"
             self._interruptible_sleep(ctx, self._jitter(0.25, ctx))
