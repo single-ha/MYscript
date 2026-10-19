@@ -340,7 +340,8 @@ class DailyPage(ctk.CTkFrame):
         return [s for g in group_order for s in seg.get(g, [])]
 
     def _selected_dungeon(self):
-        """副本中枢勾选的首个有效副本名（tasks.dungeon.selected 是列表）；非法/缺失退回第一个已收录副本。"""
+        """副本中枢勾选的首个有效副本名（tasks.dungeon.selected 是列表）；一个都没勾返 None。
+        判定为「不跑本步」的唯一口径——引擎 _enabled_steps / 日常页就绪态都以「有没有勾」为准。"""
         names = [c.name for c in dungeon_tasks()]
         if not names:
             return None
@@ -351,7 +352,7 @@ class DailyPage(ctk.CTkFrame):
             for s in sel:
                 if s in names:
                     return s
-        return names[0]
+        return None
 
     def _task_title(self, name):
         """任务卡片/单跑提示用的显示名：刷副本只显示 '刷副本'，不展开具体副本。"""
@@ -402,9 +403,16 @@ class DailyPage(ctk.CTkFrame):
         return self_ok and team_ok
 
     def _dungeon_step_status(self):
-        """「刷副本」步的就绪：标定看共享 tasks.dungeon；多开≥2 是运行期条件，留给链内 preflight。"""
+        """「刷副本」步的就绪：先看有没有勾副本（没勾=整步不跑，见 _enabled_steps），再看标定。
+        多开≥2 是运行期条件，留给链内 preflight。"""
         if not self._selected_dungeon():
             return False
+        return self._dungeon_calib_ok()
+
+    def _dungeon_calib_ok(self):
+        """刷副本的标定侧就绪（共享 tasks.dungeon 的区域/模板 + 未勾「已组队」时的组队标定）。
+        **不含**「有没有勾副本」那一层——点副本名单跑（_start_single_dungeon）自带 selected=[该本]，
+        拿 _task_status 去判会被空勾选误拦成「还需标定」。"""
         sub = cfg_mod.task_config(self.app.cfg, "dungeon")
         spec = DUNGEON_CALIBRATION
         need_r = required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get("dungeon", ()))
@@ -454,11 +462,14 @@ class DailyPage(ctk.CTkFrame):
                 [(s["task"], s["enabled"], self._task_status(s["task"])) for s in steps])
 
     def _ready_meta(self, name, enabled):
-        """行就绪三态 → (文本, 颜色)。判定顺序（用户拍板 2026-09-23）：先看是否选中——未选中即「未选中」；
-        选中了再看标定——未标定=「还需标定」，标好了=「已就绪」。三者均仅文字样式、不可点；
-        跳「任务配置」页统一走行右侧「⚙ 配置」按钮。"""
+        """行就绪四态 → (文本, 颜色)。判定顺序（用户拍板 2026-09-23）：先看是否选中——未选中即「未选中」；
+        「刷副本」行开着但没勾任何副本=这步整步不跑（与关掉等效），单列一态「未勾选副本」，
+        免得被下面的标定判定误报成「还需标定」；再看标定——未标定=「还需标定」，标好了=「已就绪」。
+        各态均仅文字样式、不可点；跳「任务配置」页统一走行右侧「⚙ 配置」按钮。"""
         if not enabled:
             return "未选中", T.TEXT_DIM
+        if name == "dungeon" and self._selected_dungeon() is None:
+            return "未勾选副本", T.WARN
         if not self._task_status(name):
             return "⚠ 还需标定", T.WARN
         return "✓ 已就绪", T.SUCCESS
@@ -689,7 +700,7 @@ class DailyPage(ctk.CTkFrame):
                              default_open=self._dun_pick_open, on_open_change=self._on_dun_pick_open,
                              on_run=self._start_single_dungeon)
         pick.grid(row=3, column=0, columnspan=5, sticky="ew", padx=(18, 16), pady=(0, 10))
-        pick.sync()          # 从配置回填当前勾选，别让刚建的组件显示成全未勾
+        pick.sync()          # 从配置回填当前勾选；配置里一个都没有就是全未勾（=这步不跑，别兜底勾第一个）
         self._dungeon_picker = pick
 
     def _on_dun_pick_open(self, open):
@@ -697,13 +708,14 @@ class DailyPage(ctk.CTkFrame):
         self._dun_pick_open = bool(open)
 
     def _on_dungeon_pick(self, name, checked, sel):
-        """副本勾选变化：config 已由组件写入；只就地刷新「刷副本」行的就绪状态（首本变化可能让
-        就绪翻转）。不重建整表——本来就是重建导致整表闪烁/丢滚动位置。"""
+        """副本勾选变化：config 已由组件写入；就地刷新「刷副本」行就绪 + 序号徽标/计数/执行顺序
+        （勾/取消最后一个副本会让这一步从「不跑」翻到「跑」或反之，序号与摘要必须跟着变）。
+        不重建整表——本来就是重建导致整表闪烁/丢滚动位置。"""
         rec = self._find_row("dungeon")
         if rec is not None:
             self._set_row_status(rec)
         self._steps_sig = self._steps_signature()
-        self._refresh_exec_order()
+        self._renumber()      # 末尾自带 _refresh_exec_order()
 
     def _grid_all(self):
         """按 _flat 顺序把区头与行落回 list_frame 的 grid 行位（不销毁控件），再刷新序号/计数。
@@ -720,8 +732,20 @@ class DailyPage(ctk.CTkFrame):
                     f.grid(row=pos, column=0, sticky="ew", pady=3, padx=4)
         self._renumber()
 
+    def _runs_now(self, step):
+        """该行在本趟日常里【真会跑】吗：行级启用 且（非刷副本步 或 副本有勾选）。
+        与 tasks.daily._enabled_steps 同语义（整组开关由调用方另判）——「刷副本」开着但
+        一个都没勾 = 整步不跑，序号徽标/计数/执行顺序摘要都要按它算，否则界面会显示一步
+        引擎根本不执行的步。"""
+        if not step.get("enabled"):
+            return False
+        if step.get("task") == "dungeon" and self._selected_dungeon() is None:
+            return False
+        return True
+
     def _renumber(self):
-        """按全局执行顺序刷新各行序号徽标 + 各区「已勾选 x/y」计数。折叠区行也参与编号（仍会执行）。"""
+        """按全局执行顺序刷新各行序号徽标 + 各区「已勾选 x/y」计数。折叠区行也参与编号（仍会执行）。
+        「真会跑」= _runs_now（含刷副本空选判定），与引擎 steps 口径一致。"""
         order = 0
         for entry in self._flat:
             if entry[0] != "row":
@@ -730,14 +754,14 @@ class DailyPage(ctk.CTkFrame):
             r = self._rows[g][idx]
             if not self._group_on.get(g, True):
                 r["badge"].configure(text="·", fg_color=T.SURFACE, text_color=T.TEXT_DIM)
-            elif r["step"]["enabled"]:
+            elif self._runs_now(r["step"]):
                 order += 1
                 r["badge"].configure(text=str(order), fg_color=T.ACCENT, text_color=T.ON_ACCENT)
             else:
                 r["badge"].configure(text="·", fg_color=T.SURFACE, text_color=T.TEXT_DIM)
         for g in self._group_order:
             gsteps = self._steps_by_group(g)
-            n_on = sum(1 for s in gsteps if s["enabled"])
+            n_on = sum(1 for s in gsteps if self._runs_now(s))
             if g in self._lbl_count:
                 if not self._group_on.get(g, True):
                     self._lbl_count[g].configure(text="整组停用 · 已勾选 %d/%d" % (n_on, len(gsteps)),
@@ -748,23 +772,26 @@ class DailyPage(ctk.CTkFrame):
         self._refresh_exec_order()
 
     def _refresh_exec_order(self):
-        """刷新卡片底部「执行顺序」摘要：与引擎 _enabled_steps 同语义——只算「行级启用 + 整组启用」的步，
-        按 _steps 全局先后拼接任务名（多人组在前、单人组在后）。"""
+        """刷新卡片底部「执行顺序」摘要：与引擎 _enabled_steps 同语义——只算「行级启用 + 整组启用 +
+        刷副本有勾选」的步，按 _steps 全局先后拼接任务名（多人组在前、单人组在后）。"""
         lbl = getattr(self, "lbl_exec_order", None)
         if lbl is None:
             return
-        names = [self._task_title_expanded(s["task"]) for s in self._steps
-                 if s["enabled"] and self._group_on.get(GROUP_OF[s["task"]], True)]
+
+        def runs(s):
+            return self._runs_now(s) and self._group_on.get(GROUP_OF[s["task"]], True)
+
+        names = [self._task_title_expanded(s["task"]) for s in self._steps if runs(s)]
         if names:
-            # 计数时 dungeon 展开为勾选的副本数量
+            # 计数时 dungeon 展开为勾选的副本数量（没勾的刷副本步本来就不会进 names）
             count = 0
             for s in self._steps:
-                if s["enabled"] and self._group_on.get(GROUP_OF[s["task"]], True):
-                    if s["task"] == "dungeon":
-                        titles = get_selected_dungeon_titles(self.app.cfg)
-                        count += len(titles) if titles else 0
-                    else:
-                        count += 1
+                if not runs(s):
+                    continue
+                if s["task"] == "dungeon":
+                    count += len(get_selected_dungeon_titles(self.app.cfg))
+                else:
+                    count += 1
             lbl.configure(text=" -> ".join(names) + f" (共{count}项)", text_color=T.ACCENT)
         else:
             lbl.configure(text="（无，开始日常只会空转）", text_color=T.TEXT_DIM)
@@ -1121,16 +1148,16 @@ class DailyPage(ctk.CTkFrame):
             self._stop_single()
             return
         title = self._task_title(name)
+        if name == "dungeon" and self._selected_dungeon() is None:
+            # 空勾选=这一步引擎根本不跑（与整行关掉等效），没有可单跑的东西；必须排在
+            # _task_status 之前，否则会被它判成 False 而误报「还需标定」。
+            self.app.toast("「刷副本」未勾选任何副本，单跑未启动（在下方勾选要刷的副本）。", T.WARN)
+            self._log_line("「刷副本」未勾选任何副本，单跑未启动。", "warn")
+            return
         if not self._task_status(name):
             self.app.toast(f"「{title}」还需标定，单跑未启动（去「任务配置」页标定后再试）。", T.WARN)
             self._log_line(f"「{title}」还需标定，单跑未启动。", "warn")
             return
-        if name == "dungeon":
-            sel = cfg_mod.task_config(self.app.cfg, "dungeon").get("selected")
-            if isinstance(sel, str):
-                sel = [sel]
-            if not (isinstance(sel, list) and sel):
-                self._log_line("未勾选任何副本，将按「首个已收录副本」跑（与日常内行为一致）。", "warn")
         self._fire_single(name, self._single_build_cfg(self.app.cfg, name), title)
 
     def _start_single_dungeon(self, dname):
@@ -1142,7 +1169,8 @@ class DailyPage(ctk.CTkFrame):
             return
         cls = get_task(dname)
         title = cls.title if cls else dname
-        if not self._task_status("dungeon"):
+        if not self._dungeon_calib_ok():
+            # 只查标定：本单跑自带 selected=[dname]，用 _task_status 会被「整体没勾副本」误拦
             self.app.toast(f"「{title}」还需标定，单跑未启动（副本共用标定在「任务配置 › 刷副本」完成）。",
                            T.WARN)
             self._log_line(f"「{title}」还需标定，单跑未启动。", "warn")

@@ -64,8 +64,8 @@ ACTIVITY_UI_TPL_KEY = "activity_ui_flag"
 # 活动界面顶部的「日常活动」标签页。打开活动界面后先点它切到日常列表，再找卡片。不标=直接在当前列表找卡片。
 DAILY_ACTIVITY_TAB_TPL_KEY = "daily_activity_tab"
 # 面板关闭按钮（存 tasks.shared.templates.panel_close，在「任务配置」页「全局共享标定」里标定，可选）：
-# 背包/商城/人物信息等面板右上角的「×」关闭按钮。宝图挖完藏宝图后点它关背包回主界面
-# （比逐层按 Esc 更可靠——直接点面板自己的关闭按钮，不会误关别的层）。
+# 背包/商城/人物信息等面板右上角的「×」关闭按钮。宝图挖完藏宝图、整理背包收尾时点它关背包回主界面
+# （比逐层按 Esc 更可靠——直接点面板自己的关闭按钮，不会误关别的层）
 # 不进 SHARED_TPL_KEYS（不叠加进各任务 templates）：与 popup_close 一样直接读 tasks.shared.templates。
 PANEL_CLOSE_TPL_KEY = "panel_close"
 # 共享模板的友好中文名（就绪/标定提示用的展示名，见 ui/common.shared_template_hint）。

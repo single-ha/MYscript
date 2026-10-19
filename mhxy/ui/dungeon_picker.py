@@ -145,17 +145,16 @@ class DungeonPicker(ctk.CTkFrame):
     # 选中同步（唯一真源 = tasks.dungeon.selected）
     # ------------------------------------------------------------------
     def _load_selection(self):
+        """从配置读当前勾选（按 display_names 归一）。**空就是空**——不兜底勾第一个：
+        「开着但一个都没勾」= 这一步整步不跑（tasks.daily._enabled_steps 直接剔掉，与整行
+        关掉等效），界面必须如实画成全未勾，否则会「界面画着勾了、引擎却跳过」的反向不一致。"""
         hub = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         sel = hub.get("selected")
         if isinstance(sel, str):
             sel = [sel]
-        if isinstance(sel, list):
-            sel = [n for n in self.display_names if n in sel]
-        else:
-            sel = []
-        if not sel:
-            sel = list(self.display_names[:1])   # 空则默认第一个（与刷副本页 refresh 一致）
-        return sel
+        if not isinstance(sel, list):
+            return []
+        return [n for n in self.display_names if n in sel]
 
     def sync(self):
         """从配置重读选中并回填勾选态（不触 on_change）。返回当前选中列表。"""

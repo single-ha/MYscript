@@ -435,7 +435,9 @@ class DailyTask(Task):
         self.current_log_source = "dungeon"   # 整个刷副本步日志来源标签=刷副本
         names = self._selected_dungeons(ctx)
         if not names:
-            ctx.log("「刷副本」无可跑副本（未选/未收录），跳过该步。", level="warn")
+            # 正常到不了这（_enabled_steps 已把空选的刷副本步整步剔掉），纯防御网。
+            ctx.log("「刷副本」未勾选任何副本，请在「日常」页「刷副本」步勾选，本步跳过。",
+                    level="warn")
             return
         tc = ctx.task_cfg(DUNGEON_NS)      # 副本共享命名空间（标定/演练/loop 全在这）
         total = len(names)
@@ -565,17 +567,19 @@ class DailyTask(Task):
         勾选框只决定「刷不刷」，不决定顺序：这里拿展示基准 base.dungeon_display_names()
         去过滤勾选结果（侠士本在前、类内等级低→高，然后普通本）。所以 config 里
         `tasks.dungeon.selected` 的存放顺序无关紧要——历史遗留或手改的乱序也不会影响跑的顺序，
-        界面勾选区怎么排、跑的顺序就怎么排。空/非法则退回展示顺序里首个已收录副本（保证至少能跑一个）。"""
+        界面勾选区怎么排、跑的顺序就怎么排。
+
+        **一个都没勾 = 本步不跑**：`_enabled_steps` 直接把这一步从 steps 里剔掉（与「整行关掉」
+        完全同语义——不设屏障、不解散、不打日志），集体步里那句守卫只是防御网。缺失/非列表
+        一律当空；勾了但全是未收录的名字，过滤后同样为空。"""
         order = dungeon_display_names()
         sel = ctx.task_cfg("dungeon").get("selected")
         if isinstance(sel, str):
             sel = [sel]
-        if isinstance(sel, list):
-            chosen = {s for s in sel if isinstance(s, str)}
-            out = [n for n in order if n in chosen]   # 按展示顺序过滤；未收录的名字自然落选
-            if out:
-                return out
-        return order[:1]
+        if not isinstance(sel, list):
+            sel = []
+        chosen = {s for s in sel if isinstance(s, str)}
+        return [n for n in order if n in chosen]   # 按展示顺序过滤；未收录的名字自然落选
 
     @staticmethod
     def _selected_dungeon(ctx):
@@ -596,7 +600,13 @@ class DailyTask(Task):
     def _enabled_steps(self, ctx):
         """返回【按存储顺序】、已勾选且可串联的任务名列表。
         组级开关（tasks.daily.group_enabled，{single: bool, multi: bool}，缺省 True）也参与过滤：
-        整个组被关掉时，该组全部任务不进日常（组内行级 enabled 独立保留，重开整组即恢复）。"""
+        整个组被关掉时，该组全部任务不进日常（组内行级 enabled 独立保留，重开整组即恢复）。
+
+        「刷副本」步额外看有没有勾副本：**开着但一个都没勾 = 这步不存在**（用户拍板，与整行
+        关掉完全等效——否则会白设一道没人跑的集体屏障、还可能误触发收尾/强制解散）。
+        判据复用 _selected_dungeons（按展示顺序过滤已收录名），UI 侧 enabled_names /
+        日常页 _refresh_exec_order、_renumber 必须同源，三处不一致就会「界面显示这步、引擎
+        忽略」。"""
         tc = ctx.task_cfg(self.name)
         ge = tc.get("group_enabled") or {}
         def group_on(name):
@@ -607,6 +617,8 @@ class DailyTask(Task):
             if not isinstance(step, dict):
                 continue
             name = step.get("task")
+            if name == "dungeon" and not self._selected_dungeons(ctx):
+                continue
             if (step.get("enabled") and group_on(name)
                     and name in CHAINABLE and name not in out):
                 out.append(name)

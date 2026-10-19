@@ -701,27 +701,12 @@ class TreasureMapTask(TuoyingFlow, Task):
 
     def _click_panel_close(self, ctx):
         """点共享「面板关闭按钮」(panel_close，背包/商城/人物信息面板右上角「×」)。
+        找按钮走 ui_state.find_panel_close（共享层只找不点），命中后在此点击+可打断等待。
         未标定/窗口没定位/抓图失败/没找到按钮都返回 False（调用方降级走 ESC 收尾）。"""
-        try:
-            shared = ((ctx.cfg or {}).get("tasks", {}) or {}).get("shared", {}) or {}
-            tpl_path = (shared.get("templates") or {}).get("panel_close")
-        except AttributeError:
+        hit = ui_state.find_panel_close(ctx.cfg, ctx.window)
+        if hit is None:
             return False
-        if not tpl_path:
-            return False
-        tpl = vision.load_template(tpl_path)
-        if tpl is None:
-            return False
-        rect = ctx.window.rect()
-        if rect is None:
-            return False
-        scene = ctx.window.grab_screen(rect)
-        if scene is None:
-            return False
-        m = vision.match(scene, tpl, 0.85)
-        if m is None:
-            return False
-        ctx.mouse.click(rect[0] + m[0], rect[1] + m[1])
+        ctx.mouse.click(hit[0], hit[1])
         self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
         return True
 

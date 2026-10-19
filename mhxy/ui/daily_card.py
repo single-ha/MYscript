@@ -68,11 +68,13 @@ def ordered_steps(cfg):
 
 def enabled_names(cfg):
     """本趟真正会跑的任务名（按执行顺序）：行级启用 且 所属整组启用。与「日常」页 _refresh_exec_order
-    / 引擎 _enabled_steps 同语义——整组或单行停用的都剔除。"""
+    / 引擎 _enabled_steps 同语义——整组或单行停用的都剔除。
+    「刷副本」开着但一个副本都没勾 = 这步不跑（与整行关掉等效），同样剔除。"""
     d = ((cfg.get("tasks", {}) or {}).get("daily", {}) or {})
     ge = d.get("group_enabled") or {}
     return [s["task"] for s in ordered_steps(cfg)
-            if s["enabled"] and ge.get(GROUP_OF[s["task"]], True)]
+            if s["enabled"] and ge.get(GROUP_OF[s["task"]], True)
+            and not (s["task"] == "dungeon" and not get_selected_dungeon_titles(cfg))]
 
 
 def enabled_count(cfg):
@@ -100,6 +102,7 @@ class DailyRunCard(ctk.CTkFrame):
         self.fonts = fonts
         self.grid_columnconfigure(0, weight=1)
         self._open = True        # 内容（设置 + 清单）是否展开
+        self._run_sig = None     # 上一次套到按钮上的 (文字, 风格) 签名，用于去抖（见 sync_run）
 
         self._build_head()
         self._body = ctk.CTkFrame(self, fg_color="transparent")
@@ -422,7 +425,13 @@ class DailyRunCard(ctk.CTkFrame):
         self.sync_run()
 
     def sync_run(self):
-        """按钮状态镜像：读「日常」页 runner 的状态，套到本卡按钮上（每 tick 调）。"""
+        """按钮状态镜像：读「日常」页 runner 的状态，套到本卡按钮上（每 tick 调）。
+
+        ⚠ 必须**只在签名变化时**才 configure：customtkinter 的 CTkButton.configure 只要收到
+        fg_color/hover_color 就无条件整只重绘（ctk_button.py 里 fg_color/hover_color 分支直接
+        置 require_redraw=True），每 tick 无脑 configure 会让可见页的那一行以 ~6.7Hz 频闪。
+        故这里先算出目标 (文字, 风格) 签名，与上次相同就直接返回（对齐 sniper._update_wait_button /
+        App._refresh_run_status 的同款去抖写法）。"""
         page = self.app.pages.get("daily")
         if page is None or not hasattr(page, "btn_run"):
             return
@@ -431,8 +440,17 @@ class DailyRunCard(ctk.CTkFrame):
         except Exception:
             return
         if txt == getattr(page, "RUN_LABEL", self.RUN_LABEL):
-            self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, state="normal")
+            sig = (self.RUN_LABEL, "accent")
         elif txt.startswith("等待到"):
+            sig = (txt, "warn")
+        else:
+            sig = (txt, "danger")
+        if sig == self._run_sig:
+            return
+        self._run_sig = sig
+        if sig[1] == "accent":
+            self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, state="normal")
+        elif sig[1] == "warn":
             self.btn_run.configure(text=txt, fg_color=T.WARN, hover_color=T.WARN_HOVER, state="normal")
         else:
             self.btn_run.configure(text=txt, fg_color=T.DANGER, hover_color=T.DANGER_HOVER, state="normal")

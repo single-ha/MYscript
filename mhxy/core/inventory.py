@@ -163,12 +163,40 @@ class InventoryOrganizer:
         # 演练不点（dry_run 只识别不动手）。
         if not self.dry_run:
             self._click_sort_button()
-        ctx.send_hotkey("close_panel")
+        self._close_bag()
         if self.dry_run:
             ctx.log(f"整理背包·演练完成：共识别到 {handled} 次可处理物品（未执行任何动作）。", level="hit")
         else:
             ctx.log(f"整理背包完成：共处理 {handled} 件物品。", level="hit")
         return handled, "done"
+
+    def _close_bag(self):
+        """收尾关背包：聚焦后优先点共享「面板关闭按钮」(panel_close，背包/商城/人物信息面板右上角
+        的「×」)——直接点面板自己的关闭按钮比逐层按 Esc 更可靠、不会误关别的层
+        （与宝图 treasure_map._close_bag 同款收尾）。
+        未标定该模板/找不到按钮时降级走 ui_state.back_to_main_screen 逐层 ESC 回主界面，
+        按完还会验证真回了主界面，比单按一次 Esc 可靠。
+        core 不依赖 tasks/ui 的既有约定：此处懒加载 ui_state（与 teaming/base 一致，避免循环依赖）。"""
+        from ..ui import ui_state
+        ctx = self.ctx
+        try:
+            ctx.window.activate()   # 键盘注入只发给前台窗口，关面板前先确保它在前台
+        except Exception:
+            pass
+        hit = ui_state.find_panel_close(ctx.cfg, ctx.window)
+        if hit is not None:
+            ctx.mouse.click(hit[0], hit[1])
+            self._sleep(self._jitter(0.3))
+            ctx.log("背包已关（点「面板关闭按钮」）。", level="info")
+            return
+        st = ui_state.back_to_main_screen(ctx.cfg, ctx.window)
+        if st is True:
+            ctx.log("背包已关，已返回主界面。", level="info")
+        elif st is None:
+            ctx.log("无法判定主界面（大概率没标定「商城图标」），不盲按 Esc；按原流程收尾。",
+                    level="warn")
+        else:
+            ctx.log("连按 Esc 仍未回主界面（可能有弹窗卡住），按原流程收尾。", level="warn")
 
     def _click_sort_button(self):
         """整理流程末尾点游戏自带的「整理」按钮，把背包重新排列收拢一下（用户要求）。

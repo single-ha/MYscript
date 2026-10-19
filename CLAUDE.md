@@ -44,6 +44,11 @@
    不重叠排布下的常态，切台数归零），**真被遮才 `activate()`**，激活失败返回 None（宁缺勿错，不用被遮画面去
    匹配）；config 顶层 `grab_auto_activate=false` 可关。通用页「调整窗口」排布为**用户拍板**：调基准尺寸 + **2列×2行**网格（第1排贴屏幕/工作区顶、
    最后1排贴任务栏），**最多 5 个窗口，第 5 个居中放屏幕正中**；实现用 `window.work_area()`（SPI_GETWORKAREA）。
+10. **GUI 每 tick 镜像控件去抖铁律（已踩坑）**：被 `App._tick`(150ms) 反复调用的 `pump()`/镜像函数
+   **只能在该控件状态真变了时才 `configure`**——customtkinter 的 `CTkButton.configure` 只要带 `fg_color`/`hover_color`
+   就**无条件整只重绘**（见 ctk_button.py），无脑每 tick 调会让**可见页**那一行高频繁闪（未显示的页不重绘故不显现；
+   起始页日常卡 `sync_run` 曾如此）。写法：先算 (文字, 风格) 签名，与上次相同直接 return（同
+   `sniper._update_wait_button` / `App._refresh_run_status` 的既有写法）。
 
 ## 架构（三层，包名 mhxy/）
 > 文件树是「地图」，只给一句话功能；实现细节看各文件 docstring 与 memory，别往这里抄。
@@ -64,6 +69,9 @@ mhxy/
     rotation.py 多开轮转推进器：连续推进到等待点才让出；详见 docstring + memory rotation-engine
     teaming.py  TeamFormation：跨窗口组队握手编排 + run_disband() 解散队伍（每号同一套退队流程）
     inventory.py InventoryOrganizer：整理背包（翻包裹逐物使用/丢弃/出售）的可复用编排，只依赖 ctx；详见 memory organize-bag-task。
+                      收尾关背包优先点共享「面板关闭按钮」(panel_close 的「×」)、未标定/找不到才降级
+                      ui_state.back_to_main_screen（与宝图 treasure_map 同款；找按钮走 ui_state.find_panel_close，
+                      共享层只找不点、点击和可打断等待留任务侧）。
                       自动整理入口 ctx.maybe_auto_organize()（user 2026-10-08 拍板：**只在日常串跑的任务交接处触发**，
                       daily._organize_between 在换下一个任务前调用；单个任务执行中绝不触发，曾每 tick/切前台检测被打断）——rotation 的
                       between_steps 钩子已不再挂这功能
@@ -145,7 +153,9 @@ mhxy/
     pages/tuoying.py       TuoyingPage：拓印独立页（工具分类页「拓印」tab）——标定/就绪状态/一键跑完整临摹；
                           共享命名空间 tasks.tuoying（原在通用页公共标定，迁到这里）
     pages/tools.py      工具分类页（Tab: 商城(抢关注) / 整理背包 / 拓印）
-    ui_state.py         界面状态判定（与玩法无关）：is_main_screen 主界面判定 + is_present 标志判定（战斗标识等）
+    ui_state.py         界面状态判定（与玩法无关）：is_main_screen 主界面判定 + is_present 标志判定（战斗标识等）；
+                          back_to_main_screen 逐层 ESC 回主界面 + find_popup_close（弹窗守卫「×」）/
+                          find_panel_close（共享面板关闭按钮「×」，宝图/整理背包收尾共用，只找不点）
 ```
 
 ### 任务模块约定（加新功能照此做）
@@ -177,6 +187,13 @@ mhxy/
   （`ui/dungeon_picker.py`）、运行时排序（`daily._selected_dungeons` 按它过滤勾选结果）、
   进副本点第几个「进入」（`base.enter_target_for`）——三处不一致就会刷错顺序/进错本，
   故别在任何一处另算一套。副作用：config 里 `selected` 的**存放顺序无关紧要**（历史遗留/手改的乱序不影响跑的顺序）。
+  ⚠ **一个副本都没勾 = 「刷副本」整步不跑**（user 拍板 2026-10-19，等同整行关掉：不设集体屏障、
+  不触发收尾/强制解散、不打日志；只剩它时会直接报「没有勾选任何任务，已停止」）。判据
+  `daily._selected_dungeons()` 空即剔除，**UI 三处必须同源**：`daily_card.enabled_names`、
+  日常页 `_refresh_exec_order`/`_renumber`（经 `_runs_now`）、`dungeon_picker._load_selection`
+  （不再「空则默认勾第一个」）——不同源就会「界面显示这步、引擎却跳过」。行就绪态因此多一态
+  「未勾选副本」（`DailyPage._ready_meta`），行级单跑空勾选直接拦下不启动；点副本名单跑
+  （`_start_single_dungeon`）自带 `selected=[该本]`，只查 `_dungeon_calib_ok`（不含勾选那层）。
   **所有副本共用一套标定**（只按普通/侠士区分）：模板/区域/loop 全存共享 `tasks.dungeon` 命名空间，一次标定覆盖全部副本。
   **组队设置（队长 captain_index / 已组队 skip_team / 跑完解散
   auto_disband）统一存共享 `tasks.teaming`**，各多人任务（蹈海去/抓鬼等）的 preflight/run 都读这份共享配置；

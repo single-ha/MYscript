@@ -116,6 +116,38 @@ def find_popup_close(cfg, window, threshold=0.85):
     return (rect[0] + int(cx), rect[1] + int(cy))
 
 
+def find_panel_close(cfg, window, threshold=0.85):
+    """找「面板关闭按钮」的探测原语：在当前窗口画面里找背包/商城/人物信息等面板右上角的「×」
+    （tasks.shared.templates.panel_close，可选共享模板，在「任务配置」页「全局共享标定」卡里标）。
+
+    只【找】不点：命中返回按钮中心的【屏幕绝对坐标】(cx, cy)；未命中/不可用一律 None
+    （未标模板 / 窗口没定位 / 抓图失败），语义与 find_popup_close 一致，交调用方决定点不点。
+    点击与点击后的等待留在调用方——各任务有自己的急停可打断睡眠（_interruptible_sleep /
+    _sleep），共享层不该用不可打断的 time.sleep 卡住急停。
+    """
+    try:
+        shared = ((cfg or {}).get("tasks", {}) or {}).get("shared", {}) or {}
+        tpl_path = (shared.get("templates") or {}).get("panel_close")
+    except AttributeError:
+        return None
+    if not tpl_path:
+        return None
+    tpl = vision.load_template(tpl_path)
+    if tpl is None:
+        return None
+    rect = window.rect()
+    if rect is None:
+        return None
+    scene = window.grab_screen(rect)
+    if scene is None:
+        return None
+    hit = vision.match(scene, tpl, threshold)
+    if hit is None:
+        return None
+    cx, cy, _score = hit
+    return (rect[0] + int(cx), rect[1] + int(cy))
+
+
 def back_to_main_screen(cfg, window, max_tries=6, settle=0.6, threshold=0.8):
     """确保回到主界面：已在主界面直接返回 True，否则交替「按 ESC」与「鼠标右键」关面板直到回主界面。
 
