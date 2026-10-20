@@ -21,6 +21,7 @@ import ctypes
 #   秒装备(sniper) 明确排除：下单要抢时机，不能等。
 CLICK_DELAY = (0.5, 1.5)        # 普通任务：识别命中后停 0.5~1.5s 随机再点
 TEAM_CLICK_DELAY = (0.3, 0.6)   # 组队握手 / 队员准备这类连贯动作：短停顿，免得拖垮多开节奏
+CLICK_MOVE_SPEED = 2.5          # 点击前的移速倍率（user 拍板 2026-10-20：点的时候鼠标走快点）
 
 user32 = ctypes.windll.user32
 
@@ -208,7 +209,10 @@ class Mouse:
     # ---- 拟人化动作 ----
     def human_move(self, x, y, speed=None):
         """移动到 (x,y) 附近（带随机落点），返回实际落点。
-        speed 非空时按该倍率提速（命中下单用，越快越像直线瞬移）。"""
+        speed 非空时按该倍率提速（命中下单用，越快越像直线瞬移）；
+        不传时用默认 CLICK_MOVE_SPEED——本方法几乎都是「点之前先移过去」，默认走快点。"""
+        if speed is None:
+            speed = CLICK_MOVE_SPEED
         sx, sy = get_cursor()
         r = int(self.hz.get("click_radius", 4))
         tx, ty = x + random.randint(-r, r), y + random.randint(-r, r)
@@ -251,7 +255,10 @@ class Mouse:
         return tx, ty
 
     def click(self, x, y, speed=None):
-        """拟人化移动并点击。speed 非空时整段按该倍率提速（命中下单的极速直击）。"""
+        """拟人化移动并点击。speed 非空时整段按该倍率提速（命中下单的极速直击）；
+        不传时用默认 CLICK_MOVE_SPEED（点击默认走快点，user 拍板 2026-10-20）。"""
+        if speed is None:
+            speed = CLICK_MOVE_SPEED
         spd = self._speed(speed)
         self.human_move(x, y, speed=speed)
         time.sleep(random.uniform(0.03, 0.10) / spd)
@@ -273,7 +280,9 @@ class Mouse:
             self._clk().mouseUp(button="right")
 
     def right_click(self, x, y, speed=None):
-        """拟人化移动并右键单击（关弹窗/取消用）。节奏同 click。"""
+        """拟人化移动并右键单击（关弹窗/取消用）。节奏同 click（默认 CLICK_MOVE_SPEED 移速）。"""
+        if speed is None:
+            speed = CLICK_MOVE_SPEED
         spd = self._speed(speed)
         self.human_move(x, y, speed=speed)
         time.sleep(random.uniform(0.03, 0.10) / spd)
@@ -292,6 +301,8 @@ class Mouse:
 
     def double_click(self, x, y, speed=None):
         """拟人化双击：先移到目标，再快速两次按下/抬起（间隔在系统双击阈值内）。"""
+        if speed is None:
+            speed = CLICK_MOVE_SPEED
         spd = self._speed(speed)
         self.human_move(x, y, speed=speed)
         time.sleep(random.uniform(0.03, 0.08) / spd)
