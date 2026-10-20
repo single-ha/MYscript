@@ -20,11 +20,11 @@ import customtkinter as ctk
 from . import theme as T
 from ..core import config as cfg_mod
 from ..tasks import get_task
-from ..tasks.daily import CHAINABLE, GROUP_OF, get_selected_dungeon_titles
+from ..tasks.daily import (CHAINABLE, GROUP_OF, GROUPS, get_selected_dungeon_titles)
 from .common import Tooltip
 
-# 区顺序与「日常」页一致：多人组在前、个人组在后（区内顺序按配置里存的原序）。
-_GROUPS = ["multi"] + [g for g in dict.fromkeys(GROUP_OF.values()) if g != "multi"]
+# 区顺序：与「日常」页/引擎同源（tasks.daily.GROUPS）——多人组在前、个人组在后，区内按配置原序。
+_GROUPS = GROUPS
 
 
 def task_title(name, cfg=None):

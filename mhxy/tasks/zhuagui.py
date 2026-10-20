@@ -7,10 +7,20 @@
   → 等「领取抓鬼任务」出现并点击（点完【可能弹提醒弹窗】→点「取消」关掉再继续）
   → 点任务条目标签（自动寻路到鬼的位置）→ 领完自动进战斗 → 自动战斗打完
   → 战斗结束弹「是否继续」→ 点「继续」（自动寻路到任务 NPC）
-→ 再等「领取抓鬼任务」→ 点它 → 点任务条目 → 战斗 …… 循环
+   → 再等「领取抓鬼任务」→ 点它 → 点任务条目 → 战斗 …… 循环
    → 直到 领满 loop.max_rounds 轮（轮回数=领任务次数，默认 2）→ 收尾：最后一轮战斗打完的
      「是否继续」弹窗改点「取消」（gg_finish_cancel）结束抓鬼任务，不再点「继续」→ 结束。
    （收尾轮数可调：loop.finish_cancel_rounds=None/空=跑满后点取消；正整数=提前到这轮结束后点；0=不点取消保持旧行为。）
+
+一轮领一次任务可能【连打 n 场战斗，全部打完才弹一次「是否继续」】。故一轮内的推进靠两层超时：
+  · loop.battle_timeout_sec（默认 10s）= **每场战斗之间**的等待：点完小闹钟(首轮)或上一场打完(后续)
+    到【进入下一场】的上限。超时还没见到战斗画面 → 补点任务栏小闹钟重新寻路，连点两次防首击被吞
+    （限 loop.battle_recover_max 次，默认 3，超限中止）；判断「是否在战斗中」用公共标定的
+    战斗界面标志 tasks.shared.templates.battle_flag（ui_state.is_present）——**未标则退回旧行为**：
+    不判进战、不补点小闹钟，只等「是否继续」出现，preflight 不因此拦跑、只在跑起来时告警一次。
+  · loop.round_timeout_sec（默认 3600s）= **整轮打完**的兜底上限：「是否继续」挂 60min 还不出现
+    = 异常，中止（等价于「一场战斗永远打不完」的看门狗）。
+
 
 组队约束（与蹈海去同构，用户要求「可选择是否自动组队」）：
   skip_team=False（默认）→ 先复用 core.teaming.TeamFormation 组队，再由队长跑循环；
@@ -28,12 +38,14 @@ from ..core import scan
 from ..core import vision
 from ..core import window as win_mod
 from ..core.teaming import (TeamFormation, TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES)
+from ..ui import ui_state
 from .base import Task, register
 
 # 抓鬼自身模板键（gg_ 前缀=抓鬼，存盘 templates/tm_gg_*.png，避免与别的任务同名互相覆盖）。
 # 取任务条目寻路的图标（曾叫 gg_nav）= 任务栏的「小闹钟」（clock），已迁「任务配置」页全局共享标定、
 # 由 task_config 叠加进本任务 templates（见 SHARED_TPL_KEYS）；旧 gg_nav 值仅作兼容读取兜底。
-_FLAG_KEYS = ["gg_entry", "gg_join", "gg_claim", "clock", "gg_next", "gg_cancel", "gg_finish_cancel"]
+_FLAG_KEYS = ["gg_entry", "gg_join", "gg_claim", "clock", "gg_next", "gg_cancel", "gg_finish_cancel",
+              "battle_flag"]   # battle_flag=公共标定(可选)：判「是否已进战」用，见文件头两层超时
 
 # 完整循环是没有「进入战斗」按钮的：领完自动寻路到鬼就【自己进战斗】，打完弹「领下一轮」。
 
@@ -199,13 +211,19 @@ class ZhuaguiTask(Task):
         # 跑完解散已迁至「日常」页集中控制（见 daily._disband_after_multi），抓鬼跑完不再自动解散。
 
     # ------------------------------------------------------------------
-    # 队长抓鬼循环（线性、阻塞式；每轮= 领任务 → 战斗 → 领下一轮/收尾）
+    # 队长抓鬼循环（线性、阻塞式；每轮= 领任务 → 连打 n 场战斗 → 领下一轮/收尾）
     # ------------------------------------------------------------------
     def _run_rounds(self, ctx, loop, regions, threshold):
         self._focus(ctx)
         npc_to = loop.get("npc_dialog_sec", 60)     # 等「领取抓鬼任务」对话框（寻路到任务 NPC 耗时）
         step_to = loop.get("step_timeout_sec", 30)  # 通用按钮超时
-        battle_to = loop.get("battle_timeout_sec", 600)  # 一场战斗超时
+        # 两层超时（见文件头）：battle_gap_to=每场战斗之间的等待（超时补点小闹钟）；
+        # round_to=整轮打完兜底（「是否继续」一直不出现=异常中止）。
+        battle_gap_to = float(loop.get("battle_timeout_sec", 10))
+        round_to = float(loop.get("round_timeout_sec", 3600))
+        if self.flags.get("battle_flag") is None:
+            ctx.log("未标定「战斗界面标志」（「任务配置」页「全局共享标定」卡，可选）：抓鬼将只等"
+                    "「是否继续」结束本轮，进战超时不会补点小闹钟。", level="warn")
 
         # 前缀：开活动 → 参加 → 角色寻路到任务 NPC（第 1 轮入口）
         if not self._open_and_join(ctx, loop, regions, threshold):
@@ -239,9 +257,13 @@ class ZhuaguiTask(Task):
                 ctx.log(f"等「任务条目」超时（第 {round_no} 轮），中止。", level="error")
                 return
 
-            # 抓鬼没有「进入战斗」按钮：寻路到鬼自动进战斗 → 直接等打完
-            if not self._wait_round_end(ctx, loop, regions, threshold, battle_to, round_no):
-                ctx.log(f"第 {round_no} 轮战斗异常（超时未等到结束），中止。", level="error")
+            # 抓鬼没有「进入战斗」按钮：寻路到鬼自动进战 → 一轮里可能连打 n 场，
+            # 全部打完才弹「是否继续」（本轮的结束标志）。
+            ok, why = self._wait_round_end(ctx, loop, regions, threshold,
+                                           battle_gap_to, round_to, round_no)
+            if not ok:
+                if why:   # why=None = 收到停止信号，不打错误日志
+                    ctx.log(f"第 {round_no} 轮战斗异常（{why}），中止。", level="error")
                 return
             ctx.log(f"★ 第 {round_no}/{self.max_rounds} 轮抓鬼完成。★", level="hit")
             # 收尾：完成设定轮数后不点「继续」，改点「是否继续」弹窗的「取消」结束抓鬼任务
@@ -297,26 +319,89 @@ class ZhuaguiTask(Task):
             self._interruptible_sleep(ctx, self._jitter(0.25, ctx))
         return True
 
-    # ---- 等一场战斗打完：出现「是否继续」弹窗即认为打完（没有别的结束标志）----
-    def _wait_round_end(self, ctx, loop, regions, threshold, timeout, round_no):
-        deadline = time.time() + timeout
+    # ---- 等本轮结束：一轮可能连打 n 场，全部打完才弹一次「是否继续」(gg_next) ----
+    def _wait_round_end(self, ctx, loop, regions, threshold, battle_gap_to, round_to, round_no):
+        """等第 round_no 轮打完（返回 (ok, why)：why=None=成功/已停止，非 None=中止原因，由调用方打 error）。
+
+        两层超时（见文件头）：
+          · 每场战斗之间（点完小闹钟 / 上一场打完 → 进入下一场）超过 battle_gap_to 秒还没进战
+            → 补点任务栏小闹钟重新寻路，连续超 battle_recover_max 次仍进不了战 = 中止。
+            「是否在战斗中」用公共标定的 battle_flag 判（ui_state.is_present）；未标定则整段判据
+            退化为旧版（只等 gg_next，不补点）。
+          · 整轮 round_to 秒还没见到 gg_next = 打不完的看门狗，中止。
+        全程勤查 should_stop；被抓图失败（cur=None）不判进战、只计时继续等。
+        """
+        recover_max = max(1, int(loop.get("battle_recover_max", 3)))
+        double_gap = float(loop.get("nav_double_gap_sec", 0.3))
+        # 可选标定：没标 battle_flag 就无从判「是否在战斗中」→ 整段「战斗间超时→补点」不启用，
+        # 退回旧版行为（只等 gg_next 出现，不补点小闹钟）。
+        track_battle = self.flags.get("battle_flag") is not None
+        round_deadline = time.time() + round_to
+        round_start = time.time()
+        non_battle_since = time.time()   # 本轮开始 / 上一场刚打完 的时刻；进战后置 None
+        in_battle_last = False
+        recover = 0                      # 已补点小闹钟次数
+        battles = 0                      # 本轮已见到几场战斗（进战次数）
         last_diag = 0.0
+
         while not ctx.should_stop():
             scene_rect = self._scene_rect(ctx, regions)
             cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
-
-            nxt = self._match_scene(cur, scene_rect, "gg_next", threshold)
-            if nxt is not None:
-                return True   # 出现「是否继续」弹窗即本轮战斗已打完（调用方接着点「继续」寻路回 NPC）
-
             now = time.time()
-            if now > deadline:
-                return False
+
+            # 本轮结束标志：n 场全打完 → 「是否继续」弹出
+            if self._match_scene(cur, scene_rect, "gg_next", threshold) is not None:
+                return True, None
+
+            in_battle = False
+            if track_battle and cur is not None:
+                in_battle = ui_state.is_present(cur, self.flags, "battle_flag", threshold)
+
+            if in_battle:
+                if not in_battle_last:
+                    battles += 1
+                    ctx.log(f"第 {round_no} 轮第 {battles} 场：已进战，等打完…", level="hit")
+                    last_diag = now
+                in_battle_last = True
+                non_battle_since = None          # 战斗中不计「战斗间」时长
+            else:
+                in_battle_last = False
+                if non_battle_since is None:
+                    non_battle_since = now       # 刚从战斗出来：新一轮「战斗间」计时
+                if track_battle and now - non_battle_since >= battle_gap_to:
+                    # 没进战就超时 → 补点小闹钟（重新寻路到下一场）
+                    if recover >= recover_max:
+                        return False, f"连续 {recover_max} 次补点小闹钟仍未进战"
+                    recover += 1
+                    clock_hit = self._match_scene(cur, scene_rect, "clock", threshold)
+                    if clock_hit is not None:
+                        ctx.mouse.click(clock_hit[0], clock_hit[1])
+                        if double_gap > 0:
+                            self._interruptible_sleep(ctx, self._jitter(double_gap, ctx))
+                            ctx.mouse.click(clock_hit[0], clock_hit[1])
+                        ctx.log(f"第 {round_no} 轮超 {battle_gap_to:.0f}s 未进战 → 补点小闹钟"
+                                f"（{recover}/{recover_max}，{clock_hit[2]:.3f}）。", level="hit")
+                    else:
+                        ctx.log(f"第 {round_no} 轮超 {battle_gap_to:.0f}s 未进战，但画面里找不到"
+                                f"「小闹钟」图标，无法补点（{recover}/{recover_max}）。", level="warn")
+                    non_battle_since = now       # 重新计时
+
+            if now > round_deadline:
+                return False, f"本轮超 {round_to:.0f}s 未结束（等「是否继续」超时）"
             if now - last_diag >= 15.0:
-                ctx.log(f"等第 {round_no} 轮战斗打完…（已 {now - (deadline - timeout):.0f}/{timeout:.0f}s）")
                 last_diag = now
+                if in_battle:
+                    ctx.log(f"第 {round_no} 轮战斗中…（已 {now - round_start:.0f}/{round_to:.0f}s，"
+                            f"第 {battles} 场）")
+                elif not track_battle:
+                    # 没标 battle_flag：不判进战也不补点，只报整轮进度
+                    ctx.log(f"等第 {round_no} 轮打完…（已 {now - round_start:.0f}/{round_to:.0f}s）")
+                else:
+                    ctx.log(f"等第 {round_no} 轮第 {battles + 1} 场开打…（已 "
+                            f"{now - non_battle_since:.0f}/{battle_gap_to:.0f}s，"
+                            f"补点 {recover}/{recover_max} 次）")
             self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
-        return False
+        return False, None   # 已收到停止信号（调用方不打错误日志）
 
     # ---- 开活动 → 找抓鬼卡片 → 点「参加」----
     def _open_and_join(self, ctx, loop, regions, threshold):

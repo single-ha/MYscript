@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """任务配置页：单人/多人全部任务的「参数 + 标定」收拢到一个界面，无任何运行入口。
-运行唯一入口在「日常」页。页面可滚动：单人任务区(7卡) + 多人任务区(刷副本/抓鬼 2卡)。
+运行唯一入口在「日常」页。页面可滚动：单人任务区(8卡) + 多人任务区(刷副本/抓鬼 2卡)。
 组队设置（已组队 skip_team / 跑完解散 auto_disband）在「日常」页设置区（存共享 tasks.teaming）；
 「已组队」开关另在「周常」页组队设置卡（同一份配置，用户拍板保留）。
 参数改动即保存（输入框失焦/回车即写回 config），标定/刷新即点即做。"""
@@ -24,6 +24,7 @@ from .sanjie import SanjieConfig
 from .escort import EscortConfig
 from .guild_checkin import GuildCheckinConfig
 from .activity_reward import ActivityRewardConfig
+from .guaguale import GuagualeConfig
 from .dungeon import DungeonConfig
 from .zhuagui import ZhuaguiConfig
 from .login import LoginConfig
@@ -37,6 +38,7 @@ _SINGLE_CARDS = {
     "escort": EscortConfig,
     "guild_checkin": GuildCheckinConfig,
     "activity_reward": ActivityRewardConfig,
+    "guaguale": GuagualeConfig,
 }
 
 _MULTI_CARDS = (DungeonConfig, ZhuaguiConfig)

@@ -548,6 +548,31 @@
                 "act_reward100": null
             }
         },
+        "guaguale": {
+            "loop": {
+                "match_threshold": 0.85,
+                "step_timeout_sec": 20,
+                "festival_wait_sec": 4,
+                "claim_wait_sec": 6,
+                "reward_icon_wait_sec": 6,
+                "scratch_passes": 2,
+                "scratch_line_gap": 10,
+                "scratch_sample_step": 8,
+                "scratch_speed": 1.6,
+                "close_tries": 3
+            },
+            "regions": {
+                "scene": null,
+                "scratch_area": null
+            },
+            "templates": {
+                "welfare": null,
+                "open_scratch": null,
+                "festival_btn": null,
+                "claim_festival": null,
+                "reward_icon": null
+            }
+        },
         "dungeon": {
             "loop": {
                 "match_threshold": 0.85,
@@ -641,6 +666,10 @@
                 },
                 {
                     "task": "activity_reward",
+                    "enabled": true
+                },
+                {
+                    "task": "guaguale",
                     "enabled": true
                 }
             ],

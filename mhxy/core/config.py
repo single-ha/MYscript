@@ -44,7 +44,8 @@ TUOYING_TPL_KEYS = ("tuoying_title", "tuoying_upload", "tuoying_todo")
 MAIN_ICON_TPL_KEYS = ("shop_icon", "activity_icon")
 
 # 战斗界面标志（存 tasks.shared.templates.battle_flag，在「任务配置」页「全局共享标定」卡里标定）：
-# 各任务进战斗后的画面元素相同。运镖/宝图用它在战斗期暂停「运镖结束/静止」判定（必标），秘境仅日志诊断（可选）。
+# 各任务进战斗后的画面元素相同。运镖/宝图用它在战斗期暂停「运镖结束/静止」判定（必标），秘境仅日志诊断（可选）；
+# 抓鬼用它判「是否已进战」，进战超时就补点小闹钟寻路（可选，未标=不判进战、退回只等「是否继续」）。
 # task_config 会把它叠加进各任务的 templates（见 SHARED_TPL_KEYS），任务用 tc["templates"]["battle_flag"] 直接读。
 BATTLE_FLAG_TPL_KEY = "battle_flag"
 # 小闹钟寻路（存 tasks.shared.templates.clock，在「任务配置」页「全局共享标定」里标定）：
@@ -330,7 +331,7 @@ def _mk_weekly():
 
 
 SINGLE_TASK_ORDER = ["treasure_map", "secret_realm", "appreciation", "sanjie",
-                     "escort", "guild_checkin", "activity_reward"]
+                     "escort", "guild_checkin", "activity_reward", "guaguale"]
 # 单人任务卡顺序 = 日常「单人任务组」默认任务顺序（两处必须一致，改这里两者同步）：
 #   ui/pages/config_page.py 的单人卡片按此顺序创建；config 的 daily.steps 个人组默认顺序 = 它。
 # ⚠ 登录游戏（login）不在 SINGLE_TASK_ORDER 里：它自己启动客户端、不依赖已开好的号，
@@ -723,7 +724,13 @@ DEFAULT_CONFIG = {
                 "npc_dialog_sec": 60,        # 参加后等「领取抓鬼任务」对话框出现的超时
                 "step_timeout_sec": 30,      # 领下一轮 等按钮出现的超时
                 "nav_double_gap_sec": 0.3,   # 点任务条目需连点两次：两次点击的间隔（首击会被当聚焦吞掉）
-                "battle_timeout_sec": 2400,  # 一场战斗超时：挂够这么久没打完视为异常（默认 40 分钟）
+                "battle_timeout_sec": 10,    # 每场战斗之间的等待：点完小闹钟(首轮)或上一场打完(后续)到进入
+                                             #   下一场的上限；超时未见战斗画面 → 补点小闹钟寻路（限
+                                             #   battle_recover_max 次）。判「是否在战斗中」用公共标定
+                                             #   battle_flag（tasks.shared），未标则不补点、退回只等 gg_next
+                "battle_recover_max": 3,     # 进战超时后补点小闹钟的次数上限，连续超限即中止本轮
+                "round_timeout_sec": 3600,   # 本轮打完上限：等「是否继续」(gg_next) 出现，挂 60min 没出现
+                                             #   视为一场战斗永远没打完的异常，中止（兜底看门狗）
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
                 "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
                 "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
@@ -945,6 +952,33 @@ DEFAULT_CONFIG = {
             },
         },
 
+        # ---- 刮刮乐（单人任务，也可进日常个人组）----
+        #   主界面点「福利」→ 点「打开刮刮乐」→ 在 scratch_area 刮奖区域里按住鼠标 Z 字来回扫填满
+        #   → 有「节日奖励」就点它、等「领取节日奖励」出现再点、再点领奖弹窗里的「奖励」图标 → 收尾关面板。
+        #   节日奖励三张模板（festival_btn/claim_festival/reward_icon）全可选：任一没标=整段跳过领奖。
+        "guaguale": {
+            "loop": {
+                "match_threshold": 0.85,
+                "step_timeout_sec": 20,         # 等「福利」/「打开刮刮乐」按钮出现的单步超时
+                "festival_wait_sec": 4,         # 刮完后等「节日奖励」按钮出现多久（没有=今天没得领，直接收尾）
+                "claim_wait_sec": 6,            # 点完节日奖励后等「领取节日奖励」按钮出现多久
+                "reward_icon_wait_sec": 6,      # 等领奖弹窗里的「奖励」图标出现多久
+                "scratch_passes": 2,            # 刮奖区域来回扫几遍（不够干净就调大）
+                "scratch_line_gap": 10,         # 每行间距(px)：越小刮得越密、越慢
+                "scratch_sample_step": 8,       # 行内采样点间距(px)：越小越密、越慢
+                "scratch_speed": 1.6,           # 刮奖移动速度倍率
+                "close_tries": 3,               # 收尾最多关几层面板（领奖弹窗/刮奖界面/福利面板）
+            },
+            "regions": {"scene": None, "scratch_area": None},
+            "templates": {
+                "welfare": None,                # 主界面「福利」按钮
+                "open_scratch": None,           # 福利面板「打开刮刮乐」按钮
+                "festival_btn": None,           # 「节日奖励」按钮（可选）
+                "claim_festival": None,         # 「领取节日奖励」按钮（可选）
+                "reward_icon": None,            # 领奖弹窗里的「奖励」图标（可选）
+            },
+        },
+
         # ---- 登录游戏（自己起客户端，串行逐号登录；不进日常 steps，只在「日常」页顶部登录区触发）----
         "login": _mk_login(),
 
@@ -1011,6 +1045,8 @@ def load_config():
     if _migrate_ob_confirm_key(cfg):
         save_config(cfg)
     if _migrate_sr_rounds_and_victory(cfg):
+        save_config(cfg)
+    if _migrate_zhuagui_battle_gap(cfg):
         save_config(cfg)
     return cfg
 
@@ -1139,6 +1175,27 @@ def _migrate_sr_rounds_and_victory(cfg):
     except OSError:
         pass
     return changed
+
+
+def _migrate_zhuagui_battle_gap(cfg):
+    """一次性迁移（抓鬼 battle_timeout_sec 语义改版）：该键旧语义是「整轮战斗等待时长」
+    （历史默认 2400s），新语义是「每场战斗之间的等待/超时补点时长」（默认 10s）。用户旧值
+    2400 若原样沿用，新语义下「战斗间超时补点小闹钟」就形同虚设，故把明显是旧语义的大值
+    （≥100s；新语义合理值都在秒级）压回 10。判据走「值」而非键：load_config 已 _deep_merge
+    默认值，新键 round_timeout_sec/battle_recover_max 缺失与否分辨不出旧配置。
+    只改 tasks.zhuagui.loop 已存在的块（没跑过抓鬼就不建命名空间）；压回后值已 ≤10，
+    再次加载不再触发，天然一次性。返回是否改动（改动由 load_config 存盘）。"""
+    loop = ((cfg.get("tasks") or {}).get("zhuagui", {}) or {}).get("loop")
+    if not isinstance(loop, dict) or not loop:
+        return False
+    try:
+        val = float(loop.get("battle_timeout_sec", 10))
+    except (TypeError, ValueError):
+        val = 10
+    if val < 100:
+        return False
+    loop["battle_timeout_sec"] = 10
+    return True
 
 
 def _migrate_login_account_slots(cfg):

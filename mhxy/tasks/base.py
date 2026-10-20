@@ -114,7 +114,7 @@ class Task:
     CHAINS_PER_WINDOW = False
     # True=在「日常·多开」里该任务按【逐号顺序执行】：一个号把它从头到尾做完
     # （record done）才轮到下一个号做，不做跨号轮转——配合 daily 的 _drive_chain_until_yield(blocking=True)。
-    #   适合「短而快、频繁切号反而低效/凌乱」的任务（三界奇缘/趣味鉴赏）；
+    #   适合「短而快、频繁切号反而低效/凌乱」的任务（三界奇缘/趣味鉴赏/刮刮乐）；
     #   只影响日常的链推进，任务自己单独跑的行为不变（见各任务 _run）。
     CHAIN_SEQUENTIAL = False
     # True=开跑前先把目标窗口带回主界面（run() 入口统一做；找不到主界面只打日志不拦任务）。

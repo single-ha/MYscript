@@ -23,6 +23,7 @@ from .sanjie import SanjieConfig
 from .escort import EscortConfig
 from .guild_checkin import GuildCheckinConfig
 from .activity_reward import ActivityRewardConfig
+from .guaguale import GuagualeConfig
 from .dungeon import DungeonConfig
 from .zhuagui import ZhuaguiConfig
 
@@ -32,5 +33,5 @@ __all__ = [
     "OrganizeBagPage", "TuoyingPage", "SectGatePage", "UnderwaterPage", "MazeTowerPage",
     "TreasureMapConfig", "SecretRealmConfig", "AppreciationConfig", "SanjieConfig",
     "EscortConfig", "GuildCheckinConfig", "ActivityRewardConfig", "DungeonConfig",
-    "ZhuaguiConfig",
+    "ZhuaguiConfig", "GuagualeConfig",
 ]

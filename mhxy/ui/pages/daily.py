@@ -15,15 +15,17 @@ from ...core import window as win_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
 from ...tasks.base import dungeon_tasks
-from ...tasks.daily import CHAINABLE, GROUP_OF, GROUP_TITLES, MULTI_BARRIER, get_selected_dungeon_titles
+from ...tasks.daily import (CHAINABLE, GROUP_OF, GROUPS, GROUP_TITLES, MULTI_BARRIER,
+                            get_selected_dungeon_titles)
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
 from ..common import (Card, Tooltip, bind_wraplength, required_regions,
                       required_templates, teaming_ns)
 from ..dungeon_picker import DungeonPicker
 
-# 分区集合。两区分组固定：多人组在前、个人组在后（不提供互换）；GROUP_OF 里出现过的区都保留（以后加新区自动跟上）。
-_GROUPS = ["multi"] + [g for g in dict.fromkeys(GROUP_OF.values()) if g != "multi"]
+# 分区集合：与起始页日常卡/引擎同源（tasks.daily.GROUPS）。两区分组固定：多人组在前、
+# 个人组在后（不提供互换）；GROUP_OF 里出现过的区都保留（以后加新区自动跟上）。
+_GROUPS = GROUPS
 
 
 class DailyPage(ctk.CTkFrame):
@@ -41,6 +43,7 @@ class DailyPage(ctk.CTkFrame):
         "treasure_map": "宝图", "secret_realm": "秘境", "appreciation": "趣味鉴赏",
         "sanjie": "奇缘", "escort": "运镖", "guild_checkin": "帮派签到",
         "activity_reward": "活跃度", "dungeon": "刷副本", "zhuagui": "抓鬼",
+        "guaguale": "刮刮乐",
     }
 
     # 各任务名的专用 Tooltip（各不相同；点任务名=单跑那一行在 Tooltip 里统一提示）
@@ -52,6 +55,7 @@ class DailyPage(ctk.CTkFrame):
         "escort": "运镖：押送普通镖银，循环押满设定次数。",
         "guild_checkin": "帮派签到：进帮派签到领奖励。",
         "activity_reward": "活跃度奖励：领取今日活跃度礼包。",
+        "guaguale": "刮刮乐：点福利打开刮刮乐，刮开奖区，有节日奖励就顺手领。",
         "dungeon": "刷副本：集体组队，把勾选的副本按顺序刷完（勾选区点「副本名」可只刷那一本）。",
         "zhuagui": "抓鬼：集体组队，抓完一轮鬼。",
     }

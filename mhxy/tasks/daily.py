@@ -3,10 +3,12 @@
 日常：把已有任务按用户勾选、分「单人任务/多人任务」两组串起来跑完。
 
 分组（用户拍板，2026-09-07 重做，与「单人任务/多人任务」两个页面对齐；两区分组固定，不提供互换）：
-  · 个人组（CHAINABLE_SINGLE）= 宝图 / 运镖 / 秘境降妖 / 三界奇缘 / 帮派签到 / 活跃度奖励
+  · 个人组（CHAINABLE_SINGLE = list(SINGLE_TASK_ORDER)，改那张表两者同步）
+        = 宝图 / 秘境降妖 / 趣味鉴赏 / 三界奇缘 / 运镖 / 帮派签到 / 活跃度奖励 / 刮刮乐
         —— 每窗口独立任务链，互不制约：号1 自己 运镖→宝图→… 一路跑，号2 独立同样跑，
         靠一只鼠标在号间轮转交错推进，谁也不等谁。
-        例外（用户拍板，2026-09-22）：三界奇缘 / 趣味鉴赏（CHAIN_SEQUENTIAL=True）不交错轮转，
+        例外（用户拍板，2026-09-22；刮刮乐 2026-10-20 加入）：三界奇缘 / 趣味鉴赏 / 刮刮乐
+        （CHAIN_SEQUENTIAL=True）不交错轮转，
         而是【一个号把它从头做完整（record done）才轮到下一个号做】——主循环指定唯一持有者、
         以 blocking 推进，排队的号跳过本号等待。
   · 多人组（MULTI_BARRIER）= 刷副本 / 抓鬼
@@ -55,9 +57,13 @@ MULTI_BARRIER = ["dungeon", "zhuagui"]
 CHAINABLE = CHAINABLE_SINGLE + MULTI_BARRIER
 GROUP_OF = {n: "single" for n in CHAINABLE_SINGLE}
 GROUP_OF.update({n: "multi" for n in MULTI_BARRIER})
-GROUP_ORDER_DEFAULT = ["multi", "single"]   # 两区分组固定（多人在前、单人在后），保留作配置默认值
+# 分区顺序【唯一来源】：多人组在前、其余按 GROUP_OF 的出现顺序。
+# 日常页 `_GROUPS`、起始页日常卡 `_GROUPS`、引擎 `_enabled_steps` 的 steps 分段都引用它，
+# 保证「界面显示的执行顺序 == 引擎跑的顺序」——别在别处再算一套。
+GROUPS = ["multi"] + [g for g in dict.fromkeys(GROUP_OF.values()) if g != "multi"]
+GROUP_ORDER_DEFAULT = list(GROUPS)          # 两区分组固定（多人在前、单人在后），保留作配置默认值
 GROUP_TITLES = {"single": "单人任务", "multi": "多人任务"}
-# 以后要加新分区：这里补 GROUP_OF 的映射 + GROUP_TITLES 标题即可；日常页的 _GROUPS、
+# 以后要加新分区：这里补 GROUP_OF 的映射 + GROUP_TITLES 标题即可；日常页/起始页的 _GROUPS、
 # 引擎的 steps 分段、config 的 group_order 都会自动跟进，无需改别处。
 
 
@@ -598,9 +604,12 @@ class DailyTask(Task):
         return sel, (get_task(sel) if sel else None)
 
     def _enabled_steps(self, ctx):
-        """返回【按存储顺序】、已勾选且可串联的任务名列表。
-        组级开关（tasks.daily.group_enabled，{single: bool, multi: bool}，缺省 True）也参与过滤：
-        整个组被关掉时，该组全部任务不进日常（组内行级 enabled 独立保留，重开整组即恢复）。
+        """返回本趟真正会跑的任务名列表，顺序=执行顺序，**与界面完全同源**
+        （daily_card.enabled_names / 日常页 _refresh_exec_order 的 _normalize 同口径）：
+        ① 行级已勾选；② 组级开关（tasks.daily.group_enabled，{single,multi}，缺省 True）开启——
+        整组关掉时该组全部任务不进日常（组内行级 enabled 独立保留，重开整组即恢复）；
+        ③ 存储 steps 里没有的新任务补到末尾（默认启用，见下）；
+        ④ 按 GROUPS 拼段（多人组在前、区内保持存储相对顺序）。
 
         「刷副本」步额外看有没有勾副本：**开着但一个都没勾 = 这步不存在**（用户拍板，与整行
         关掉完全等效——否则会白设一道没人跑的集体屏障、还可能误触发收尾/强制解散）。
@@ -612,17 +621,30 @@ class DailyTask(Task):
         def group_on(name):
             g = GROUP_OF.get(name)
             return ge.get(g, True) if g else True
-        out = []
+        def dungeon_ok(name):
+            return name != "dungeon" or self._selected_dungeons(ctx)
+        out, seen = [], set()
         for step in tc.get("steps", []):
             if not isinstance(step, dict):
                 continue
             name = step.get("task")
-            if name == "dungeon" and not self._selected_dungeons(ctx):
+            if name not in CHAINABLE:
                 continue
-            if (step.get("enabled") and group_on(name)
-                    and name in CHAINABLE and name not in out):
+            seen.add(name)          # 存在即可（禁用的行也算「存过」，见下：不能被当成缺行补回来）
+            if not dungeon_ok(name):
+                continue
+            if step.get("enabled") and group_on(name) and name not in out:
                 out.append(name)
-        return out
+        # 存储 steps 里没有、CHAINABLE 里有 = 新任务上线、老 config 还没存这行：
+        # 与界面「缺的补到末尾（默认启用）」同口径补进来，否则「界面显示这行、引擎却跳过」。
+        # 用户在界面关掉的行是带 enabled=False 存着的（已在 seen 里），绝不会被这里补回来。
+        for name in CHAINABLE:
+            if name not in seen and group_on(name) and dungeon_ok(name):
+                out.append(name)
+        # 按区拼段（分段顺序与界面共用 tasks.daily.GROUPS），否则会「界面显示这步先跑、
+        # 引擎却先跑另一步」——尤其是还没被界面保存过的旧 config（存的原序不一定是区序）。
+        seg = {g: [n for n in out if GROUP_OF.get(n) == g] for g in GROUPS}
+        return [n for g in GROUPS for n in seg.get(g, [])]
 
     def _time_limit(self, ctx):
         tc = ctx.task_cfg(self.name)

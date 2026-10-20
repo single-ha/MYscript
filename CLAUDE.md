@@ -141,10 +141,10 @@ mhxy/
                           已迁到「日常」页控制区（影响日常运行中自动清背包）
     pages/config_page.py  ConfigPage：任务配置页（导航「🎛 任务配置」，2026-09-23 起取代原 single/multi 两页）——
                           单人/多人全部任务的 参数+标定 收拢成一个可滚动界面，无任何运行入口；登录1卡(最上)
-                          + 单人7卡(按 config.SINGLE_TASK_ORDER) + 多人2卡(刷副本/抓鬼；组队开关已不在本页，
+                          + 单人8卡(按 config.SINGLE_TASK_ORDER) + 多人2卡(刷副本/抓鬼；组队开关已不在本页，
                           见下「已组队」条)。
                           各任务页文件（treasure_map/secret_realm/appreciation/sanjie/escort/guild_checkin/
-                          activity_reward/dungeon/zhuagui/login）均改为无 run 的配置卡类 *Config，参数「改动即保存」
+                          activity_reward/guaguale/dungeon/zhuagui/login）均改为无 run 的配置卡类 *Config，参数「改动即保存」
                           （common.param_entry 失焦/回车写回 config）；副本勾选唯一入口仍留在「日常」页
                           （DungeonPicker，共享 tasks.dungeon.selected），本页刷副本卡只做共用标定+就绪，不含勾选。
     pages/login.py        LoginConfig：登录游戏的配置卡（客户端路径/启动参数/等待参数 + 标定入口 + 账号库按钮，共享 tasks.login）；
@@ -251,13 +251,19 @@ mhxy/
     同文件还有**标志判定 `ui_state.is_present(scene, flags, flag_key, threshold)`**（通用 `_present`：场景里找到该标志模板=True，
     缺失/没找到=False 不抛错）——战斗标识 `battle_flag` 判定即走它（运镖/宝图/秘境），各任务不再各自复制 `_present`。
 - **日常分「个人/多人」两区（user 拍板，2026-09-07）**：`tasks/daily.py` 里
-  `CHAINABLE_SINGLE`=个人组（宝图/运镖/秘境/三界奇缘/帮派签到/活跃度奖励/趣味鉴赏，每窗口独立链）、
+  `CHAINABLE_SINGLE`=个人组（宝图/运镖/秘境/三界奇缘/帮派签到/活跃度奖励/趣味鉴赏/刮刮乐，每窗口独立链）、
   `MULTI_BARRIER`=多人组（刷副本/抓鬼，集体屏障：所有活跃号停靠同一步等齐→组队→队长跑→放行）。
-  `group_of(name)` 由任务名判定分组；**steps 全局有序=执行顺序**（按 `tasks.daily.group_order` 两段拼接，
-  界面「⇅ 两区互换」整段对调、组内保留）。**整组开关 `tasks.daily.group_enabled`**（{single,multi}→bool，缺省
-  全开）：区头开关整组停用/启用，引擎 `_enabled_steps` 过滤时跳过整组（行级 enabled 独立保留，重开整组即恢复）。**进个人组的前提**是任务有 `CHAINS_PER_WINDOW=True` +
+  `GROUP_OF` 由任务名判定分组；**steps 全局有序=执行顺序**（按 `tasks.daily.GROUPS` 两段拼接：多人在前、
+  组内保留存储相对顺序；两区分组固定、不提供互换）。**整组开关 `tasks.daily.group_enabled`**（{single,multi}→bool，缺省
+  全开）：区头开关整组停用/启用，引擎 `_enabled_steps` 过滤时跳过整组（行级 enabled 独立保留，重开整组即恢复）。
+  **步骤清单必须四处同源（引擎也算一处）**：老 config 存储 steps 里没有的新任务行，界面
+  `DailyPage._normalize`/`daily_card.ordered_steps` 与引擎 `DailyTask._enabled_steps` 一律「补到末尾、默认启用」
+  （已禁用的行带 enabled=False 存着，谁都不会把它补回来），且四者都按唯一的 `tasks.daily.GROUPS` 分段——
+  否则就会「界面显示这行/这个顺序、引擎却跳过/先跑别的」。`GROUPS` 是区序唯一来源（UI 两个 `_GROUPS` 也引用它），
+  加新区只改 `GROUP_OF`+`GROUP_TITLES`。**进个人组的前提**是任务有 `CHAINS_PER_WINDOW=True` +
   `make_chain_driver(wctx)`（每窗口 record + 单步推进，非阻塞；帮派签到/活跃度已是轮转状态机）。
-  **三界奇缘/趣味鉴赏 置 `CHAIN_SEQUENTIAL=True`（user 拍板 2026-09-22）**：日常多开时**逐号顺序执行**——
+  **三界奇缘/趣味鉴赏/刮刮乐 置 `CHAIN_SEQUENTIAL=True`（user 拍板 2026-09-22；刮刮乐 2026-10-20 加入，
+  因子：刮奖是几秒的长连续动作，切前台会打断节奏）**：日常多开时**逐号顺序执行**——
   主循环指定唯一持有者、`_drive_chain_until_yield(blocking=True)` 把它从头做完整再放行，排队的号跳过等待
   （不做跨号轮转）；窗口失效的号不占持有权（不会饿死别号）。任务单独跑（独立页/多开轮转）不受影响。
   多人步只走集体 `_run_collective`，不建独立链。
@@ -284,7 +290,10 @@ mhxy/
   **共享模板 `battle_flag` 战斗标识、`clock` 小闹钟(寻路) 也统一在此标定**（存 `tasks.shared.templates`、进位 `core/config.SHARED_TPL_KEYS`，
   `task_config` 同时把它们叠加进各任务 templates、任务直接用 `tc["templates"]["battle_flag"]`/`["clock"]` 读，各任务不再自带这两项标定、
   preflight 缺它时提示去「通用」页框）。必标关系在 `TASK_SHARED_TPL_REQ`：战斗标识=运镖/宝图，小闹钟=副本（跑到目标寻路/每轮收尾）与抓鬼
-  （点任务条目寻路）；`core/config` 里有一次性的 `_migrate_shared_clock`，把用户旧位置（`tasks.dungeon.templates.clock`/`tasks.zhuagui.templates.gg_nav`，
+  （点任务条目寻路）；抓鬼**另读** `battle_flag` 判「是否已进战」，好按 `loop.battle_timeout_sec`（新语义=**每场战斗之间**的等待，默认 10s、
+  旧值 2400 由 `_migrate_zhuagui_battle_gap` 一次性压回）超时补点小闹钟、连补 `battle_recover_max` 次进不了战即中止，另有 `round_timeout_sec`
+  整轮兜底——但 `battle_flag` 对抓鬼是**可选**的（不在必标列表里，未标=不判进战、不补点，退回只等「是否继续」的旧行为）；
+  `core/config` 里有一次性的 `_migrate_shared_clock`，把用户旧位置（`tasks.dungeon.templates.clock`/`tasks.zhuagui.templates.gg_nav`，
   旧抓鬼侧另留 `gg_nav` 兼容读取兜底）搬到 shared、不用重标。
   再次强调运行时只读 shared 标注副本：标定对话框**写**共享键走原始 `tasks.shared`、**写本任务**时剥离叠加值（`_save` 内
   `EXCLUSIVE_SHARED_REGIONS` + `SHARED_TPL_KEYS`），两者读库均经 `task_config` 合并。
