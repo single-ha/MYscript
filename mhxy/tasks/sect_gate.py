@@ -70,13 +70,13 @@ class SectGateTask(WeeklyBaseTask):
                     return True
                 if enter_tpl is not None and self._match_scene(cur, rect, "enter", threshold) is not None:
                     hit = self._match_scene(cur, rect, "enter", threshold)
-                    ctx.mouse.click(hit[0], hit[1])
+                    self.click_after_hit(ctx, hit[0], hit[1])
                     ctx.log(f"检测到「进入战斗」按钮，已点击（{hit[2]:.3f}）。", level="hit")
                     self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
                     continue
                 if clock_tpl is not None and self._match_scene(cur, rect, "clock", threshold) is not None:
                     hit = self._match_scene(cur, rect, "clock", threshold)
-                    ctx.mouse.click(hit[0], hit[1])
+                    self.click_after_hit(ctx, hit[0], hit[1])
                     ctx.log(f"检测到「小闹钟」，已点击（{hit[2]:.3f}）。", level="hit")
                     self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
                     return True
@@ -84,7 +84,7 @@ class SectGateTask(WeeklyBaseTask):
                     hit = vision.match(cur, claim_tpl, threshold,
                                        template_name="claim_task", task_name=self.name, window_rect=rect)
                     if hit is not None:
-                        ctx.mouse.click(rect[0] + hit[0], rect[1] + hit[1])
+                        self.click_after_hit(ctx, rect[0] + hit[0], rect[1] + hit[1])
                         ctx.log(f"检测到「领取任务」，已点击（{hit[2]:.3f}）。", level="hit")
                         self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
                         continue
@@ -92,7 +92,7 @@ class SectGateTask(WeeklyBaseTask):
                     hit = vision.match(cur, confirm_tpl, threshold,
                                        template_name="confirm", task_name=self.name, window_rect=rect)
                     if hit is not None:
-                        ctx.mouse.click(rect[0] + hit[0], rect[1] + hit[1])
+                        self.click_after_hit(ctx, rect[0] + hit[0], rect[1] + hit[1])
                         ctx.log(f"检测到「参加活动」，已点击（{hit[2]:.3f}）。", level="hit")
                         self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
                         continue

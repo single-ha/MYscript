@@ -311,7 +311,7 @@ class TuoyingTask(Task):
             if scene is not None:
                 hit = vision.match(scene, up_tpl, threshold)
                 if hit is not None:
-                    ctx.mouse.click(win_rect[0] + hit[0], win_rect[1] + hit[1])
+                    self.click_after_hit(ctx, win_rect[0] + hit[0], win_rect[1] + hit[1])
                     ctx.log(f"点「上传」（{hit[2]:.3f}）。", level="hit")
                     return True
             if time.time() > deadline:

@@ -277,7 +277,7 @@ class LoginTask(Task):
                     x, y = rect[0] + m[0], rect[1] + m[1]
                     if ctx.window.is_foreground() or ctx.window.activate():
                         ctx.mouse.human_move(x, y)
-                        ctx.mouse.click(x, y)
+                        self.click_after_hit(ctx, x, y)
                         ctx.log(f"点「{label}」（{m[2]:.3f}）。", level="hit")
                         self._interruptible_sleep(ctx, settle)
                         return True
@@ -380,7 +380,7 @@ class LoginTask(Task):
                 ctx.log(f"切前台失败，不点{card_kind}（宁缺勿错，原地重试）。", level="warn")
                 return scan.STAY, None
             ctx.mouse.human_move(x, y)
-            ctx.mouse.click(x, y)
+            self.click_after_hit(ctx, x, y)
             ctx.log(f"在{list_label}里点到 {name}（{m[2]:.3f}）。", level="hit")
             return scan.ACCEPT, (x, y, m[2])
 
@@ -462,7 +462,7 @@ class LoginTask(Task):
         if point is None:
             return
         ctx.mouse.human_move(point[0], point[1])
-        ctx.mouse.click(point[0], point[1])
+        self.click_after_hit(ctx, point[0], point[1])
         ctx.log("登录期弹窗守卫：点掉挡画面的公告/活动弹窗「×」。", level="hit")
 
     def _warn_entered_unconfirmed(self, ctx):

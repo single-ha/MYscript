@@ -315,7 +315,7 @@ class TreasureMapTask(TuoyingFlow, Task):
                     ctx.log("认出「宝图任务」且显示「完成」标识 → 领取阶段已完成，转入挖宝阶段。", level="hit")
                     return (scan.ACCEPT, {"join": False, "pos": None})
                 if r is not None and r != "nudged":
-                    ctx.mouse.click(r[0], r[1])
+                    self.click_after_hit(ctx, r[0], r[1])
                     ctx.log(f"找到「宝图任务」（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}），"
                             "开始传送找 NPC。", level="hit")
                     return (scan.ACCEPT, {"join": True, "pos": r})
@@ -361,7 +361,7 @@ class TreasureMapTask(TuoyingFlow, Task):
         cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, "flag_tingting", threshold)
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"选择「听听无妨」（{hit[2]:.3f}）。", level="hit")
             # 点完「听听无妨」后偶尔会弹「拓印」临摹界面（user 2026-10-18）：命中则交给共享
             # TuoyingFlow 自动临摹（描+上传），处理完该号**整条宝图任务从头重跑**（回阶段A 开活动）；
@@ -440,7 +440,7 @@ class TreasureMapTask(TuoyingFlow, Task):
             cur = ctx.window.grab_screen(scene_rect)
             hit = self._match_scene(cur, scene_rect, "flag_bag_arrange", threshold)
             if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"背包「整理」点了一下（{hit[2]:.3f}）。")
                 self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
             else:
@@ -463,6 +463,7 @@ class TreasureMapTask(TuoyingFlow, Task):
             hit = (vision.match(scene, self.flags.get("treasure_item"), threshold)
                    if scene is not None else None)
             if hit is not None:
+                self.pause_before_click(ctx)   # 识别命中后停 0.5~1.5s 再双击
                 ctx.mouse.double_click(rect[0] + hit[0], rect[1] + hit[1])
                 ctx.log(f"双击使用藏宝图（{hit[2]:.3f}），自动传送挖宝。")
                 return (scan.ACCEPT, hit)
@@ -510,7 +511,7 @@ class TreasureMapTask(TuoyingFlow, Task):
                     ctx.log("看到「使用」但同帧没看到藏宝图道具图标 → 先不点，"
                             "等画面静止后回开背包确认。", level="warn")
             else:
-                ctx.mouse.click(nxt[0], nxt[1])
+                self.click_after_hit(ctx, nxt[0], nxt[1])
                 rec["dug"] += 1
                 ctx.log(f"挖完第 {rec['dug']} 张（道具 {item[2]:.3f} 也在画面里），"
                         f"点「使用」继续。", level="hit")
@@ -706,7 +707,7 @@ class TreasureMapTask(TuoyingFlow, Task):
         hit = ui_state.find_panel_close(ctx.cfg, ctx.window)
         if hit is None:
             return False
-        ctx.mouse.click(hit[0], hit[1])
+        self.click_after_hit(ctx, hit[0], hit[1])
         self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
         return True
 

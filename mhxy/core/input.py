@@ -16,6 +16,12 @@ import math
 import random
 import ctypes
 
+# ---- 「识别到要点的模板」→ 点下去之前的拟人化停顿（user 拍板 2026-10-20 写死在代码里，
+#      不进 config / 设置页；要改时长直接改这两行）----
+#   秒装备(sniper) 明确排除：下单要抢时机，不能等。
+CLICK_DELAY = (0.5, 1.5)        # 普通任务：识别命中后停 0.5~1.5s 随机再点
+TEAM_CLICK_DELAY = (0.3, 0.6)   # 组队握手 / 队员准备这类连贯动作：短停顿，免得拖垮多开节奏
+
 user32 = ctypes.windll.user32
 
 # ---- SendInput 结构体与常量 ----

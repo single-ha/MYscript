@@ -32,6 +32,7 @@ from . import window as win_mod
 from . import rotation
 from . import scan
 from .config import CAPTURES_DEBUG_DIR
+from .input import TEAM_CLICK_DELAY
 
 
 # 组队标定 spec（单一真相源；calibrate_dialog 与 DungeonTask 都引用，避免漂移）
@@ -137,6 +138,16 @@ class TeamFormation:
             if self.lead.should_stop():
                 return
             time.sleep(min(0.05, max(0.0, end - time.time())))
+
+    def _click_after_hit(self, ctx, x, y):
+        """组队/找人：识别命中后停 0.3~0.6s 再点（短停顿——组队是连贯握手，长停顿会
+        拖垮多开节奏；user 拍板 2026-10-20）。可急停，急停后不再点。"""
+        if self.lead.should_stop():
+            return
+        self._sleep(random.uniform(*TEAM_CLICK_DELAY))
+        if self.lead.should_stop():
+            return
+        ctx.mouse.click(x, y)
 
     @staticmethod
     def _goto(rec, state):
@@ -256,7 +267,7 @@ class TeamFormation:
         ctx = rec["ctx"]
         hit = self._find_in_region(ctx, "team_panel", "team_create")
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self._click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"队长：点「创建队伍」（{hit[2]:.2f}），立刻切「申请」标签页。", level="hit")
             # 注意：此处【不】置 team_ready——队员继续门控，让队长趁前台一气呵成把「申请」也点了，
             # 不被队员抢前台/鼠标打断。team_ready 改到 _cap_apply 点完「申请」（或超时兜底）才置。
@@ -274,7 +285,7 @@ class TeamFormation:
         # 保证队长「创建→申请」两步一气呵成，不被队员切前台/抢鼠标打断。
         hit = self._find_in_region(ctx, "team_panel", "team_apply")
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self._click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"队长：点「申请」标签页（{hit[2]:.2f}），队伍已开放，放队员去申请。", level="hit")
             self.team_ready = True
             self._sleep(self._jitter(0.5))
@@ -298,7 +309,7 @@ class TeamFormation:
         # 「同意」按钮在申请标签页内（队员申请那一行右侧）→ 在 team_panel 区域内找
         hit = self._find_in_region(ctx, "team_panel", "team_accept")
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self._click_after_hit(ctx, hit[0], hit[1])
             self.joined += 1
             ctx.log(f"队长：点「同意」（{hit[2]:.2f}），已接受 {self.joined}/{self.member_count}。", level="hit")
             self._sleep(self._jitter(0.4))
@@ -355,7 +366,7 @@ class TeamFormation:
             arrow = self._find_arrow_on_row(ctx, "friend_list", (lx, ly))
             if arrow is None:        # 仅当区域取不到（窗口没了）才会是 None → 不滚，交下一轮 grab_rect=None 收尾
                 return scan.STAY, None
-            ctx.mouse.click(arrow[0], arrow[1])
+            self._click_after_hit(ctx, arrow[0], arrow[1])
             if arrow[2] > 0:
                 ctx.log(f"队员：找到队长（{score:.2f}）→ 点右侧箭头（{arrow[2]:.2f}），准备申请入队。", level="hit")
             else:
@@ -397,7 +408,7 @@ class TeamFormation:
         # 「申请入队」多是点箭头后弹出的小菜单，未必落在 friend_list 区内 → 整窗找更稳
         hit = self._find_full(ctx, "team_apply_join")
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self._click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"队员：点「申请入队」（{hit[2]:.2f}）。", level="hit")
             self._sleep(self._jitter(0.5))
             self._goto(rec, M_CLOSE)
@@ -489,7 +500,7 @@ class TeamFormation:
         ctx = rec["ctx"]
         hit = self._find_in_region(ctx, "team_panel", "team_quit")
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self._click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"解散：点「退出队伍」（{hit[2]:.2f}），关面板收尾。", level="hit")
             self._sleep(self._jitter(0.5))
             self._close_panel(ctx, "team_panel")

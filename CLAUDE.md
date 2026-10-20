@@ -49,6 +49,11 @@
    就**无条件整只重绘**（见 ctk_button.py），无脑每 tick 调会让**可见页**那一行高频繁闪（未显示的页不重绘故不显现；
    起始页日常卡 `sync_run` 曾如此）。写法：先算 (文字, 风格) 签名，与上次相同直接 return（同
    `sniper._update_wait_button` / `App._refresh_run_status` 的既有写法）。
+11. **识别命中→点击前必须拟人停顿（user 拍板 2026-10-20）**：除秒装备(sniper)外，凡「模板识别命中后点击」
+    一律先停 0.5~1.5s 再点；组队握手/队员准备这类连贯动作用短停顿 0.3~0.6s。时长**写死在 core/input.py**
+    的 CLICK_DELAY/TEAM_CLICK_DELAY（不进 config、不上设置页）。统一入口 base.Task.click_after_hit(ctx,x,y[,mouse=][,delay=])
+    （core 层各自 _click_after_hit），**新任务别直接 ctx.mouse.click**。排除：sniper、弹窗守卫点×、抓鬼双击第 2 下、
+    非识别驱动的盲点（区域中心右键关面板 / ui_state 交替右键）。
 
 ## 架构（三层，包名 mhxy/）
 > 文件树是「地图」，只给一句话功能；实现细节看各文件 docstring 与 memory，别往这里抄。

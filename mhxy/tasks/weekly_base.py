@@ -280,7 +280,7 @@ class WeeklyBaseTask(Task):
                     if leave_tpl is not None and now >= leave_cool_until:
                         h_leave = self._match_scene(cur, rect, "leave_maze_tower", threshold)
                         if h_leave is not None:
-                            ctx.mouse.click(h_leave[0], h_leave[1])
+                            self.click_after_hit(ctx, h_leave[0], h_leave[1])
                             ctx.log(f"检测到「离开迷魂塔」（{h_leave[2]:.3f}），点击后判定本轮结束。", level="hit")
                             self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
                             self._back_to_main(ctx)
@@ -293,7 +293,7 @@ class WeeklyBaseTask(Task):
                             continue
                     hit = self._match_scene(cur, rect, "enter", threshold)
                     if hit is not None and now >= enter_cool_until:
-                        ctx.mouse.click(hit[0], hit[1])
+                        self.click_after_hit(ctx, hit[0], hit[1])
                         fights += 1
                         ctx.log(f"第 {rounds} 轮第 {fights} 场：点「进入战斗」（{hit[2]:.3f}）。",
                                 level="hit")
@@ -304,7 +304,7 @@ class WeeklyBaseTask(Task):
                         continue
                     hit = self._match_scene(cur, rect, "clock", threshold)
                     if hit is not None and now >= clock_cool_until:
-                        ctx.mouse.click(hit[0], hit[1])
+                        self.click_after_hit(ctx, hit[0], hit[1])
                         ctx.log(f"点「小闹钟」寻路（{hit[2]:.3f}）。", level="hit")
                         clean_since = None
                         clock_cool_until = now + clock_cooldown
@@ -419,7 +419,7 @@ class WeeklyBaseTask(Task):
                     ctx.log(f"找到活动卡片（{hit[2]:.3f}）且显示「完成」标识，判定本号该周常已完成。", level="hit")
                     return scan.ACCEPT, {"completed": True}
                 if r is not None and r != "nudged":
-                    ctx.mouse.click(r[0], r[1])
+                    self.click_after_hit(ctx, r[0], r[1])
                     ctx.log(f"找到活动卡片（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}），开始寻路到 NPC。",
                             level="hit")
                     self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
@@ -545,7 +545,7 @@ class WeeklyBaseTask(Task):
             cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._match_scene(cur, scene_rect, flag_key, threshold)
             if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点「{label}」（{hit[2]:.3f}）。", level="hit")
                 self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
                 return True

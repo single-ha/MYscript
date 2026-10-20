@@ -248,7 +248,7 @@ class AppreciationTask(Task):
                 ctx.log(f"找到「趣味鉴赏」卡片（{score:.3f}）且显示「完成」标识，判定该号今日已完成。", level="hit")
                 return scan.ACCEPT, {"completed": True}
             if r is not None and r != "nudged":
-                ctx.mouse.click(r[0], r[1])
+                self.click_after_hit(ctx, r[0], r[1])
                 ctx.log(f"找到「趣味鉴赏」卡片（{score:.3f}）→ 点「参加」（{r[2]:.3f}），进鉴赏界面。", level="hit")
                 rec["not_found_since"] = None
                 rec["scrolls"] = 0
@@ -320,7 +320,7 @@ class AppreciationTask(Task):
                 return
             # 加速移动+点击，缩小被边缘滚动的窗口
             ctx.mouse.human_move(hit[0], hit[1], speed=2.5)
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             rec["clicks"] += 1
             rec["t_action"] = time.time()
             rec["not_found_since"] = None

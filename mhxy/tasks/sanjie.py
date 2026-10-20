@@ -252,7 +252,7 @@ class SanjieTask(Task):
                 ctx.log(f"找到卡片（{score:.3f}）且显示「完成」标识，判定该号今日已完成。", level="hit")
                 return scan.ACCEPT, {"completed": True}
             if r is not None and r != "nudged":
-                ctx.mouse.click(r[0], r[1])
+                self.click_after_hit(ctx, r[0], r[1])
                 ctx.log(f"找到卡片（{score:.3f}）→ 点「参加」（{r[2]:.3f}），直接进答题界面。", level="hit")
                 return scan.ACCEPT, r
             if r != "nudged":
@@ -306,7 +306,7 @@ class SanjieTask(Task):
             hit = (scene_rect[0] + int(scene_rect[2] * fx),
                    scene_rect[1] + int(scene_rect[3] * fy), 0.0)
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             rec["answered"] += 1
             ctx.log(f"点任意选项作答（累计 {rec['answered']} 题）。", level="hit")
             self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
@@ -324,7 +324,7 @@ class SanjieTask(Task):
         cur = ctx.window.grab_screen(scene_rect)
         close = self._match_scene(cur, scene_rect, "qq_close", threshold)
         if close is not None:
-            ctx.mouse.click(close[0], close[1])
+            self.click_after_hit(ctx, close[0], close[1])
             ctx.log(f"点「关闭」退出答题界面（{close[2]:.3f}）。", level="hit")
             self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
         else:

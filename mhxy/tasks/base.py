@@ -22,6 +22,7 @@ from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
 from ..core.config import CAPTURES_DIR, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY
+from ..core.input import CLICK_DELAY, TEAM_CLICK_DELAY
 
 _REGISTRY = {}
 
@@ -219,6 +220,24 @@ class Task:
         r = ctx.cfg.get("humanize", {}).get("interval_jitter", 0.4)
         return max(0.05, base, base * (1 + random.uniform(-r, r)))
 
+    # ------------------------------------------------------------------
+    # 「识别到要点击的模板 → 停顿 → 再点」（user 拍板 2026-10-20）
+    #   默认 0.5~1.5s，写死在 core/input.CLICK_DELAY；组队握手用 TEAM_CLICK_DELAY 短停顿。
+    #   秒装备(sniper) 不走这里（抢时机，不能等）。停顿期间急停/弹窗守卫照常生效。
+    # ------------------------------------------------------------------
+    def pause_before_click(self, ctx, delay=None):
+        """识别到需要点击的模板后、点下去之前的拟人化停顿（默认 0.5~1.5s）。
+        走 _interruptible_sleep：急停生效、停顿期间顺带跑弹窗守卫。"""
+        self._interruptible_sleep(ctx, random.uniform(*(delay or CLICK_DELAY)))
+
+    def click_after_hit(self, ctx, x, y, mouse=None, speed=None, delay=None):
+        """识别命中后停顿（默认 0.5~1.5s；组队握手传 delay=TEAM_CLICK_DELAY）再点击。
+        急停后不再发出点击；mouse 用来点别的窗口（如轮询队员窗时的 wctx.mouse）。"""
+        self.pause_before_click(ctx, delay)
+        if ctx.should_stop():
+            return
+        (mouse or ctx.mouse).click(x, y, speed=speed)
+
     def _wait_activity_ui(self, ctx, threshold, timeout=3.0, rect_region=None):
         """确认「活动」界面已真正打开：发完 open_activity 快捷键后轮询等共享模板 activity_ui_flag 出现，
         出现才返回 True，允许调用方开始滚轮翻找活动卡片；超时（或未标定模板）返回 False，
@@ -265,7 +284,7 @@ class Task:
                 hit = vision.match(scene, tpl, threshold, template_name="daily_activity_tab", task_name=self.name, window_rect=rect)
                 if hit is not None:
                     cx, cy = hit[0], hit[1]
-                    ctx.mouse.click(rect[0] + cx, rect[1] + cy)
+                    self.click_after_hit(ctx, rect[0] + cx, rect[1] + cy)
                     ctx.log("点击「日常活动」标签", level="info")
                     self._interruptible_sleep(ctx, 0.5)  # 固定等待 0.5s 列表刷新
                     return True

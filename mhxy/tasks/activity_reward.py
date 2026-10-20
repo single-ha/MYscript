@@ -168,7 +168,7 @@ class ActivityRewardTask(Task):
         cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, key, rec["threshold"])
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"点「{label}」（{hit[2]:.3f}）。", level="hit")
             rec["claimed"] += 1
             self._interruptible_sleep(ctx, self._jitter(0.8, ctx))

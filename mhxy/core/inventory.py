@@ -32,6 +32,7 @@ import random
 from . import vision
 from . import window as win_mod
 from . import scan
+from .input import CLICK_DELAY
 
 # 动作声明式步骤序列：每个动作 = 点开物品(open) → 逐步点序列按钮(steps) → 收尾(close)。
 #   open : 点物品方式 left/right/double；None=用 loop.open_item_click（缺省 right）。
@@ -185,7 +186,7 @@ class InventoryOrganizer:
             pass
         hit = ui_state.find_panel_close(ctx.cfg, ctx.window)
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self._click_after_hit(hit[0], hit[1])
             self._sleep(self._jitter(0.3))
             ctx.log("背包已关（点「面板关闭按钮」）。", level="info")
             return
@@ -207,7 +208,7 @@ class InventoryOrganizer:
         if hit is None:
             self.ctx.log("没找到游戏「整理」按钮（请检查 sort_button 标定），跳过收拢。", level="warn")
             return
-        self.ctx.mouse.click(hit[0], hit[1])
+        self._click_after_hit(hit[0], hit[1])
         self.ctx.log(f"点游戏「整理」按钮收拢背包（{hit[2]:.2f}）。", level="hit")
         self._sleep(self._jitter(self.loop.get("step_wait_sec", 0.4)))
 
@@ -324,8 +325,23 @@ class InventoryOrganizer:
         self._cleanup(spec)
         return True
 
+    def _click_after_hit(self, x, y):
+        """识别到「需要点击的模板」后停 0.5~1.5s 再点（user 拍板 2026-10-20；可急停）。"""
+        if self.ctx.should_stop():
+            return
+        self._sleep(random.uniform(*CLICK_DELAY))
+        if self.ctx.should_stop():
+            return
+        self.ctx.mouse.click(x, y)
+
     def _click(self, how, x, y):
         """按 how(left/right/double) 拟人化点击屏幕坐标。"""
+        # 识别命中后的 0.5~1.5s 拟人化停顿统一在这里（user 拍板 2026-10-20）
+        if self.ctx.should_stop():
+            return
+        self._sleep(random.uniform(*CLICK_DELAY))
+        if self.ctx.should_stop():
+            return
         if how == "right":
             self.ctx.mouse.right_click(x, y)
         elif how == "double":
@@ -372,7 +388,7 @@ class InventoryOrganizer:
         # 复用统一的「带超时轮询」：在 confirm_timeout_sec 内反复找「确定」，命中即点。
         hit = self._find_full_wait("discard_confirm_button", self.loop.get("confirm_timeout_sec", 6))
         if hit is not None:
-            self.ctx.mouse.click(hit[0], hit[1])
+            self._click_after_hit(hit[0], hit[1])
             self.ctx.log(f"点「确定」确认（{hit[2]:.2f}）。", level="hit")
             return
         # 确认框确实弹了但没匹配到「确定」：告警，靠 _do_action 收尾的 close_panel 关掉模态，不留模态继续滚。

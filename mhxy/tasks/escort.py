@@ -266,7 +266,7 @@ class EscortTask(Task):
                 ctx.log(f"找到「运镖」（{score:.3f}）且显示「完成」标识，判定该号今日已完成。", level="hit")
                 return scan.ACCEPT, {"completed": True}
             if r is not None and r != "nudged":
-                ctx.mouse.click(r[0], r[1])
+                self.click_after_hit(ctx, r[0], r[1])
                 ctx.log(f"找到「运镖」（{score:.3f}）→ 点「参加」（{r[2]:.3f}），等对话框。", level="hit")
                 return scan.ACCEPT, r
             if r != "nudged":
@@ -304,7 +304,7 @@ class EscortTask(Task):
         cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, "escort_silver", threshold)
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             rec["escorts"] += 1
             ctx.log(f"点「押送普通镖银」（{hit[2]:.3f}）开始第 {rec['escorts']} 趟，等确认框…", level="hit")
             self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
@@ -320,7 +320,7 @@ class EscortTask(Task):
         cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, "escort_confirm", threshold)
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"点「确认」（{hit[2]:.3f}），开始监控本趟运镖。", level="hit")
             self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
             self._start_trip_monitor(rec)
@@ -359,7 +359,7 @@ class EscortTask(Task):
                 ctx.log(f"已完成设定的 {self.max_escorts} 趟，收尾该号（不再续押）。", level="hit")
                 self._finish_escort(ctx, rec)
                 return
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             rec["escorts"] += 1
             ctx.log(f"上一趟结束，对话框再次弹出 → 点「押送普通镖银」开始第 {rec['escorts']} 趟"
                     f"（{hit[2]:.3f}），等确认框…", level="hit")

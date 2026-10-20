@@ -375,7 +375,7 @@ class ZhuaguiTask(Task):
                     recover += 1
                     clock_hit = self._match_scene(cur, scene_rect, "clock", threshold)
                     if clock_hit is not None:
-                        ctx.mouse.click(clock_hit[0], clock_hit[1])
+                        self.click_after_hit(ctx, clock_hit[0], clock_hit[1])
                         if double_gap > 0:
                             self._interruptible_sleep(ctx, self._jitter(double_gap, ctx))
                             ctx.mouse.click(clock_hit[0], clock_hit[1])
@@ -436,7 +436,7 @@ class ZhuaguiTask(Task):
                 ctx.log(f"找到抓鬼卡片（{hit[2]:.3f}）且显示「完成」标识，判定本号抓鬼已完成。", level="hit")
                 return scan.ACCEPT, {"completed": True}
             if r is not None and r != "nudged":
-                ctx.mouse.click(r[0], r[1])
+                self.click_after_hit(ctx, r[0], r[1])
                 ctx.log(f"找到抓鬼卡片（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}），等寻路到 NPC。", level="hit")
                 return scan.ACCEPT, r
             if r != "nudged":
@@ -478,7 +478,7 @@ class ZhuaguiTask(Task):
             cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._match_scene(cur, scene_rect, flag_key, threshold, diagnose_on_miss=True)
             if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点「{label}」（{hit[2]:.3f}）。", level="hit")
                 self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
                 return True
@@ -515,14 +515,14 @@ class ZhuaguiTask(Task):
             if cancel_tpl is not None and scene_rect is not None and cur is not None:
                 m = vision.match(cur, cancel_tpl, threshold)
                 if m is not None:
-                    ctx.mouse.click(scene_rect[0] + m[0], scene_rect[1] + m[1])
+                    self.click_after_hit(ctx, scene_rect[0] + m[0], scene_rect[1] + m[1])
                     ctx.log(f"{cancel_label}弹窗弹出 → 点「取消」关闭（{m[2]:.3f}）。", level="hit")
                     self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
                     continue
 
             hit = self._match_scene(cur, scene_rect, target_key, threshold, diagnose_on_miss=True)
             if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点「{target_label}」（{hit[2]:.3f}）。", level="hit")
                 if double_gap_sec > 0:
                     self._interruptible_sleep(ctx, self._jitter(double_gap_sec, ctx))

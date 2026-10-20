@@ -408,7 +408,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
             # ④ 跳过剧情：点它（过剧情/上一场打完续战），随后等待窗口重开（可点小闹钟寻路）
             hit = self._match_scene(cur, rect, "skip", threshold)
             if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点「跳过剧情」（{hit[2]:.3f}）。", level="hit")
                 stage_at = now
                 stage_to = step_to
@@ -420,7 +420,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
             #    检测先于小闹钟：寻路到位后「进入战斗」与「小闹钟」同帧并存时优先点它，不受小闹钟抢戏
             hit = self._match_scene(cur, rect, "enter", threshold)
             if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 fights += 1
                 ctx.log(f"第 {fights} 场：点「进入战斗」（{hit[2]:.3f}），等它打完…", level="hit")
                 stage_at = now
@@ -432,7 +432,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
             # ⑤b 新版跳过剧情：点它（新版副本的跳过剧情按钮），随后等待窗口重开
             hit = self._match_scene(cur, rect, "skip_new", threshold)
             if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点「新版跳过剧情」（{hit[2]:.3f}）。", level="hit")
                 stage_at = now
                 stage_to = step_to
@@ -444,7 +444,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
             #    真没寻到位时由冷却机制自然重试）
             hit = self._match_scene(cur, rect, "clock", threshold)
             if hit is not None and now >= clock_cool_until:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点「小闹钟」寻路（{hit[2]:.3f}）。", level="hit")
                 stage_at = now
                 stage_to = step_to
@@ -492,7 +492,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
                 if pos < len(hits):
                     hx, hy, score = hits[pos]
                     sx, sy = (rect[0] if rect else 0), (rect[1] if rect else 0)
-                    ctx.mouse.click(sx + hx, sy + hy)
+                    self.click_after_hit(ctx, sx + hx, sy + hy)
                     ctx.log(f"点「进入」→ 本标签区第 {pos + 1} 个（共检出 {len(hits)} 个，{score:.3f}）。",
                             level="hit")
                     self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
@@ -516,7 +516,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
             cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._match_scene(cur, scene_rect, "xiashi_tab", threshold)
             if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点到「侠士区」标签页（{hit[2]:.3f}），切到侠士区。", level="hit")
                 self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
                 return True
@@ -564,7 +564,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
                 hit = vision.match(cur, tpl, threshold, template_name="ready", task_name=self.name, window_rect=rect, diagnose_on_miss=True) if cur is not None else None
                 if hit is not None:
                     sx, sy = (rect[0] if rect else 0), (rect[1] if rect else 0)
-                    wctx.mouse.click(sx + hit[0], sy + hit[1])
+                    self.click_after_hit(ctx, sx + hit[0], sy + hit[1], mouse=wctx.mouse)
                     wctx.log(f"（{wctx.label}）已点准备。", level="hit")
                     remaining.remove((wctx, role))
             if remaining:
@@ -815,7 +815,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
                 ctx.log(f"找到副本卡片（{hit[2]:.3f}）且显示「完成」标识，判定本号该副本已完成。", level="hit")
                 return scan.ACCEPT, {"completed": True}
             if r is not None and r != "nudged":
-                ctx.mouse.click(r[0], r[1])
+                self.click_after_hit(ctx, r[0], r[1])
                 ctx.log(
                     f"找到副本卡片（{hit[2]:.3f}）→ 点「参加」（{r[2]:.3f}）"
                     f"，靶点屏内坐标：卡片=({hit[0]},{hit[1]})，「参加」=({r[0] - rect[0]},{r[1] - rect[1]})。",
@@ -860,7 +860,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
             cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._match_scene(cur, scene_rect, flag_key, threshold)
             if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点「{label}」（{hit[2]:.3f}）。", level="hit")
                 self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
                 return True
@@ -878,7 +878,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
         if rect is None:
             return
         cx, cy = rect[0] + rect[2] // 2, rect[1] + rect[3] // 2
-        ctx.mouse.click(cx, cy)
+        self.click_after_hit(ctx, cx, cy)
         ctx.log("再点一下屏幕（推进收尾）。")
 
     def _dry_run_selfcheck(self, ctx, assignments, regions, threshold):

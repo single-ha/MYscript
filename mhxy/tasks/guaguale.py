@@ -183,7 +183,7 @@ class GuagualeTask(Task):
                         "模板已标定。", level="error")
                 rec["done"] = True
             return
-        ctx.mouse.click(hit[0], hit[1])
+        self.click_after_hit(ctx, hit[0], hit[1])
         ctx.log(f"点「福利」（{hit[2]:.3f}）。", level="hit")
         self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
         self._goto(rec, S_OPEN)
@@ -199,7 +199,7 @@ class GuagualeTask(Task):
                         "没认到，跳过该号。", level="error")
                 rec["done"] = True
             return
-        ctx.mouse.click(hit[0], hit[1])
+        self.click_after_hit(ctx, hit[0], hit[1])
         ctx.log(f"点「打开刮刮乐」（{hit[2]:.3f}），开始刮奖…", level="hit")
         self._interruptible_sleep(ctx, self._jitter(1.0, ctx))
         rec["line"] = 0
@@ -251,7 +251,7 @@ class GuagualeTask(Task):
         cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
         hit = self._match_scene(cur, scene_rect, "festival_btn", rec["threshold"])
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"点「节日奖励」（{hit[2]:.3f}），等领取按钮…", level="hit")
             self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
             self._goto(rec, S_CLAIM_WAIT)
@@ -282,7 +282,7 @@ class GuagualeTask(Task):
                 ctx.log("「领取节日奖励」按钮又不见了，跳过领奖、直接收尾。", level="warn")
                 self._goto(rec, S_CLOSE)
             return
-        ctx.mouse.click(hit[0], hit[1])
+        self.click_after_hit(ctx, hit[0], hit[1])
         ctx.log(f"点「领取节日奖励」（{hit[2]:.3f}），等领奖弹窗里的「奖励」图标…", level="hit")
         self._interruptible_sleep(ctx, self._jitter(0.8, ctx))
         self._goto(rec, S_REWARD)
@@ -293,7 +293,7 @@ class GuagualeTask(Task):
         cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
         hit = self._match_scene(cur, scene_rect, "reward_icon", rec["threshold"])
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"点「奖励」图标（{hit[2]:.3f}），节日奖励已领。", level="hit")
             self._interruptible_sleep(ctx, self._jitter(1.0, ctx))
             self._goto(rec, S_CLOSE)
@@ -313,7 +313,7 @@ class GuagualeTask(Task):
             hit = ui_state.find_panel_close(ctx.cfg, ctx.window)
             if hit is None:
                 break
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             closed += 1
             self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
         if closed:

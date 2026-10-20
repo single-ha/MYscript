@@ -313,7 +313,7 @@ class TuoyingFlow:
             cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._tuo_match(cur, scene_rect, tpl, threshold)
             if hit is not None:
-                ctx.mouse.click(hit[0], hit[1])
+                self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log("点「上传」。", level="hit")
                 return True
             if time.time() > deadline:

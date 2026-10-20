@@ -288,7 +288,7 @@ class SecretRealmTask(Task):
                 ctx.log(f"找到卡片（{score:.3f}）且显示「完成」标识，判定该号今日已完成。", level="hit")
                 return scan.ACCEPT, {"completed": True}
             if r is not None and r != "nudged":
-                ctx.mouse.click(r[0], r[1])
+                self.click_after_hit(ctx, r[0], r[1])
                 ctx.log(f"找到卡片（{score:.3f}）→ 点「参加」（{r[2]:.3f}），等对话框。", level="hit")
                 return scan.ACCEPT, r
             if r != "nudged":
@@ -341,7 +341,7 @@ class SecretRealmTask(Task):
         hit = self._match_subregion(ctx, regions, tpl, threshold,
                                     (box[0], box[2]), (box[1], box[3]))
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"选择副本：点左下角「进入」（{hit[2]:.3f}）。", level="hit")
             rec["picked_dungeon"] = True
             self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
@@ -404,6 +404,7 @@ class SecretRealmTask(Task):
     def _click_at_verified(self, ctx, x, y, label):
         """点一次 (x,y)；调试开关开时记录点击前后光标位置，确认 SendInput 是否真的移动了鼠标
         （排除「日志已打但鼠标没动」）。关时行为与 ctx.mouse.click 完全一致、零额外开销。"""
+        self.pause_before_click(ctx)   # 识别命中后停 0.5~1.5s 再点（下面两个分支共用这一次）
         if not self._debug_on(ctx):
             ctx.mouse.click(x, y)
             return
@@ -535,7 +536,7 @@ class SecretRealmTask(Task):
         fail = self._match_scene(cur, scene_rect, "sr_fail", threshold)
         if fail is not None:
             ctx.log(f"判定失败（{fail[2]:.3f}）→ 先点掉「失败」结算，转去点「离开」。", level="hit")
-            ctx.mouse.click(fail[0], fail[1])
+            self.click_after_hit(ctx, fail[0], fail[1])
             self._interruptible_sleep(ctx, self._jitter(0.5, ctx))
             self._goto(rec, S_LEAVE)
             return
@@ -543,7 +544,7 @@ class SecretRealmTask(Task):
         # 2) 难度关卡：未战满 N 次时，出现「进入战斗」就点它续战（累计点击数）
         eb = self._match_scene(cur, scene_rect, "sr_enter_battle", threshold)
         if eb is not None and rec["eb_clicks"] < self.battle_rounds:
-            ctx.mouse.click(eb[0], eb[1])
+            self.click_after_hit(ctx, eb[0], eb[1])
             rec["eb_clicks"] += 1
             rec["t_eb"] = time.time()
             ctx.log(f"难度关卡：点「进入战斗」（{eb[2]:.3f}）"
@@ -574,7 +575,7 @@ class SecretRealmTask(Task):
         cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, "sr_leave", threshold)
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"点「离开」（{hit[2]:.3f}）退出秘境。", level="hit")
             self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
             self._finish_run(ctx, rec)
@@ -625,7 +626,7 @@ class SecretRealmTask(Task):
         cur = ctx.window.grab_screen(scene_rect)
         hit = self._match_scene(cur, scene_rect, flag_key, threshold)
         if hit is not None:
-            ctx.mouse.click(hit[0], hit[1])
+            self.click_after_hit(ctx, hit[0], hit[1])
             ctx.log(f"点「{label}」（{hit[2]:.3f}）。", level="hit")
             self._interruptible_sleep(ctx, self._jitter(post_click_sleep, ctx))
             self._goto(rec, next_state)
