@@ -486,6 +486,7 @@
             "items": []
         },
         "tuoying": {
+            "enabled": true,
             "loop": {},
             "regions": {
                 "tuoying_area": null

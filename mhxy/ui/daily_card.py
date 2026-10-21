@@ -245,6 +245,18 @@ class DailyRunCard(ctk.CTkFrame):
         Tooltip(skip_lbl, "已在游戏里自行组好队就勾上：刷副本/抓鬼等多人步跳过脚本自动组队，直接由队长开跑。"
                           "与「日常」页同一开关。", self.fonts)
 
+        # 自动拓印（全局开关，存 tasks.tuoying.enabled）：关掉后整条链里遇到拓印弹窗不自动描摹、转手动
+        tuo = _row(3, 0)
+        tuo_lbl = ctk.CTkLabel(tuo, text="自动拓印（关闭后遇拓印弹窗转手动）", font=self.fonts["body"], text_color=T.TEXT)
+        tuo_lbl.pack(side="left")
+        self.switch_auto_tuoying = ctk.CTkSwitch(
+            tuo, text="", width=44, progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
+            command=self._on_auto_tuoying)
+        self.switch_auto_tuoying.pack(side="left", padx=(8, 0))
+        Tooltip(tuo_lbl, "开启后（默认）：日常链/刷副本/宝图遇到「拓印」临摹弹窗会自动描摹并点「上传」。"
+                         "关闭后：改为等你手动描完点「上传」，脚本检测到界面消失后自动继续。与「日常」页同一开关。",
+                self.fonts)
+
     # ------------------------------------------------------------------
     # 已勾选任务清单（只读）：一条「刷副本 -> 抓鬼 -> 宝图 ...」的执行链 + 就绪摘要
     # ------------------------------------------------------------------
@@ -394,6 +406,16 @@ class DailyRunCard(ctk.CTkFrame):
         self._save_auto_organize(on)
         self._log("已开启「自动整理背包」。" if on else "已关闭「自动整理背包」。", "info")
 
+    def _on_auto_tuoying(self):
+        on = bool(self.switch_auto_tuoying.get())
+        cfg = cfg_mod.load_config()
+        cfg.setdefault("tasks", {}).setdefault("tuoying", {})["enabled"] = on
+        cfg_mod.save_config(cfg)
+        self.app.cfg = cfg
+        self._log(("已开启「自动拓印」：遇拓印弹窗会自动描摹并点「上传」。" if on
+                   else "已关闭「自动拓印」：遇拓印弹窗不再自动描摹，请手动描完点「上传」，脚本会自动续跑。"),
+                  "warn" if not on else "info")
+
     # ------------------------------------------------------------------
     # 运行控制（镜像 DailyPage 的 runner）
     # ------------------------------------------------------------------
@@ -474,6 +496,9 @@ class DailyRunCard(ctk.CTkFrame):
         ob = (cfg.get("tasks", {}).get("organize_bag", {}) or {})
         if self.switch_auto_organize is not None:
             (self.switch_auto_organize.select if ob.get("auto_organize") else self.switch_auto_organize.deselect)()
+        tuo = (cfg.get("tasks", {}).get("tuoying", {}) or {})
+        if getattr(self, "switch_auto_tuoying", None) is not None:
+            (self.switch_auto_tuoying.select if tuo.get("enabled", True) else self.switch_auto_tuoying.deselect)()
         self._render_flow()
         self._apply_disband_lock()
         self.sync_run()

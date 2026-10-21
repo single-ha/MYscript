@@ -63,6 +63,15 @@ class TuoyingFlow:
         except Exception:
             return {}
 
+    def _tuo_enabled(self, ctx):
+        """「自动拓印」总开关（tasks.tuoying.enabled，缺省 True=照旧自动描）。
+        由「日常」页/起始页日常卡控制，全局生效（刷副本/宝图单跑同样吃这份）。"""
+        try:
+            tasks = (ctx.cfg or {}).get("tasks", {}) or {}
+            return bool((tasks.get("tuoying", {}) or {}).get("enabled", True))
+        except Exception:
+            return True
+
     def _tuo_match(self, cur, scene_rect, tpl, threshold):
         """在 cur 里匹配某个拓印模板，命中返回屏幕绝对 (x,y,score)，否则 None。"""
         if cur is None or tpl is None or scene_rect is None:
@@ -94,6 +103,12 @@ class TuoyingFlow:
             cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
             hit = self._tuo_match(cur, scene_rect, title, threshold)
             if hit is not None:
+                if not self._tuo_enabled(ctx):
+                    # 「自动拓印」关掉（日常页开关，全局）：不自动描，转手动——等人描完点「上传」、
+                    # 界面消失后自动续跑（与资产不全时同一条兜底路径）。
+                    ctx.log("检测到「拓印」临摹界面，但「自动拓印」已关闭——请手动临摹并点「上传」，"
+                            "脚本会等界面消失后自动继续。", level="warn")
+                    return self._wait_tuoying_gone(ctx, regions, threshold)
                 ctx.log(f"识别到「拓印」临摹界面（{hit[2]:.3f}），自动临摹…", level="hit")
                 return self._auto_trace(ctx, regions, threshold)
             if time.time() > deadline:

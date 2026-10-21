@@ -219,6 +219,21 @@ class DailyPage(ctk.CTkFrame):
                           "背包「满」图标，满了就自动整理一遍 —— 单个任务执行过程中不检测、不打断。"
                           "需先在「工具 › 整理背包」页「标定」里框选『背包满图标』，否则无从判断、不会触发。", self.fonts)
 
+        # «自动拓印»（存 tasks.tuoying.enabled，全局开关）：关掉后整条链里遇到「拓印」临摹弹窗
+        # 都不再自动描摹，转手动——脚本等你手动描完点「上传」、界面消失后自动继续。刷副本/宝图
+        # 单跑也吃这份（全局生效，用户拍板）；工具页「拓印」单独跑不受影响。
+        tuo = _opt_row(3, 0)
+        tuo_lbl = ctk.CTkLabel(tuo, text="自动拓印（关闭后遇拓印弹窗转手动）", font=self.fonts["body"], text_color=T.TEXT)
+        tuo_lbl.pack(side="left")
+        self.switch_auto_tuoying = ctk.CTkSwitch(
+            tuo, text="", width=44, progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
+            command=self._toggle_auto_tuoying)
+        self.switch_auto_tuoying.pack(side="left", padx=(8, 0))
+        Tooltip(tuo_lbl, "开启后（默认）：日常链 / 刷副本 / 宝图遇到「拓印」临摹弹窗会自动描摹并点「上传」。"
+                         "关闭后：不自动描摹，改为等你手动描完点「上传」，脚本检测到界面消失后自动继续。"
+                         "需先在「工具 › 拓印」页标定标题/绘制区/上传按钮，否则本就无从自动描。存 tasks.tuoying.enabled。",
+                self.fonts)
+
         # «已组队»（原在「任务配置」页顶部组队设置卡 / 周常页共用卡，随「跑完解散」一并迁到本页设置区；
         # 存共享 tasks.teaming.skip_team）。勾上=号已在游戏里自行组好队：刷副本/抓鬼等多人步跳过自动组队、
         # 直接由队长开跑，组件队标定与多开≥2 的 preflight 也随之放宽。
@@ -303,6 +318,12 @@ class DailyPage(ctk.CTkFrame):
                 self.switch_auto_organize.select()
             else:
                 self.switch_auto_organize.deselect()
+        if getattr(self, "switch_auto_tuoying", None) is not None:
+            tuo_tc = cfg_mod.task_config(self.app.cfg, "tuoying")
+            if tuo_tc.get("enabled", True):
+                self.switch_auto_tuoying.select()
+            else:
+                self.switch_auto_tuoying.deselect()
         self._render_steps()
         self._refresh_step_hints()   # 参数提示（抓鬼轮数等）就地刷新，不触发重建
         self._sync_disband_lock()
@@ -1024,6 +1045,19 @@ class DailyPage(ctk.CTkFrame):
                            "warn" if not tpl_ok else "info")
         else:
             self._log_line("已关闭「自动整理背包」。", "info")
+
+    def _toggle_auto_tuoying(self):
+        """「自动拓印」开关：存 tasks.tuoying.enabled（全局）——关掉后整条链里遇到拓印弹窗都不自动描摹、
+        转手动（等人描完点「上传」，界面消失后自动续跑）。刷副本/宝图单跑也吃这份。"""
+        on = bool(self.switch_auto_tuoying.get())
+        cfg = cfg_mod.load_config()
+        tuo_tc = cfg["tasks"].setdefault("tuoying", {})
+        tuo_tc["enabled"] = on
+        cfg_mod.save_config(cfg)
+        self.app.cfg = cfg
+        self._log_line(("已开启「自动拓印」：遇拓印弹窗会自动描摹并点「上传」。" if on
+                        else "已关闭「自动拓印」：遇拓印弹窗不再自动描摹，请手动描完点「上传」，脚本会自动续跑。"),
+                       "warn" if not on else "info")
 
     # ------------------------------------------------------------------
     # 定时延迟执行：点「开始」时若设了时刻则先生成等待截止点；到点/已过再真启动
