@@ -133,7 +133,6 @@ class TuoyingFlow:
         params = scribble.params_from_loop(tuo_loop)
         polarity = scribble.polarity_from_loop(tuo_loop)
         save_debug = scribble.debug_enabled(tuo_loop)
-        lateral = loop.get("tuoying_lateral", 3.0)
         sample_step = loop.get("tuoying_sample_step", 5.0)
         trace_speed = loop.get("tuoying_speed", 1.0)
         if assets["todo"] is None:
@@ -169,7 +168,6 @@ class TuoyingFlow:
                     return False
 
                 ok = scribble.trace_pattern(ctx.mouse, rect, frame,
-                                        lateral=lateral,
                                         sample_step=sample_step,
                                         speed=trace_speed, polarity=polarity, params=params,
                                         on_stroke=_check_upload, should_stop=ctx.should_stop)
@@ -185,7 +183,7 @@ class TuoyingFlow:
                         files = scribble.dump_failure(scribble.debug_dir(),
                                                       scribble.debug_tag("tuoying_nopat"),
                                                       frame, params=params, polarity=polarity,
-                                                      lateral=lateral, sample_step=sample_step)
+                                                      sample_step=sample_step)
                         if files:
                             ctx.log(f"已存识别失败调试图（frame/mask/skel/strokes/trace）：{files[0]}", level="info")
                     return self._wait_tuoying_gone(ctx, regions, threshold)

@@ -175,7 +175,7 @@ enter_dungeon                选择副本对话框里的「进入」按钮（普
             "tuoying_reenter_max": 3,    # 拓印处理完成后队长重新点「进入」的封顶轮数（防反复弹窗死循环）
             "tuoying_detect_sec": 8.0,   # 点「进入」后轮询是否弹出「拓印」临摹界面的时长
             "tuoying_passes": 2,         # 拓印临摹：单遍内沿图案骨架描几轮（每轮各笔画重新随机，提升覆盖）
-            "tuoying_lateral": 3.0,      # 拓印临摹：随描轨迹垂直于笔画走向的横向偏移上限(像素)，笔迹加宽更易达标
+            "tuoying_lateral": 3.0,      # 已废弃（★2026-10-22 用户拍板走笔直接沿骨架、不要Z字摆动）——保留兼容旧配置读取
             "tuoying_sample_step": 5.0,  # 拓印临摹：骨架采样间距(像素)，越小越贴笔画(也更慢)
             "tuoying_speed": 1.0,        # 拓印临摹：走笔速度倍率，越大越快(用户要求整遍描摹 < 2 分钟)
             "tuoying_stripe_spacing": 8.0,  # 已废弃（拓印改骨架描摹）——保留兼容旧配置读取
@@ -902,13 +902,19 @@ DEFAULT_CONFIG = {
                 "tuoying_drop_straight": True,  # 丢「近似完美直线且几乎横贯整幅」的笔画（残留框线/网格）
                 "tuoying_straight_ratio": 0.99,  # 直线度阈值：|端点距|/路径长 ≥ 此值视为直线（放很严）
                 "tuoying_straight_len_frac": 0.8,  # 且长度 ≥ 此比例·max(w,h) 才算框线丢弃
+                "tuoying_drop_flat_bands": True,  # 丢「横贯/纵贯画幅的扁平细带」笔画（与图案粘连的分隔线，组件级抓不到）
+                "tuoying_flat_span_frac": 0.75,  # 扁平带判据：长边 ≥ 此比例·画幅
+                "tuoying_flat_thin_frac": 0.15,  # 扁平带判据：短边 ≤ 此比例·画幅
+                "tuoying_flat_straight": 0.9,  # 扁平带判据：直线度下限（分隔线常略弯，放 0.9 而非 0.99）
+                "tuoying_drop_faint": True,  # 丢「对比度太弱」的笔画（阴影/纹理淡痕，非真墨）
+                "tuoying_faint_frac": 0.12,  # 淡痕判据：笔画均对比 < 此比例·纸面全量程（dark=median(bg)）
                 "tuoying_spur_len": 6,       # 骨架毛刺剪枝长度(像素)：剪掉短分叉/噪点枝，避免笔画数被撑爆
                 "tuoying_stroke_min_len": 4,  # 单条笔画最短采样点数：短于此的碎片当噪点丢弃
                 "tuoying_max_strokes": 14,   # 笔画数上限（游戏要求「少于15笔」）：超了合并最近端点直到 < 上限
                 "tuoying_absorb_span": 12,   # 碎片跨度阈值(像素)：又短又贴着别的笔画 → 并进最近笔画(不是删，保覆盖)
                 "tuoying_absorb_gap": 3,     # 碎片到最近笔画的最短像素距离上限：超过=孤立的真·点画，保留独立一笔
-                "tuoying_fill": 0.9,         # 描摹横向铺宽比例：按局部半宽(距离变换)的此比例摆动，把粗笔画/实心块描满(非只走中线)
-                "tuoying_lateral_max": 40.0, # 横向摆动幅度上限(像素)：防止极宽块摆太远、描到图案外
+                "tuoying_fill": 0.9,         # 已废弃（走笔改直接沿骨架，不再横向铺宽）——保留兼容旧配置读取
+                "tuoying_lateral_max": 40.0, # 已废弃（同上）——保留兼容旧配置读取
                 "tuoying_save_debug": True,  # 识别失败时把 frame/mask/skel/strokes/trace 图落 captures_debug
                 "tuoying_client_frame": [8, 31],  # 离线预览的边框补偿默认值(dx,dy)：截图是「客户区」(不含标题栏/
                                              #   左边框)时，把 config 里的绘制区减去它才对齐。游戏窗口在跑时用

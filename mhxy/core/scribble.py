@@ -14,21 +14,28 @@
      只用中值滤波时实心/粗笔画会被描成空心轮廓（骨架沿边界走）；**小核**（默认 41）则会把比核还宽的
      实心块当成背景 → 只认出一条细中线（★2026-10-18 用户报「图案上半没描满」即此因），故叠大核修正。
   2. **剔除框线**：丢掉跨画幅的细线、以及**贴画幅边缘的宽扁/窄高细带**（对话框边框/面板分隔线/滚动条）。
+     ⚠ 与图案**粘连**的分隔线在这里抓不到（整个连通域 bbox 不再细长），逐行游程过滤也抓不到「斜着走」
+     的线（每行游程远小于阈值）→ 骨架拆出笔画后再在**笔画级**按「横贯+扁平+近直线」几何丢
+     （`_drop_flat_band_strokes`，★2026-10-22 用户报「顶部横贯分隔线被当图案描」）；
+     阴影/纹理类**淡色碎线**（对比度远低于真墨）按「笔画均对比 < 纸面全量程 faint_contrast_frac」丢
+      （`_drop_faint_strokes`）。被丢笔画的像素必须从 mask 里同步擦掉（`_erase_dropped`，按最近骨架
+      归属+局部半宽擦除、防 junction 处啃掉图案），否则后面的 `_cover_fill` 会把它们当「没盖到的
+      骨架段」补回来。
   3. **形态学**：开操作去网格噪点、闭操作接回断笔；再按「相对画幅面积」丢掉小碎块（min_area_ratio 生效）。
   4. Zhang-Suen 细化得 1px 骨架（先缩放到长边 ≤skel_max_dim 再算，坐标还原）；再**剪掉短毛刺**
      （spur_len），否则碎枝会把笔画数撑爆。
   5. 贪心拆成尽量少的连续笔画路径；「又短又贴着别的笔画」的碎片**并进**那条笔画（而不是删——保覆盖、
      减笔画数；修贪心在交叉点把一条真线切成主笔+残段），孤立短笔画才保留/丢弃；再丢掉「近似直线且
-     很长」的笔画（残留框线/网格）；最后把笔画数压到 ≤max_strokes（默认 14，游戏要求「少于15笔」）。
+     很长」的笔画（残留框线/网格）与上述扁平横带/淡色笔画；最后把笔画数压到 ≤max_strokes
+     （默认 14，游戏要求「少于15笔」）。
   6. **选侧判据**：不是「骨架总长最大」（框线总是最长），而是「可信度评分」——笔画条数适中、
      不跨画幅、笔迹占比合理者胜。
-  7. **走笔（描摹，trace_pattern）**：沿骨架点法向摆动仿笔宽，摆幅按**局部半宽**（距离变换 × fill，
-     封顶 lateral_max）自适应——细笔画≈lateral，粗笔画/实心块摆得宽、把整条描满；粗区（摆幅远大于
-     横向步长）每点**横穿整条宽度**兜满。再跑一遍**覆盖补全 `_cover_fill`**：模拟实际走笔栅格化，
-     对「仍没盖到的墨迹块」各自补一笔（实心大块细化后退化成零散点、靠原骨架会漏一大片），加笔到
-     max_strokes 为止。
-     移动用 `Mouse.glide`（轻量 1~3 小步）而非 human_move——采样点很密，若每点重算贝塞尔（6~14 步）
-     单遍会到分钟级；★2026-10-18 用户要求「描摹 < 2 分钟」，故走 glide。见 `_trace_stroke`。
+  7. **走笔（描摹，trace_pattern）**：★2026-10-22 用户拍板——**不要 Z 字锯齿，走笔直接沿骨架**
+     依次 glide 移动。覆盖补全 `_cover_fill` 的判定基准同步改为**骨架像素**（若仍按墨迹判覆盖，
+     每条粗笔画两侧都会永远「没盖到」、被反复补出内部平行笔直到上限）：把走笔没盖到的骨架段
+     （如被 min_stroke_len 丢掉的短段）各自补一笔。
+      移动用 `Mouse.glide`（轻量 1~3 小步）而非 human_move——采样点很密，若每点重算贝塞尔（6~14 步）
+      单遍会到分钟级；★2026-10-18 用户要求「描摹 < 2 分钟」，故走 glide。见 `_trace_stroke`。
 
 返回 True=描完；认不出图案返回 False（调用方转手动兜底，绝不乱描）。
 本模块只依赖 Mouse + numpy/cv2 —— 任何任务遇到此类临摹都可复用。
@@ -65,13 +72,17 @@ DEFAULTS = {
     "drop_straight": True,  # 是否丢弃「近似完美直线且几乎横贯整幅」的笔画（框线/网格残留）
     "straight_ratio": 0.99,  # 直线度阈值：|端点距|/路径长 ≥ 此值视为直线（放很严，别误删图案斜笔）
     "straight_len_frac": 0.8,  # 且长度 ≥ 此比例·max(画幅w,h) 才算「框线」丢弃
+    "drop_flat_bands": True,  # 是否丢弃「横贯/纵贯画幅的扁平细带」笔画——与图案粘连的面板分隔线（组件级抓不到）
+    "flat_span_frac": 0.75,  # 扁平带判据：长边 ≥ 此比例·画幅
+    "flat_thin_frac": 0.15,  # 扁平带判据：短边 ≤ 此比例·画幅
+    "flat_straight": 0.9,    # 扁平带判据：直线度下限（分隔线常略弯，放 0.9 而不是 0.99）
+    "drop_faint": True,      # 是否丢弃「对比度太弱」的笔画（阴影/纹理淡痕，非真墨）
+    "faint_contrast_frac": 0.12,  # 淡痕判据：笔画均对比 < 此比例·纸面全量程（dark=median(bg)，light=255−median(bg)）
     "spur_len": 6,         # 骨架毛刺剪枝长度（像素）：短于此的分叉/噪点枝先剪掉，避免碎成一大堆笔画
     "min_stroke_len": 4,   # 单条笔画最短采样点数：短于此的碎片当噪点丢弃
     "max_strokes": 14,     # 笔画数上限（游戏要求「少于15笔」）；超了就合并最近的端点，直到 < 上限
     "absorb_span": 12,     # 碎片「bbox 对角跨度」阈值（像素）：又短又贴着别的笔画 → 并进它（不是删）
     "absorb_gap": 3,       # 碎片到最近笔画的最短像素距离上限：超过它=孤立的真·点画，保留为独立一笔
-    "fill": 0.9,           # 描摹横向铺宽：按局部半宽(距离变换)的此比例左右摆动，把粗笔画/实心块描满（不是只走中线）
-    "lateral_max": 40.0,   # 横向摆动幅度上限（像素）：防止极宽块摆得太远、描到图案外
 }
 
 # config 键 → params 键（tasks.tuoying.loop.tuoying_xxx）
@@ -84,13 +95,17 @@ _CONFIG_KEYMAP = {
     "tuoying_drop_straight": "drop_straight",
     "tuoying_straight_ratio": "straight_ratio",
     "tuoying_straight_len_frac": "straight_len_frac",
+    "tuoying_drop_flat_bands": "drop_flat_bands",
+    "tuoying_flat_span_frac": "flat_span_frac",
+    "tuoying_flat_thin_frac": "flat_thin_frac",
+    "tuoying_flat_straight": "flat_straight",
+    "tuoying_drop_faint": "drop_faint",
+    "tuoying_faint_frac": "faint_contrast_frac",
     "tuoying_spur_len": "spur_len",
     "tuoying_stroke_min_len": "min_stroke_len",
     "tuoying_max_strokes": "max_strokes",
     "tuoying_absorb_span": "absorb_span",
     "tuoying_absorb_gap": "absorb_gap",
-    "tuoying_fill": "fill",
-    "tuoying_lateral_max": "lateral_max",
 }
 
 
@@ -124,14 +139,14 @@ def polarity_from_loop(loop, default="dark"):
     return v if v in ("dark", "light", "auto") else default
 
 
-def trace_pattern(mouse, rect, frame_bgr, speed=1.0, lateral=3, sample_step=5,
+def trace_pattern(mouse, rect, frame_bgr, speed=1.0, sample_step=5,
                   min_area_ratio=None, label="绘制区", polarity="auto", params=None,
                   on_stroke=None, should_stop=None):
     """识别 rect（屏幕绝对坐标 [x,y,w,h]）内 frame_bgr（该矩形截屏）里的线条图案并沿其描摹。
 
     - 先调 _extract_strokes 分离前景线条、拆成连续笔画路径（已按最长优先排序）。
-    - 每笔：移进该笔起点（松开状态）→ 按住 → 沿骨架点序微幅锯齿移动 → 松开；两笔之间歇手。
-    - lateral: 锯齿横向偏移上限（像素），把笔迹加宽、提高覆盖又不增加起笔。
+    - 每笔：移进该笔起点（松开状态）→ 按住 → **直接沿骨架点序移动**（★2026-10-22 用户拍板：
+      不要 Z 字锯齿摆动）→ 松开；两笔之间歇手。
     - sample_step: 骨架采样间距（像素），越小轨迹越贴骨架（也更慢）。
     - polarity: "dark"=深墨、"light"=浅线；见 _extract_strokes。
     - on_stroke: 可选回调 `(i, n) -> bool`，**每描完一笔**调用一次（i=第几笔从0起, n=总笔数）；
@@ -151,11 +166,9 @@ def trace_pattern(mouse, rect, frame_bgr, speed=1.0, lateral=3, sample_step=5,
     if not strokes:
         return False
     p = _merge_params(params)
-    fill = float(p["fill"])
-    lateral_max = float(p["lateral_max"])
-    dist = (meta or {}).get("dist")
-    # 覆盖补全：实心大块骨架退化会漏一大片，用「没盖到的墨迹块」的骨架补笔
-    strokes = _cover_fill(strokes, dist, lateral, sample_step, fill, lateral_max,
+    skel = (meta or {}).get("skel")
+    # 覆盖补全：走笔只沿骨架，故按「骨架像素是否被走到」找漏段补笔（基准=骨架，不是墨迹）
+    strokes = _cover_fill(strokes, skel, sample_step,
                           max_strokes=int(p["max_strokes"]), should_stop=should_stop)
     # 最长笔优先：核心笔画先描（万一中途被停，覆盖占比已经最大）
     strokes.sort(key=len, reverse=True)
@@ -164,17 +177,13 @@ def trace_pattern(mouse, rect, frame_bgr, speed=1.0, lateral=3, sample_step=5,
             return None                        # 急停：还没开始这笔画就停
         if not stroke:
             continue
-        # 每点局部半宽（距离变换）：让描摹横向铺满粗笔画/实心块，而不是只走中线
-        radii = [float(dist[int(r), int(c)]) for (c, r) in stroke] if dist is not None else None
         # 起笔（松开状态移进起点附近）
         s0 = stroke[0]
         mouse.human_move(x + s0[0], y + s0[1], speed=speed)
         time.sleep(random.uniform(0.05, 0.15))
         mouse.hold()
         try:
-            _trace_stroke(mouse, x, y, stroke, lateral=lateral,
-                          sample_step=sample_step, speed=speed,
-                          radii=radii, fill=fill, lateral_max=lateral_max,
+            _trace_stroke(mouse, x, y, stroke, sample_step=sample_step, speed=speed,
                           should_stop=should_stop)
         finally:
             try:
@@ -264,24 +273,27 @@ def _extract_strokes(frame, min_area_ratio=None, label="绘制区", polarity="au
     std = np.sqrt(np.clip(m2 - m1 * m1, 0, None))
     thr = np.maximum(float(p["contrast_min"]), float(p["contrast_frac"]) * std)
 
+    # 候选三元组：(极性名, 对比图 d, 纸面全量程 full)——full 供淡痕判定
+    # （dark=纸面亮度 median(bg)；light=还能打亮的全量 255−median(bg)）
     if polarity == "dark":
         bg = np.maximum(np.maximum(bg_med, close_small), close_big)
-        candidates = [("dark", np.clip(bg - gf, 0, 255))]
+        candidates = [("dark", np.clip(bg - gf, 0, 255), float(np.median(bg)))]
     elif polarity == "light":
         bg = np.minimum(np.minimum(bg_med, open_small), open_big)
-        candidates = [("light", np.clip(gf - bg, 0, 255))]
+        candidates = [("light", np.clip(gf - bg, 0, 255), 255.0 - float(np.median(bg)))]
     else:
         bg_dark = np.maximum(np.maximum(bg_med, close_small), close_big)
         bg_light = np.minimum(np.minimum(bg_med, open_small), open_big)
-        candidates = [("dark", np.clip(bg_dark - gf, 0, 255)),
-                      ("light", np.clip(gf - bg_light, 0, 255))]
+        candidates = [("dark", np.clip(bg_dark - gf, 0, 255), float(np.median(bg_dark))),
+                      ("light", np.clip(gf - bg_light, 0, 255),
+                       255.0 - float(np.median(bg_light)))]
 
     kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     min_area = max(1, int(total * float(p["min_area_ratio"])))
 
     best_strokes, best_score, best_meta = [], -1e9, None
-    for name, d in candidates:
+    for name, d, full_c in candidates:
         bw = ((d > thr) * 255).astype(np.uint8)
         if int((bw > 0).sum()) < 4:
             continue
@@ -298,18 +310,48 @@ def _extract_strokes(frame, min_area_ratio=None, label="绘制区", polarity="au
         strokes = _skeleton_to_strokes(skel)
         strokes = _scale_strokes(strokes, 1.0 / scale if scale else 1.0)
         strokes = [s for s in strokes if len(s) >= int(p["min_stroke_len"])]
+        # 先丢「非图案」笔画（扁平横带=分隔线、淡色淡痕=阴影/纹理碎线），再做碎片并笔——
+        # 免得把伪笔画并进真笔画（并进去就删不掉了）
+        dropped = []
+        if p["drop_flat_bands"]:
+            strokes, dj = _drop_flat_band_strokes(strokes, (h, w),
+                                                  float(p["flat_span_frac"]),
+                                                  float(p["flat_thin_frac"]),
+                                                  float(p["flat_straight"]))
+            dropped += dj
+        if p["drop_faint"]:
+            strokes, dj = _drop_faint_strokes(strokes, d, full_c,
+                                              float(p["faint_contrast_frac"]))
+            dropped += dj
         # 把「短又贴着别的笔画」的碎片并进最近笔画（保覆盖、减笔画数；孤立小笔画保留）
         strokes = _absorb_short_strokes(strokes, float(p["absorb_span"]), float(p["absorb_gap"]))
         if p["drop_straight"]:
-            strokes = _drop_straight_strokes(strokes, (h, w),
-                                             float(p["straight_ratio"]),
-                                             float(p["straight_len_frac"]))
+            strokes, dj = _drop_straight_strokes(strokes, (h, w),
+                                                 float(p["straight_ratio"]),
+                                                 float(p["straight_len_frac"]))
+            dropped += dj
+        if dropped:
+            # 从 mask 擦掉被丢笔画的像素足迹——否则 _cover_fill 会把它们当「没盖到的墨迹块」
+            # 重新补笔（笔画级删除不删 mask 等于白删）；skel 同步擦（调试图一致）
+            dist0 = cv2.distanceTransform((bw > 0).astype(np.uint8), cv2.DIST_L2, 3)
+            bw, erase = _erase_dropped(bw, dist0, dropped, strokes)
+            if erase is not None and skel is not None:
+                es = cv2.resize(erase, (skel.shape[1], skel.shape[0]),
+                                interpolation=cv2.INTER_NEAREST)
+                skel[(es > 0)] = 0
         strokes = _reduce_strokes(strokes, int(p["max_strokes"]))
         if not strokes:
             continue
         score = _stroke_confidence(strokes, (h, w), total)
         if want_meta:
-            meta = {"mask": bw, "skel": skel,
+            # 骨架存**原画幅尺寸**：strokes 已 _scale_strokes 还原到原画幅坐标，_cover_fill/
+            # render_debug 都按原画幅用 skel（缩放后 skel 只在内部细化时用）。★修 2026-10-22：
+            # 之前直接存缩放版 skel，画幅长边>skel_max_dim 时与 strokes 坐标系不一致 →
+            # _cover_fill 画布尺寸错、补笔错位。
+            skel_full = skel
+            if skel is not None and scale and scale != 1.0:
+                skel_full = cv2.resize(skel, (w, h), interpolation=cv2.INTER_NEAREST)
+            meta = {"mask": bw, "skel": skel_full,
                     "dist": cv2.distanceTransform((bw > 0).astype(np.uint8), cv2.DIST_L2, 3),
                     "polarity": name, "scale": scale, "score": score}
         else:
@@ -432,10 +474,11 @@ def _drop_straight_strokes(strokes, shape, ratio, len_frac):
     """丢掉「近似**完美直线**且**几乎横贯/纵贯整幅**」的笔画（残留框线/网格线）。
 
     判据放得很严（默认 直线度≥0.99 且 长度≥0.8·max(w,h)）：拓印图案本身常有近乎笔直的斜笔画
-    （如「从」的撇/捺），松判据会把图案一起误删（2026-10-17 实测踩坑）。"""
+    （如「从」的撇/捺），松判据会把图案一起误删（2026-10-17 实测踩坑）。
+    返回 (kept, dropped)——dropped 供调用方从 mask 同步擦除（否则 _cover_fill 会补回来）。"""
     h, w = shape
     limit = len_frac * max(h, w)
-    out = []
+    out, dropped = [], []
     for s in strokes:
         if len(s) < 8:
             out.append(s)
@@ -444,9 +487,121 @@ def _drop_straight_strokes(strokes, shape, ratio, len_frac):
         span = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
         straightness = span / max(1.0, float(len(s) - 1))
         if span >= limit and straightness >= ratio:
+            dropped.append(s)
             continue
         out.append(s)
-    return out
+    return out, dropped
+
+
+def _drop_flat_band_strokes(strokes, shape, span_frac, thin_frac, straight_min):
+    """丢掉「横贯(或纵贯)画幅的扁平细带」笔画——面板分隔线/装饰横线（★2026-10-22）。
+
+    分隔线常与图案**粘连**成一个连通域 → 组件级 `_drop_frame_components` 判据失效；
+    它又常「斜着走/中段下沉」→ `_drop_thin_lines` 的逐行游程、`_drop_straight_strokes` 的
+    0.99 直线度都抓不到（实测某帧分隔线 span=0.81·画幅、直线度仅 0.92）。
+    本规则在笔画级按整体几何判定，与图案形状无关：bbox 某方向 ≥ span_frac·画幅 且垂直方向
+    ≤ thin_frac·画幅，且直线度(span/路径长) ≥ straight_min。返回 (kept, dropped)。"""
+    h, w = shape
+    kept, dropped = [], []
+    for s in strokes:
+        if len(s) < 2:
+            kept.append(s)
+            continue
+        a = np.asarray(s, int)
+        bwd = int(a[:, 0].max() - a[:, 0].min())
+        bhd = int(a[:, 1].max() - a[:, 1].min())
+        span = float(np.hypot(a[-1, 0] - a[0, 0], a[-1, 1] - a[0, 1]))
+        plen = float(np.sum(np.hypot(np.diff(a[:, 0]), np.diff(a[:, 1]))))
+        straight = span / max(1.0, plen)
+        band = ((bwd >= span_frac * w and bhd <= thin_frac * h) or
+                (bhd >= span_frac * h and bwd <= thin_frac * w))
+        if band and straight >= straight_min:
+            dropped.append(s)
+        else:
+            kept.append(s)
+    return kept, dropped
+
+
+def _drop_faint_strokes(strokes, d_map, full_contrast, frac):
+    """丢掉「对比度太弱」的笔画——阴影/纹理类淡痕，不是真墨（★2026-10-22）。
+
+    沿笔画点 3×3 膨胀采样对比图 d 取均值；`d_mean < frac × full_contrast`（纸面全量程：
+    dark=median(bg)、light=255−median(bg)，由调用方按极性算好传入）判为淡痕丢弃。
+    参照系是「纸面全量程」而非「最浓笔画」——后者会被单笔特别浓的图案带偏、误伤其他真笔。
+    实测某帧：真墨 d_mean=37~47、伪碎线 16~22、阈值 0.12×238≈28.6，区分干净。
+    返回 (kept, dropped)。"""
+    if full_contrast is None or full_contrast <= 0 or frac <= 0:
+        return strokes, []
+    thr = float(frac) * float(full_contrast)
+    kept, dropped = [], []
+    for s in strokes:
+        if len(s) < 2:
+            kept.append(s)
+            continue
+        a = np.asarray(s, int)
+        m = np.zeros(d_map.shape, np.uint8)
+        m[np.clip(a[:, 1], 0, d_map.shape[0] - 1),
+          np.clip(a[:, 0], 0, d_map.shape[1] - 1)] = 1
+        m = cv2.dilate(m, np.ones((3, 3), np.uint8))
+        vals = d_map[m > 0]
+        md = float(vals.mean()) if vals.size else 0.0
+        if md < thr:
+            dropped.append(s)
+        else:
+            kept.append(s)
+    return kept, dropped
+
+
+def _erase_dropped(bw, dist, dropped, kept):
+    """从 mask 里擦掉「被丢笔画」的像素足迹，返回 (新bw, erase掩膜 或 None)。
+
+    笔画级删除若不清 mask，`_cover_fill` 会把这些像素当「没盖到的墨迹块」重新补笔
+    （实测：分隔线被删后又被原样补回来）。擦除判据（★2026-10-22 两轮实测修正）：
+      · `distD ≤ 被丢骨架最近点处的墨半宽+1`——只删贴着被丢线「本身粗细」的像素。
+        （不能按统一大半径画盘：分隔线在 junction 处 dist 可达 14+px，大圆盘会啃掉
+        图案 7% 并把它切碎；也不能按中位数半径：粗区盖不住、留残段照样被补笔。）
+      · 且 `distD < distK`（离被丢骨架比离保留骨架更近）——junction 附近按最近骨架归属，
+        图案一侧保住。与被丢线**直接相贴**的几个图案像素在像素级无法区分、会被擦掉，
+        但那几像素落在保留笔画描摹时的横向铺宽覆盖内，不影响完成度。
+    """
+    if not dropped:
+        return bw, None
+    H, W = bw.shape[:2]
+    dm = np.zeros((H, W), np.uint8)
+    for s in dropped:
+        for (c, r) in s:
+            r0, c0 = int(r), int(c)
+            if 0 <= r0 < H and 0 <= c0 < W:
+                dm[r0, c0] = 1
+    if not dm.any():
+        return bw, None
+    src = np.where(dm > 0, 0, 255).astype(np.uint8)
+    distD, labels = cv2.distanceTransformWithLabels(src, cv2.DIST_L2, 3,
+                                                    labelType=cv2.DIST_LABEL_PIXEL)
+    # 标签 → 该被丢骨架点的「墨半宽+1」。★OpenCV 4.13 实测：DIST_LABEL_PIXEL 的标签是
+    # 按**零像素的光栅顺序**从 1 顺序编号（不是行优先像素序号），np.where 恰好就是这个顺序。
+    rs, cs = np.where(dm > 0)
+    half = np.zeros(len(rs) + 1, np.float32)
+    for i, (r0, c0) in enumerate(zip(rs.tolist(), cs.tolist())):
+        half[i + 1] = float(dist[r0, c0]) + 1.0
+    rd = half[labels]
+    nearer = np.ones((H, W), bool)
+    km = np.zeros((H, W), np.uint8)
+    for s in kept:
+        for (c, r) in s:
+            r0, c0 = int(r), int(c)
+            if 0 <= r0 < H and 0 <= c0 < W:
+                km[r0, c0] = 1
+    if km.any():
+        distK = cv2.distanceTransform(np.where(km > 0, 0, 255).astype(np.uint8),
+                                      cv2.DIST_L2, 3)
+        nearer = distD < distK
+    erase = (bw > 0) & (distD <= rd) & nearer
+    if not erase.any():
+        return bw, None
+    out = bw.copy()
+    out[erase] = 0
+    return out, erase.astype(np.uint8)
 
 
 def _prune_spurs(skel, iters):
@@ -495,18 +650,18 @@ def _reduce_strokes(strokes, max_n):
     return work
 
 
-def _cover_fill(strokes, dist, lateral, sample_step, fill, lateral_max,
-                blob_min=60.0, tol=3, max_strokes=15, max_rounds=3, should_stop=None):
-    """覆盖补全：把「现有笔画按实际走笔（横向铺宽）后仍没盖到的墨迹块」再用各自骨架补一笔。
+def _cover_fill(strokes, skel, sample_step, blob_min=8.0, tol=3, max_strokes=15,
+                max_rounds=3, should_stop=None):
+    """覆盖补全：把「走笔（沿骨架直走）没盖到的**骨架段**」各自补一笔。
 
-    解决**实心大块骨架退化**：Zhang-Suen 细化一块近圆形/圆角实心区时，其中线只剩零散几点，
-    靠它 ±半径摆动仍会漏掉一大片（★2026-10-18 用户报「图案上半没描满」的根因之一）。
-    这里模拟真实走笔栅格化，找漏掉的连通块、各自细化成补笔，循环到无显著漏块或笔画达上限。
-    dist 为空（无 meta）时原样返回。"""
-    if dist is None:
+    ★2026-10-22 用户拍板走笔直接沿骨架、不摆动后，覆盖判定基准从「墨迹像素」改为**骨架像素**——
+    若仍按墨迹判，每条粗笔画两侧都会永远「没盖到」、被反复补出内部平行笔直到上限。
+    仍兜的场景：拆笔/剪毛刺时被丢掉的短骨架段（实心块细化退化出的零散点等）没进任何笔画路径。
+    skel 为空（无 meta）时原样返回。"""
+    if skel is None:
         return strokes
-    H, W = dist.shape
-    ink = dist > 0
+    H, W = skel.shape
+    target = skel > 0
     work = list(strokes)
     step = max(1, int(sample_step))
 
@@ -514,23 +669,16 @@ def _cover_fill(strokes, dist, lateral, sample_step, fill, lateral_max,
         c = np.zeros((H, W), np.uint8)
         for s in work:
             n = len(s)
-            k = 0
             prev = None
             for i in range(0, n, step):
                 bx, by = s[i]
-                j = min(i + step, n - 1)
-                dx = s[j][0] - bx
-                dy = s[j][1] - by
-                ln = max(1.0, (dx * dx + dy * dy) ** 0.5)
-                nx, ny = -dy / ln, dx / ln
-                amp = min(max(float(lateral), float(dist[int(by), int(bx)]) * fill), lateral_max)
-                offs = (amp, -amp) if amp > 2.0 * lateral else (amp * (1.0 if k % 2 == 0 else -1.0),)
-                for o in offs:
-                    sx, sy = bx + nx * o, by + ny * o
-                    if prev is not None:
-                        cv2.line(c, (int(prev[0]), int(prev[1])), (int(sx), int(sy)), 255, 1)
-                    prev = (sx, sy)
-                k += 1
+                if prev is not None:
+                    cv2.line(c, (int(prev[0]), int(prev[1])), (int(bx), int(by)), 255, 1)
+                prev = (bx, by)
+            if n:
+                bx, by = s[-1]
+                if prev is not None:
+                    cv2.line(c, (int(prev[0]), int(prev[1])), (int(bx), int(by)), 255, 1)
         return c
 
     for _ in range(max_rounds):
@@ -540,19 +688,17 @@ def _cover_fill(strokes, dist, lateral, sample_step, fill, lateral_max,
             break
         covered = cv2.dilate(_raster(),
                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * tol + 1, 2 * tol + 1))) > 0
-        unc = ((ink & ~covered).astype(np.uint8)) * 255
-        unc = cv2.morphologyEx(unc, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+        unc = ((target & ~covered).astype(np.uint8)) * 255
         n, lab, st, _ = cv2.connectedComponentsWithStats(unc, 8)
         add = []
         for i in range(1, n):
-            if st[i, cv2.CC_STAT_AREA] < blob_min:
+            if st[i, cv2.CC_STAT_AREA] < blob_min:   # 骨架像素计数（不是墨迹面积）
                 continue
             if len(work) + len(add) >= max_strokes:
                 break
-            blob = np.zeros((H, W), np.uint8)
-            blob[lab == i] = 255
-            sk = _skeletonize_capped(blob, 480)[0]
-            add += [x for x in _skeleton_to_strokes(sk) if len(x) >= 4]
+            comp = np.zeros((H, W), np.uint8)
+            comp[lab == i] = 255                     # 本来就是骨架，直接拆笔画
+            add += [x for x in _skeleton_to_strokes(comp) if len(x) >= 4]
         if not add:
             break
         work = work + add
@@ -718,43 +864,25 @@ def _skeleton_to_strokes(skel):
 
 
 # ----------------------------------------------------------------------
-# 沿一条笔画拖动：分段采样 + 横向锯齿（笔迹加宽、不额外起笔）
+# 沿一条笔画拖动：分段采样、直接沿骨架走（★2026-10-22 用户拍板：不要 Z 字锯齿）
 # ----------------------------------------------------------------------
-def _trace_stroke(mouse, ox, oy, stroke, lateral=3, sample_step=5, speed=1.7,
-                  radii=None, fill=0.9, lateral_max=40.0, should_stop=None):
-    """按住状态下，沿 stroke（帧内相对坐标）依次移动；每采样点加横向偏移仿笔宽、并**按局部半宽铺满**。
+def _trace_stroke(mouse, ox, oy, stroke, sample_step=5, speed=1.7, should_stop=None):
+    """按住状态下，沿 stroke（帧内相对坐标）骨架点序**直接**依次移动。
     ox/oy 为绘制区屏幕绝对左上角，把帧内坐标换算回屏幕坐标。
-
-    radii（距离变换给的每点半宽）非空时，横向摆动幅度取 `min(max(lateral, radii*fill), lateral_max)`：
-    细笔画≈lateral（和以前一样），粗笔画/实心块摆得宽、把整条描满（不是只走中线）；左右交替保证两侧都盖到。
-
-    ⚠ 横向偏移必须在**原始骨架点**上做法向摆动，不能拿上一个「已偏移点」去算走向——否则粗区里走向被
-    偏移量污染、路径逐步漂移，实心块描不满（★2026-10-18 修正：旧写法用 prev 算方向导致覆盖偏低）。
-    粗区（amp 远大于横向步长）在每个采样点**横穿整条宽度**（+amp→-amp 两笔），否则锯齿齿间会漏、实心块填不满。"""
+    （旧版在每个采样点做法向摆动仿笔宽/铺满粗区；★2026-10-22 用户拍板「不要Z字临摹，
+    走笔直接按照骨架走」——去掉全部横向偏移。）"""
     step = max(1, int(sample_step))          # 配置里可能是 float（如 5.0），range 步长必须 int
     n = len(stroke)
-    k = 0
     for i in range(0, n, step):
         if should_stop is not None and should_stop():
             return                            # 急停：尽快交出控制权（每个采样点查一次）
         bx, by = stroke[i]
-        j = min(i + step, n - 1)
-        dx = stroke[j][0] - bx
-        dy = stroke[j][1] - by
-        ln = max(1.0, (dx * dx + dy * dy) ** 0.5)
-        nx, ny = -dy / ln, dx / ln          # 法向（垂直于走向）
-        amp = float(lateral)
-        if radii is not None:
-            amp = min(max(float(lateral), float(radii[i]) * fill), lateral_max)
-        if amp > 2.0 * float(lateral):
-            offs = (amp, -amp)              # 粗区：该点横穿整条宽度（两笔），把实心块铺满
-        else:
-            offs = (amp * random.uniform(0.7, 1.0) * (1 if k % 2 == 0 else -1),)
-        for o in offs:
-            # glide=轻量平滑移动（1~3 小步）；描摹采样点很密，用 human_move 的 6~14 步会慢到分钟级
-            mouse.glide(ox + bx + nx * o, oy + by + ny * o, speed=speed)
-            time.sleep(random.uniform(0.001, 0.004) / speed if speed else 0.001)
-        k += 1
+        # glide=轻量平滑移动（1~3 小步）；描摹采样点很密，用 human_move 的 6~14 步会慢到分钟级
+        mouse.glide(ox + bx, oy + by, speed=speed)
+        time.sleep(random.uniform(0.001, 0.004) / speed if speed else 0.001)
+    if n and (n - 1) % step != 0:            # 收尾补到终点
+        bx, by = stroke[-1]
+        mouse.glide(ox + bx, oy + by, speed=speed)
 
 
 # ----------------------------------------------------------------------
@@ -767,10 +895,9 @@ _STROKE_COLORS = [
 ]
 
 
-def render_debug(frame_bgr, strokes, meta=None, trace_path=False, lateral=3, sample_step=5,
-                 seed=0, fill=0.9, lateral_max=40.0):
+def render_debug(frame_bgr, strokes, meta=None, trace_path=False, sample_step=5):
     """生成一张诊断图：底色=原图，mask 半透明叠加，骨架/笔画异色描出、标起点(圆)/终点(方)、
-    按长度排序编号。trace_path=True 时再画一遍「实际走笔路径」（含横向锯齿）。
+    按长度排序编号。trace_path=True 时再画一遍「实际走笔路径」（沿骨架直走，无摆动）。
     返回 BGR 图。"""
     base = frame_bgr.copy()
     meta = meta or {}
@@ -784,7 +911,6 @@ def render_debug(frame_bgr, strokes, meta=None, trace_path=False, lateral=3, sam
         ys, xs = np.where(skel > 0)
         for (cx, cy) in zip(xs.tolist(), ys.tolist()):
             cv2.circle(base, (cx, cy), 1, (255, 0, 255), -1)
-    rng = random.Random(seed)
     ordered = sorted(strokes, key=len, reverse=True)
     for idx, s in enumerate(ordered):
         if len(s) < 2:
@@ -798,43 +924,19 @@ def render_debug(frame_bgr, strokes, meta=None, trace_path=False, lateral=3, sam
                       (pts[-1][0] + 3, pts[-1][1] + 3), color, 1, cv2.LINE_AA)
         cv2.putText(base, str(idx), pts[0], cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
     if trace_path:
-        dist = meta.get("dist")
         step = max(1, int(sample_step))
         for s in ordered:
-            n = len(s)
-            k = 0
-            prev = None
-            for i in range(0, n, step):
-                bx, by = s[i]
-                j = min(i + step, n - 1)
-                dx = s[j][0] - bx
-                dy = s[j][1] - by
-                ln = max(1.0, (dx * dx + dy * dy) ** 0.5)
-                nx, ny = -dy / ln, dx / ln
-                amp = lateral
-                if dist is not None:
-                    amp = min(max(lateral,
-                                  float(dist[int(by), int(bx)]) * fill),
-                              lateral_max)
-                if amp > 2.0 * lateral:
-                    offs = (amp, -amp)
-                else:
-                    offs = (amp * rng.uniform(0.7, 1.0) * (1 if k % 2 == 0 else -1),)
-                for o in offs:
-                    sx = bx + nx * o
-                    sy = by + ny * o
-                    if prev is not None:
-                        cv2.line(base, (int(prev[0]), int(prev[1])),
-                                 (int(sx), int(sy)), (0, 0, 0), 1, cv2.LINE_AA)
-                    prev = (sx, sy)
-                k += 1
+            pts = [(int(s[i][0]), int(s[i][1])) for i in range(0, len(s), step)]
+            if len(s) and (len(s) - 1) % step != 0:
+                pts.append((int(s[-1][0]), int(s[-1][1])))
+            for a, b in zip(pts, pts[1:]):
+                cv2.line(base, a, b, (0, 0, 0), 1, cv2.LINE_AA)
     text = "polarity=%s strokes=%d" % (meta.get("polarity"), len(ordered))
     cv2.putText(base, text, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1, cv2.LINE_AA)
     return base
 
 
-def save_debug(out_dir, tag, frame_bgr, strokes, meta=None, trace_path=True,
-               lateral=3, sample_step=5):
+def save_debug(out_dir, tag, frame_bgr, strokes, meta=None, trace_path=True, sample_step=5):
     """把一帧的提取中间结果落盘：{tag}_frame/_mask/_skel/_strokes/_trace.png。
     返回**真实落盘路径**列表（captures_debug 下 vision 会自动插 YYYY-MM-DD 子目录，这里回传带日期的真路径）；
     任何异常都吞掉（诊断不该影响主流程）。"""
@@ -855,13 +957,13 @@ def save_debug(out_dir, tag, frame_bgr, strokes, meta=None, trace_path=True,
         _save("strokes", render_debug(frame_bgr, strokes, meta, trace_path=False))
         if trace_path:
             _save("trace", render_debug(frame_bgr, strokes, meta, trace_path=True,
-                                        lateral=lateral, sample_step=sample_step))
+                                        sample_step=sample_step))
         return written
     except Exception:
         return []
 
 
-def dump_failure(out_dir, tag, frame_bgr, params=None, polarity="auto", lateral=3, sample_step=5):
+def dump_failure(out_dir, tag, frame_bgr, params=None, polarity="auto", sample_step=5):
     """识别失败时的一键留证：重跑提取取 meta，落 frame/mask/skel/strokes/trace 到 out_dir。
     返回写出的文件路径列表（供日志打印）。异常吞掉。"""
     if frame_bgr is None or getattr(frame_bgr, "size", 0) == 0:
@@ -869,6 +971,6 @@ def dump_failure(out_dir, tag, frame_bgr, params=None, polarity="auto", lateral=
     try:
         strokes, meta = extract_debug(frame_bgr, params=params, polarity=polarity)
         return save_debug(out_dir, tag, frame_bgr, strokes, meta,
-                          trace_path=True, lateral=lateral, sample_step=sample_step)
+                          trace_path=True, sample_step=sample_step)
     except Exception:
         return []

@@ -15,7 +15,7 @@
 
 与刷副本共用一套资产与手感：
   · 标定资产存 tasks.tuoying（绘制区 + 标题/上传/未完成状态按钮模板，在「拓印」页标一次，所有副本共用）
-  · 描摹手感参数读 tasks.dungeon.loop（tuoying_lateral/tuoying_sample_step/tuoying_passes 等），
+  · 描摹手感参数读 tasks.dungeon.loop（tuoying_sample_step/tuoying_passes 等；走笔直接沿骨架、无Z字摆动），
     图案提取参数（tuoying_polarity/ink_contrast/... 见 core/scribble.DEFAULTS）读 tasks.tuoying.loop，
     保证这里的手感=副本内自动临摹的手感。
   · 识别失败时把 frame/mask/skel/strokes/trace 诊断图落 captures_debug/拓印描摹/（tuoying_save_debug 可关）。
@@ -147,7 +147,6 @@ class TuoyingTask(Task):
         ctx.log("拓印：按标定绘制区自动沿图案描一遍并点「上传」，跑完整次临摹…", level="warn")
         confirm_sec = loop.get("tuoying_gone_confirm_sec", 0.4)
         upload_timeout = loop.get("tuoying_upload_sec", 6.0)
-        lateral = loop.get("tuoying_lateral", 3.0)
         sample_step = loop.get("tuoying_sample_step", 5.0)
         trace_speed = loop.get("tuoying_speed", 1.0)
         if todo_tpl is None:
@@ -181,7 +180,6 @@ class TuoyingTask(Task):
                     return False
 
                 ok = scribble.trace_pattern(ctx.mouse, rect, frame,
-                                            lateral=lateral,
                                             sample_step=sample_step,
                                             speed=trace_speed, label="拓印绘制区",
                                             polarity=polarity, params=params,
@@ -196,7 +194,7 @@ class TuoyingTask(Task):
                     if save_debug:
                         files = scribble.dump_failure(_debug_dir(), _debug_tag("tuoying_nopat"),
                                                       frame, params=params, polarity=polarity,
-                                                      lateral=lateral, sample_step=sample_step)
+                                                      sample_step=sample_step)
                         if files:
                             ctx.log(f"已存识别失败调试图（frame/mask/skel/strokes/trace）：{files[0]}", level="info")
                     return

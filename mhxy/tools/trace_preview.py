@@ -16,7 +16,6 @@
     --out DIR        诊断图输出目录。默认 captures_debug/拓印描摹（vision 会再落 YYYY-MM-DD 子目录）。
     --polarity       深墨画浅底=dark / 浅线画深底=light / 自动=auto（不给则用 config 的
                      tasks.tuoying.loop.tuoying_polarity，缺省 dark）。
-    --lateral N      横向锯齿偏移上限（画走笔路径用），默认 3。
     --sample-step N  骨架采样间距（画走笔路径用），默认 5。
     --ascii-width N  控制台 ASCII 缩略图宽度，默认 96；0=不打印。
     --no-save        只打印、不落盘诊断图。
@@ -175,7 +174,7 @@ def _bbox_all(strokes):
     return (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
 
 
-def run(image_path, area=None, out_dir=None, polarity=None, lateral=3.0, sample_step=5.0,
+def run(image_path, area=None, out_dir=None, polarity=None, sample_step=5.0,
         params=None, ascii_width=96, save=True, tag_prefix="preview", grid=False, stream=None,
         client_frame=None):
     """跑一遍提取 + 落盘 + ASCII 预览。返回 summary dict。stream=None 时打印到 stdout。
@@ -230,7 +229,7 @@ def run(image_path, area=None, out_dir=None, polarity=None, lateral=3.0, sample_
         od = out_dir or scribble.debug_dir()
         tag = scribble.debug_tag(tag_prefix)
         files = scribble.save_debug(od, tag, frame, strokes, meta,
-                                    trace_path=True, lateral=lateral, sample_step=sample_step)
+                                    trace_path=True, sample_step=sample_step)
         if grid:
             try:
                 from ..core import vision
@@ -262,7 +261,7 @@ def main(argv=None):
         print(__doc__)
         return 0
     image_path = argv[0]
-    opts = {"area": None, "out_dir": None, "polarity": None, "lateral": 3.0,
+    opts = {"area": None, "out_dir": None, "polarity": None,
             "sample_step": 5.0, "ascii_width": 96, "save": True, "tag_prefix": "preview",
             "params": None, "grid": False, "client_frame": None}
     overrides = {}
@@ -275,8 +274,6 @@ def main(argv=None):
             opts["out_dir"] = argv[i + 1]; i += 2
         elif a == "--polarity":
             opts["polarity"] = argv[i + 1]; i += 2
-        elif a == "--lateral":
-            opts["lateral"] = float(argv[i + 1]); i += 2
         elif a == "--sample-step":
             opts["sample_step"] = float(argv[i + 1]); i += 2
         elif a == "--ascii-width":
