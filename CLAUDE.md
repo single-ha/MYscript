@@ -288,6 +288,8 @@ mhxy/
   **任务「单跑」（日常页点任务名/副本名）忽略「日常」页的整链设置（user 拍板 2026-09-24）**：
   只按该任务自己的流程走——不套整体时间上限/定时、绝不「跑完关机」、不按「跑完解散」收尾解散、
   不触发「自动整理背包」；「已组队」是会话条件属共享组队设置、不动。实现= `DailyPage._single_build_cfg` 内存覆盖。
+  ⚠ 单跑时该内存覆盖还置 `tasks.daily.explicit_steps=True`：引擎 `_enabled_steps` 据此**跳过「缺行补到末尾」**
+  （否则单跑 steps 只含一个任务，其它 CHAINABLE 会被补回来 → 单跑跑成整条日常链）。
 - **组队是共享能力、单独可一键触发**：握手在 `core/teaming.TeamFormation`；通用页有「选队长 + 一键组队」
   （跑 `DungeonTask`），角色参数存共享 `tasks.teaming`。副本/抓鬼各自单跑时都先自动组队；**但「日常」一趟里的多个多人步只组一次**——
   队伍要活到最后一个多人步跑完才解散（`daily._disband_after_multi`），故 `daily` 用 `_team_ready` 记「本趟已组好队」，

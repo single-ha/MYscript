@@ -623,6 +623,9 @@ class DailyTask(Task):
             return ge.get(g, True) if g else True
         def dungeon_ok(name):
             return name != "dungeon" or self._selected_dungeons(ctx)
+        # 单跑：内存覆盖的 steps 就是「只跑这个任务」，**不做缺行补齐**——否则会把其它
+        # CHAINABLE 任务全补回来、单跑变成跑整条链（_single_build_cfg 置的标记）。
+        explicit_only = bool(tc.get("explicit_steps"))
         out, seen = [], set()
         for step in tc.get("steps", []):
             if not isinstance(step, dict):
@@ -638,9 +641,11 @@ class DailyTask(Task):
         # 存储 steps 里没有、CHAINABLE 里有 = 新任务上线、老 config 还没存这行：
         # 与界面「缺的补到末尾（默认启用）」同口径补进来，否则「界面显示这行、引擎却跳过」。
         # 用户在界面关掉的行是带 enabled=False 存着的（已在 seen 里），绝不会被这里补回来。
-        for name in CHAINABLE:
-            if name not in seen and group_on(name) and dungeon_ok(name):
-                out.append(name)
+        # 单跑（explicit_steps）时跳过补齐，保持「只跑指定的那一个」。
+        if not explicit_only:
+            for name in CHAINABLE:
+                if name not in seen and group_on(name) and dungeon_ok(name):
+                    out.append(name)
         # 按区拼段（分段顺序与界面共用 tasks.daily.GROUPS），否则会「界面显示这步先跑、
         # 引擎却先跑另一步」——尤其是还没被界面保存过的旧 config（存的原序不一定是区序）。
         seg = {g: [n for n in out if GROUP_OF.get(n) == g] for g in GROUPS}

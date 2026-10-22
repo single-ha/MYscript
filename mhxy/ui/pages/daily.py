@@ -1162,6 +1162,9 @@ class DailyPage(ctk.CTkFrame):
         run_cfg = copy.deepcopy(cfg)
         daily = run_cfg.setdefault("tasks", {}).setdefault("daily", {})
         daily["steps"] = [{"task": name, "enabled": True}]
+        # 标记「steps 就是全部、别再补缺行」——否则引擎的「新任务补到末尾」会把其它
+        # CHAINABLE 任务全补回来，单跑就会跑成整条日常链（只影响本内存覆盖，不落盘）。
+        daily["explicit_steps"] = True
         daily["group_enabled"] = {"single": True, "multi": True}
         loop = daily.setdefault("loop", {})
         loop["time_limit_min"] = 0          # 不套整条龙的整体时间上限
