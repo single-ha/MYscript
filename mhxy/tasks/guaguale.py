@@ -126,6 +126,8 @@ class GuagualeTask(Task):
     # ------------------------------------------------------------------
     @staticmethod
     def _new_record(wctx, loop, regions):
+        # 注意：标定里的区域是**窗口内坐标**，这里原样存着，刮之前每行再用
+        # wctx.window.region_to_screen_rect 换成屏幕坐标（窗口可能被挪动，别提前缓存屏幕坐标）。
         area = regions.get("scratch_area")
         gap = max(4, int(loop.get("scratch_line_gap", 10)))
         h = (area or (0, 0, 0, 0))[3]
@@ -207,15 +209,25 @@ class GuagualeTask(Task):
         self._goto(rec, S_SCRATCH)
 
     def _do_scratch_line(self, ctx, rec):
-        """刮奖：每次推进**一行**（按住→沿该行逐点 glide→松开），行间可被停止打断。
+        """刮奖：每次推进**一行**（按住→沿该行逐点直线移动→松开），行间可被停止打断。
+
+        区域坐标：标定存的是窗口内坐标，这里先换成屏幕绝对坐标（★2026-10-27 修：此前直接
+        把窗口内坐标当屏幕坐标用，刮的位置整体偏到窗口左上角外面去了）。
+        移动一律用 mouse.line_to（严格直线、无随机落点/横向抖动）——glide 的 ±1.2px 抖动
+        会让笔画上下飘，刮不干净边角。
 
         Z 字来回（每行方向 = (行号 + 遍数) % 2），逐遍填满整块刮奖区域；
         行间用普通 sleep 而非 _interruptible_sleep——那会跑弹窗守卫，可能把刮奖界面上
         同款样式的「×」误当弹窗点掉、中途把界面关了（同拓印挂起守卫的理由，这里直接不调）。
         """
-        area = rec["area"]
-        if not area or rec["n_rows"] <= 0:
+        area_rel = rec["area"]
+        if not area_rel or rec["n_rows"] <= 0:
             ctx.log("「刮奖区域」没框/为空，无法刮奖，跳过该号。", level="error")
+            rec["done"] = True
+            return
+        area = ctx.window.region_to_screen_rect(area_rel)     # 窗口内 -> 屏幕绝对
+        if area is None:
+            ctx.log("取不到窗口位置（窗口可能已关），刮奖跳过该号。", level="error")
             rec["done"] = True
             return
         if rec["pass_no"] >= rec["passes"]:
@@ -230,13 +242,14 @@ class GuagualeTask(Task):
                                reverse=((rec["line"] + rec["pass_no"]) % 2 == 1))
         mouse = ctx.mouse
         speed = rec["speed"] * random.uniform(0.9, 1.2)
-        mouse.human_move(pts[0][0], pts[0][1], speed=speed * 1.2)
+        # 空走（没按住）用大步长：这段不需要刮到东西，跨半块区域只花 0.2s 左右
+        mouse.line_to(pts[0][0], pts[0][1], speed=speed, step_px=24)
         mouse.hold()
         try:
             for px, py in pts[1:]:
                 if ctx.should_stop():
                     break
-                mouse.glide(px, py, speed=speed * random.uniform(0.9, 1.15))
+                mouse.line_to(px, py, speed=speed)   # 按住时 5px 一小步，严格贴该行
         finally:
             mouse.release()
         rec["line"] += 1

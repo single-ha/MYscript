@@ -254,6 +254,25 @@ class Mouse:
             time.sleep(random.uniform(0.003, 0.009) / spd)
         return tx, ty
 
+    def line_to(self, x, y, speed=None, step_px=5):
+        """从当前光标**直线**移到 (x,y)：落点精确、**没有随机偏移、没有横向抖动**。
+
+        专给刮奖这类必须严格贴着标定区域走的连续动作——glide 会加 ±1.2px 的横向抖动，
+        按住拖动时会让笔画上下飘、边缘刮不干净/刮出框外（★2026-10-27 用户要求刮奖不带抖动）。
+        只保留一点点时延抖动（路径本身是严格直线），并在移动中保持按下状态即可连成笔画。
+
+        步长默认 5px：本机 Python/Windows 的 time.sleep 精度只有 15.6ms 一格，比这更密的
+        步长只是白等（约 320px/s，游戏按帧采样够用）；不按住的空走可以传大 step_px 提速。"""
+        sx, sy = get_cursor()
+        spd = self._speed(speed)
+        dx, dy = x - sx, y - sy
+        n = max(1, min(120, int(math.hypot(dx, dy) / max(0.5, float(step_px)))))
+        for i in range(1, n + 1):
+            t = i / n
+            self._move(sx + dx * t, sy + dy * t)
+            time.sleep(random.uniform(0.0025, 0.006) / spd)
+        return x, y
+
     def click(self, x, y, speed=None):
         """拟人化移动并点击。speed 非空时整段按该倍率提速（命中下单的极速直击）；
         不传时用默认 CLICK_MOVE_SPEED（点击默认走快点，user 拍板 2026-10-20）。"""
