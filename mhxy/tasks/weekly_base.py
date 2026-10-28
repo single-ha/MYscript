@@ -428,6 +428,9 @@ class WeeklyBaseTask(Task):
                     return scan.STAY, None
                 self._interruptible_sleep(ctx, self._jitter(0.15, ctx))
             ctx.log("认出活动卡片但连确认多次都没找到其「参加」按钮 → 判不可参加，中止。", level="warn")
+            # 判定中止前再强制存一张「标注了查找范围」的留证图（不受 8s 节流影响，
+            # 保证中止现场一定有一张能看出查找列/行带/候选分数的图）。
+            self._capture_join_unknown(ctx, list_region, entry_xy, loop, force=True)
             return scan.ACCEPT, {"abort_no_join": True}
 
         res = scan.scroll_search(

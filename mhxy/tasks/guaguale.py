@@ -3,6 +3,8 @@
 刮刮乐（单人任务，可单独跑，也可进「日常·个人组」每窗口独立链）。
 
 流程（每个所选窗口各刮一遍即完成今日刮刮乐）：
+  先确认当前号在主界面（不在就用 ui_state.back_to_main_screen 逐层 Esc/右键带回主界面，
+  最多 loop.ready_max 轮；判不了主界面时照旧开跑，别把没标的配置卡死）→
   主界面点「福利」按钮 → 点「打开刮刮乐」按钮 → 在标定的「刮奖区域」里按住鼠标 Z 字
   逐行来回扫、填满整块区域（loop.scratch_passes 遍） →
   有「节日奖励」按钮（今天有得领）就点它 → 等「领取节日奖励」按钮出现再点 → 等领奖弹窗
@@ -32,6 +34,7 @@ from .base import Task, register
 _NS = "guaguale"
 
 # 状态机状态（非阻塞：每访问一次只推进一小步）
+S_READY = "READY"                # 开刮前先确认在主界面（不在就逐层 Esc/右键兜底回来）
 S_WELFARE = "WELFARE"            # 主界面找「福利」按钮并点
 S_OPEN = "OPEN"                  # 等并点「打开刮刮乐」按钮
 S_SCRATCH = "SCRATCH"            # 在刮奖区域 Z 字逐行扫（rec["line"]/["pass_no"] 推进）
@@ -132,7 +135,8 @@ class GuagualeTask(Task):
         gap = max(4, int(loop.get("scratch_line_gap", 10)))
         h = (area or (0, 0, 0, 0))[3]
         n_rows = max(1, int((h + gap - 1) // gap)) if h else 1
-        return {"state": S_WELFARE, "t_state": time.time(),
+        return {"state": S_READY, "t_state": time.time(),
+                "ready_tries": 0, "ready_max": max(1, int(loop.get("ready_max", 3))),
                 "threshold": float(loop.get("match_threshold", 0.85)),
                 "timeout": float(loop.get("step_timeout_sec", 20)),
                 "festival_wait": float(loop.get("festival_wait_sec", 4)),
@@ -157,7 +161,9 @@ class GuagualeTask(Task):
     def _step_once(self, ctx, rec):
         """推进一个很小的动作后返回（非阻塞，好轮转到下一个号/交回日常驱动）。"""
         st = rec["state"]
-        if st == S_WELFARE:
+        if st == S_READY:
+            self._do_ready(ctx, rec)
+        elif st == S_WELFARE:
             self._do_welfare(ctx, rec)
         elif st == S_OPEN:
             self._do_open(ctx, rec)
@@ -173,6 +179,41 @@ class GuagualeTask(Task):
             self._do_reward(ctx, rec)
         elif st == S_CLOSE:
             self._do_close(ctx, rec)
+
+    def _do_ready(self, ctx, rec):
+        """开刮前先确认该号在主界面（user 拍板 2026-10-28）。
+
+        单跑时 base.run() 会先兜一次主界面，但「日常·每窗口独立链」只调 _step_once、不走 run()，
+        上一条任务没收干净就会停在活动/背包/各种面板上，接着找「福利」必然找不到、白等超时。
+        这里每步只判一次：在主界面=进下一步；不在=back_to_main_screen 逐层 Esc/右键带回；
+        试满 ready_max 轮仍回不去就跳过该号（不瞎点）；判不了主界面（没标商城图标）时照旧开跑。
+        """
+        st = ui_state.is_main_screen(ctx.cfg, ctx.window)
+        if st is True:
+            ctx.log("已确认在主界面，开始找「福利」。", level="info")
+            self._goto(rec, S_WELFARE)
+            return
+        if st is None:
+            ctx.log("无法判断是否在主界面（大概率没标定「商城图标」）——本次照旧开跑；"
+                    "建议在「任务配置」页「全局共享标定」卡补标。", level="warn")
+            self._goto(rec, S_WELFARE)
+            return
+        rec["ready_tries"] += 1
+        if rec["ready_tries"] > rec["ready_max"]:
+            rect = ctx.window.rect()
+            scene = ctx.window.grab_screen(rect) if rect is not None else None
+            cap = self._save_capture(ctx, scene, "guaguale_main_screen_fail") if scene is not None else None
+            ctx.log(f"连试 {rec['ready_max']} 轮都没回到主界面（现场截图 {cap}），跳过该号，不瞎点。",
+                    level="error")
+            rec["done"] = True
+            return
+        st2 = ui_state.back_to_main_screen(ctx.cfg, ctx.window)
+        if st2 is True:
+            ctx.log("已带回主界面，开始找「福利」。", level="hit")
+            self._goto(rec, S_WELFARE)
+        else:
+            ctx.log(f"当前不在主界面，第 {rec['ready_tries']}/{rec['ready_max']} 轮带回未成功，稍后重试。",
+                    level="warn")
 
     def _do_welfare(self, ctx, rec):
         """主界面找「福利」按钮并点 → 等刮刮乐入口按钮。"""

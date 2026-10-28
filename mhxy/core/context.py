@@ -76,7 +76,7 @@ class TaskContext:
 
     def debug_snapshot(self, tag, scene=None, rect=None, note="", card_xy=None,
                        hits=None, tpl_wh=None, col_x0=None, col_x1=None,
-                       click_kind=None, filename=None):
+                       click_kind=None, filename=None, row_y0=None, row_y1=None):
         """统一非点击/点击调试截图入口。返回 (ok, filename_or_None)。"""
         if not self._debug_on():
             return False, None
@@ -93,6 +93,8 @@ class TaskContext:
                 str(CAPTURES_DEBUG_DIR / fname),
                 col_x0=col_x0,
                 col_x1=col_x1,
+                row_y0=row_y0,
+                row_y1=row_y1,
                 card_xy=card_xy,
                 hits=hits,
                 tpl_wh=tpl_wh,

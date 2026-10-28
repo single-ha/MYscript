@@ -417,21 +417,54 @@ class Task:
             done_tpl, entry_tpl, max_follow_cap=loop.get("join_same_row_px", 55)
         )
 
-    def _capture_join_unknown(self, ctx, list_region, entry_screen_xy, loop):
-        """认出卡片但「参加/完成」都没命中：业务留证图（captures/，不受 debug_log 控制）。"""
+    def _capture_join_unknown(self, ctx, list_region, entry_screen_xy, loop, force=False):
+        """认出卡片但「参加/完成」都没命中：业务留证图（captures/，不受 debug_log 控制）。
+
+        图上直接标出**查找范围**（user 拍板 2026-10-28）：黄框=该卡片所在列（整列枚举「参加」
+        的范围）、青框=卡片行 ±join_same_row_px 的行带（只认本行按钮，越界就拒点）、
+        红十字=认出的卡片中心；再用低阈值(0.5)把「近失」候选画成框+分数——一眼能分清是
+        「真没有按钮」还是「有按钮但分数/位置没达阈值」，不用再翻调试日志猜。"""
         now = time.time()
         cool = float(loop.get("join_unknown_capture_cooldown_sec", 8.0))
-        if now - getattr(self, "_join_unknown_ts", 0.0) < max(0.0, cool):
+        if not force and now - getattr(self, "_join_unknown_ts", 0.0) < max(0.0, cool):
             return
         self._join_unknown_ts = now
         rect = (ctx.window.region_to_screen_rect(list_region) if list_region else ctx.window.rect())
         scene = ctx.window.grab_screen(rect) if rect is not None else None
         if scene is None:
             return
-        cap = self._save_capture(ctx, scene, f"join_unknown_{self.name}")
-        ex, ey = int(entry_screen_xy[0]), int(entry_screen_xy[1])
-        ctx.log(f"认出卡片但既没识别到「参加」也没识别到「完成」，已留证截图 {cap}（卡片点≈{ex},{ey}）。",
-                level="warn")
+        sh, sw = scene.shape[0], scene.shape[1]
+        ex, ey = int(entry_screen_xy[0] - rect[0]), int(entry_screen_xy[1] - rect[1])
+        cols = max(1, int(loop.get("activity_columns", 2)))
+        col_w = sw / cols if cols else sw
+        col_i = min(cols - 1, max(0, int(ex // col_w))) if col_w else 0
+        x0 = max(0, int(round(col_i * col_w)))
+        x1 = min(sw, int(round((col_i + 1) * col_w)))
+        half = max(10.0, float(loop.get("join_same_row_px", 55)))
+        ry0, ry1 = max(0, int(ey - half)), min(sh - 1, int(ey + half))
+        join_tpl = self.flags.get("join")
+        marks = []
+        if join_tpl is not None and x1 > x0:
+            try:
+                marks = [(x0 + c[0], c[1], c[2]) for c in
+                         vision.match_multi(scene[:, x0:x1], join_tpl, 0.5, max_hits=32)]
+            except Exception:
+                marks = []
+        fname = (datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                 + f"_join_unknown_{self.name}.png")
+        note = (f"scope col#{col_i + 1}/{cols} x=[{x0},{x1}] row y=[{ry0},{ry1}] "
+                f"card=({ex},{ey}) join_tpl={'ok' if join_tpl is not None else 'MISSING'}")
+        ok = vision.save_debug_image(
+            scene, str(CAPTURES_DIR / fname),
+            col_x0=x0, col_x1=x1, row_y0=ry0, row_y1=ry1,
+            card_xy=(ex, ey), hits=marks,
+            tpl_wh=(join_tpl.shape[1], join_tpl.shape[0]) if join_tpl is not None else None,
+            note=note,
+        )
+        ctx.log(f"认出卡片但既没识别到「参加」也没识别到「完成」，已留证截图 "
+                f"{fname if ok else '(保存失败)'}（卡片点≈{int(entry_screen_xy[0])},"
+                f"{int(entry_screen_xy[1])}；图上黄框=查找列、青框=本行带、"
+                f"绿/橙框=低阈值候选及其分数）。", level="warn")
 
     def _find_join_in_column(self, ctx, list_region, entry_screen_xy, threshold, loop,
                              join_tpl, entry_tpl=None, max_follow_cap=None):
@@ -665,6 +698,10 @@ class Task:
             scols = max(1, int(loop.get("activity_columns", 2)))
             col_w = sw / scols
             x1 = int(round((col_idx + 1) * col_w))
+            # 本行带（只认这一行按钮的纵向容差）：越界即「本行按钮没匹配上」，标注出来一眼可见
+            row_half = float(max_follow) if max_follow else float(loop.get("join_same_row_px", 55))
+            ry0 = max(0, int(ey_local - row_half))
+            ry1 = min(sh - 1, int(ey_local + row_half))
             lo, loc = vision.best_score(col, join_tpl)
             per_col = []
             for ci in range(scols):
@@ -675,7 +712,8 @@ class Task:
             sg, locg = vision.best_score(scene, join_tpl)
             ctx.log(
                 f"[调试] 找「参加/进入」失败 region={tuple(rect)} scene={sw}x{sh} "
-                f"列#{col_idx + 1}/{scols} x=[{x0},{x1}] 卡片局部=({ex_local},{ey_local}) "
+                f"列#{col_idx + 1}/{scols} x=[{x0},{x1}] 行带y=[{ry0},{ry1}] "
+                f"卡片局部=({ex_local},{ey_local}) "
                 f"本列raw最高={lo:.3f}@{loc}，各列最高={per_col}，全屏raw最高={sg:.3f}@{locg}",
                 level="debug")
             if hits:
@@ -692,14 +730,17 @@ class Task:
                 return
             fname = (datetime.datetime.now().strftime("%Y%m%d_%H%M%S_")
                      + f"dbg_join_{self.name}.png")
-            note = f"col#{col_idx + 1} card=({ex_local},{ey_local}) best={lo:.2f}"
+            note = (f"col#{col_idx + 1} x=[{x0},{x1}] row y=[{ry0},{ry1}] "
+                    f"card=({ex_local},{ey_local}) best={lo:.2f}")
             ok, _ = ctx.debug_snapshot(
                 "join_miss",
                 scene=scene,
                 rect=rect,
                 note=note,
                 col_x0=x0,
-col_x1=x1,
+                col_x1=x1,
+                row_y0=ry0,
+                row_y1=ry1,
                 card_xy=(ex_local, ey_local),
                 hits=marks,
                 tpl_wh=join_tpl.shape[::-1],

@@ -243,10 +243,12 @@ def sqdiff_score(scene_bgr, template_bgr):
 
 def save_debug_image(scene, path, col_x0=None, col_x1=None,
                      card_xy=None, hits=None, tpl_wh=None, note="",
-                     click_kind=None, card_color=None):
+                     click_kind=None, card_color=None,
+                     row_y0=None, row_y1=None):
     """诊断用：在 scene 副本上画标注并存到 path（绝对/相对均可）。坐标均为 scene 局部坐标。
     只画几何 + ASCII 文本（cv2 不支持中文）。返回是否保存成功。
       col_x0/col_x1：卡片所在列左右边界 → 黄色竖带（列内找「参加」的范围）
+      row_y0/row_y1：本行带上下边界 → 青色横带（只认该行按钮的纵向容差范围）
       card_xy：卡片中心/点击点 → 十字（默认红；click_kind/card_color 可覆盖）
       hits：[(cx,cy,score)] 低阈值候选 → 框（≥0.7 绿、否则橙）+ 分数
       tpl_wh：(w,h) 命中框尺寸，缺省不画框
@@ -262,6 +264,11 @@ def save_debug_image(scene, path, col_x0=None, col_x1=None,
     }
     if col_x0 is not None and col_x1 is not None:
         cv2.rectangle(img, (int(col_x0), 0), (int(col_x1) - 1, h - 1), (0, 255, 255), 1)
+    if row_y0 is not None and row_y1 is not None:
+        bx0 = int(col_x0) if col_x0 is not None else 0
+        bx1 = int(col_x1) - 1 if col_x1 is not None else w - 1
+        cv2.rectangle(img, (max(0, bx0), max(0, int(row_y0))),
+                      (min(w - 1, bx1), min(h - 1, int(row_y1))), (255, 255, 0), 1)
     if tpl_wh and hits:
         tw, th = int(tpl_wh[0]), int(tpl_wh[1])
         for (cx, cy, s) in hits:
