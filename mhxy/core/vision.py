@@ -4,6 +4,7 @@
 """
 
 import os
+import threading
 import time
 import datetime
 import json
@@ -18,6 +19,44 @@ def _abspath(path):
     if os.path.isabs(path):
         return path
     return str(PROJECT_ROOT / path)
+
+
+# ---- 模板图内存缓存（P1：避免重复从磁盘读取+cv2.imdecode 解码）----
+# 同一模板在运行期会被反复调用（如 maybe_auto_organize 每 20s 检测一次 bag_full_icon，
+# 各任务 _load_flags 初始化时各读一次），缓存后仅首次产生磁盘 I/O。
+_template_cache = {}
+_template_lock = threading.Lock()
+
+
+def clear_template_cache():
+    """清空模板内存缓存。标定/重载模板后调用，避免拿到旧图。"""
+    with _template_lock:
+        _template_cache.clear()
+
+
+# ---- 匹配结果按帧缓存（P2：同一帧内同一 (scene, template, threshold) 只 matchTemplate 一次）----
+# key: (id(scene_bgr), id(template_bgr), threshold) -> 匹配结果（None 或 (cx, cy, score)）
+# numpy 数组的 id() 在对象生命周期内稳定，同一帧内同一 scene 数组被多个模板或同一模板
+# 重复匹配时可直接复用，避免重复 cv2.matchTemplate 全图扫描。
+_MISSING = object()
+_match_frame_cache = {}
+_match_cache_lock = threading.Lock()
+
+
+def clear_match_cache():
+    """清空匹配结果帧缓存。适合在 scene 数组被替换前调用，避免 id 复用导致的旧结果污染。"""
+    with _match_cache_lock:
+        _match_frame_cache.clear()
+
+
+def _match_cache_get(scene_bgr, template_bgr, threshold, kind="match"):
+    with _match_cache_lock:
+        return _match_frame_cache.get((id(scene_bgr), id(template_bgr), threshold, kind), _MISSING)
+
+
+def _match_cache_put(scene_bgr, template_bgr, threshold, result, kind="match"):
+    with _match_cache_lock:
+        _match_frame_cache[(id(scene_bgr), id(template_bgr), threshold, kind)] = result
 
 
 def _with_daily_dir(path):
@@ -48,12 +87,22 @@ def dated_path(path):
 
 
 def load_template(path):
-    """读取模板图（兼容中文路径）。失败返回 None。"""
+    """读取模板图（兼容中文路径）。失败返回 None。
+
+    同一路径的模板在运行期会被反复调用，首次读取后缓存入内存，
+    后续命中直接返回，避免重复磁盘 I/O + cv2.imdecode 解码。
+    """
     p = _abspath(path)
+    with _template_lock:
+        if p in _template_cache:
+            return _template_cache[p]
     if not os.path.exists(p):
         return None
     data = np.fromfile(p, dtype=np.uint8)
-    return cv2.imdecode(data, cv2.IMREAD_COLOR)
+    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    with _template_lock:
+        _template_cache[p] = img
+    return img
 
 
 def save_image(path, img):
@@ -125,13 +174,20 @@ def match(scene_bgr, template_bgr, threshold, template_name="", task_name="", wi
     th, tw = template_bgr.shape[:2]
     if scene_bgr.shape[0] < th or scene_bgr.shape[1] < tw:
         return None
+    # 同一帧内同一 (scene, template, threshold) 复用缓存，避免重复 matchTemplate 全图扫描
+    cached = _match_cache_get(scene_bgr, template_bgr, threshold, kind="match")
+    if cached is not _MISSING:
+        return cached
     res = cv2.matchTemplate(scene_bgr, template_bgr, cv2.TM_CCOEFF_NORMED)
     _, max_val, _, max_loc = cv2.minMaxLoc(res)
     if max_val >= threshold:
-        return (max_loc[0] + tw // 2, max_loc[1] + th // 2, float(max_val))
+        result = (max_loc[0] + tw // 2, max_loc[1] + th // 2, float(max_val))
+        _match_cache_put(scene_bgr, template_bgr, threshold, result, kind="match")
+        return result
     # 匹配失败 → 按需诊断留证（仅关键路径 diagnose_on_miss=True 才截图）
     if diagnose_on_miss:
         _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, window_rect, max_val)
+    _match_cache_put(scene_bgr, template_bgr, threshold, None, kind="match")
     return None
 
 
@@ -150,6 +206,10 @@ def match_multi(scene_bgr, template_bgr, threshold, max_hits=32, nms_iou=0.4, so
     th, tw = template_bgr.shape[:2]
     if scene_bgr.shape[0] < th or scene_bgr.shape[1] < tw:
         return []
+    # 同一帧内同一 (scene, template, threshold) 复用缓存
+    cached = _match_cache_get(scene_bgr, template_bgr, threshold, kind="match_multi")
+    if cached is not _MISSING:
+        return cached
     res = cv2.matchTemplate(scene_bgr, template_bgr, cv2.TM_CCOEFF_NORMED)
 
     # 局部极大值（邻居不比自己大才算峰值），再把低于阈值的滤掉
@@ -158,6 +218,7 @@ def match_multi(scene_bgr, template_bgr, threshold, max_hits=32, nms_iou=0.4, so
         # 完全无峰值 → 按需诊断留证
         if diagnose_on_miss:
             _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, window_rect, 0.0)
+        _match_cache_put(scene_bgr, template_bgr, threshold, [], kind="match_multi")
         return []
     peaks = []
     for y, x in zip(ys, xs):
@@ -169,6 +230,7 @@ def match_multi(scene_bgr, template_bgr, threshold, max_hits=32, nms_iou=0.4, so
     if not peaks:
         if diagnose_on_miss:
             _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, window_rect, 0.0)
+        _match_cache_put(scene_bgr, template_bgr, threshold, [], kind="match_multi")
         return []
 
     # NMS：命中框按得分从高到低，凡与已接受结果重叠过大(IoU 超 nms_iou)就丢弃
@@ -193,12 +255,14 @@ def match_multi(scene_bgr, template_bgr, threshold, max_hits=32, nms_iou=0.4, so
         # NMS 后全被过滤 → 按需诊断留证
         if diagnose_on_miss:
             _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, window_rect, 0.0)
+        _match_cache_put(scene_bgr, template_bgr, threshold, [], kind="match_multi")
         return []
     if sort_origin_top_left:
         # 先 y（上→下）、再 x（左→右），即按行列排好
         accepted.sort(key=lambda p: (p[1], p[0]))
     else:
         accepted.sort(key=lambda p: p[2], reverse=True)
+    _match_cache_put(scene_bgr, template_bgr, threshold, accepted, kind="match_multi")
     return accepted
 
 

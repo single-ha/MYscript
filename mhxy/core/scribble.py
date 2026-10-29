@@ -778,36 +778,61 @@ def _scale_strokes(strokes, factor):
 
 
 def _skeletonize(bw):
-    """Zhang-Suen 细化：1px 骨架。输入/输出均 0/255 二值图。"""
+    """Zhang-Suen 细化：1px 骨架。输入/输出均 0/255 二值图。
+
+    旧版纯 Python 双重循环逐像素判断，在 480×480 画幅上极慢；
+    本版用 numpy 对整幅图一次性计算每个像素的删除条件，仅保留
+    Python 层面的「迭代直到收敛」外层循环，内部全是 C 速度的
+    向量化运算，速度提升一个数量级以上，与旧版结果等价。
+    """
     img = (bw > 0).astype(np.uint8)
     img = cv2.copyMakeBorder(img, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
     changed = True
     while changed:
         changed = False
         for sub_pass in (0, 1):
-            mark = []
-            h, _w = img.shape
-            for r in range(1, h - 1):
-                for c in range(1, _w - 1):
-                    if img[r, c] == 0:
-                        continue
-                    p = img[r - 1:r + 2, c - 1:c + 2]
-                    p2 = int(p[0, 1]); p3 = int(p[0, 2]); p4 = int(p[1, 2])
-                    p5 = int(p[2, 2]); p6 = int(p[2, 1]); p7 = int(p[2, 0])
-                    p8 = int(p[1, 0]); p9 = int(p[0, 0])
-                    n = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9
-                    transitions = sum(int(a) and not int(b) for a, b in
-                                      ((p2, p3), (p3, p4), (p4, p5), (p5, p6),
-                                       (p6, p7), (p7, p8), (p8, p9), (p9, p2)))
-                    m2 = p2 * p4 * p6
-                    m4 = p4 * p6 * p8
-                    if 2 <= n <= 6 and transitions == 1:
-                        if sub_pass == 0 and not m2 and not m4:
-                            mark.append((r, c))
-                        elif sub_pass == 1 and not (p2 * p4 * p8) and not (p2 * p6 * p8):
-                            mark.append((r, c))
-            for (r, c) in mark:
-                img[r, c] = 0
+            p1 = img[1:-1, 1:-1]
+            p2 = img[0:-2, 1:-1]      # 上
+            p3 = img[0:-2, 2:]        # 右上
+            p4 = img[1:-1, 2:]        # 右
+            p5 = img[2:, 2:]          # 右下
+            p6 = img[2:, 1:-1]        # 下
+            p7 = img[2:, 0:-2]        # 左下
+            p8 = img[1:-1, 0:-2]      # 左
+            p9 = img[0:-2, 0:-2]      # 左上
+
+            center = (p1 == 1)
+            if not center.any():
+                continue
+
+            # 条件 1：邻居数 2..6
+            N = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9
+            cond_count = (N >= 2) & (N <= 6)
+
+            # 条件 2：8 邻域黑白转换数 == 1
+            trans = (
+                ((p2 == 1) & (p3 == 0)).astype(np.uint8)
+                + ((p3 == 1) & (p4 == 0)).astype(np.uint8)
+                + ((p4 == 1) & (p5 == 0)).astype(np.uint8)
+                + ((p5 == 1) & (p6 == 0)).astype(np.uint8)
+                + ((p6 == 1) & (p7 == 0)).astype(np.uint8)
+                + ((p7 == 1) & (p8 == 0)).astype(np.uint8)
+                + ((p8 == 1) & (p9 == 0)).astype(np.uint8)
+                + ((p9 == 1) & (p2 == 0)).astype(np.uint8)
+            )
+            cond_trans = (trans == 1)
+
+            # 条件 3：子迭代特定约束
+            if sub_pass == 0:
+                cond_sp = (~((p2 == 1) & (p4 == 1) & (p6 == 1))
+                           & ~((p4 == 1) & (p6 == 1) & (p8 == 1)))
+            else:
+                cond_sp = (~((p2 == 1) & (p4 == 1) & (p8 == 1))
+                           & ~((p2 == 1) & (p6 == 1) & (p8 == 1)))
+
+            mark = center & cond_count & cond_trans & cond_sp
+            if mark.any():
+                img[1:-1, 1:-1] = np.where(mark, 0, p1)
                 changed = True
     return img[1:-1, 1:-1]
 
