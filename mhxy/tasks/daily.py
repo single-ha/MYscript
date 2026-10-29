@@ -46,6 +46,7 @@ from .dungeon_base import DUNGEON_NS
 from ..core.config import SINGLE_TASK_ORDER
 from ..core import window as win_mod
 from ..core.teaming import TeamFormation
+from ..ui import ui_state
 
 # 可进日常的任务（这些都有明确「完成条件」、会自动结束）。抢关注 sniper 不在此列。
 # 个人组：每窗口独立链（各自都能经 make_chain_driver 逐窗口跑）。
@@ -283,9 +284,17 @@ class DailyTask(Task):
     def _organize_between(c):
         """任务间清扫（user 2026-10-08 拍板：自动整理背包只在「各任务之间」触发，单个任务
         执行中绝不触发）：上一个任务刚完成/被跳过、马上要开下一个任务时，自动整理一次背包。
+
+        新（user 2026-10-29 拍板）：先把画面带回主界面，再检测「背包满」——否则上一个任务
+        没能回到主界面（如还停在活动列表/鉴赏界面），可能在错误界面下误检背包满，诊断截图
+        也会截到活动界面而不是真正的背包画面。
         开关 tasks.organize_bag.auto_organize；未标定满图标/没满 → maybe_auto_organize 静默返回。"""
         wctx = c["wctx"]
         try:
+            # 交接处先保证回到主界面，避免在活动/战斗/弹窗界面下误检背包满
+            if not ui_state.is_main_screen(wctx.cfg, wctx.window):
+                wctx.log("交接处未在主界面，先按 Esc/右键逐层退回主界面再检测背包…", level="info")
+                ui_state.back_to_main_screen(wctx.cfg, wctx.window)
             wctx.maybe_auto_organize()
         except Exception as e:
             wctx.log(f"自动整理背包检测异常（已忽略，继续）：{e}", level="warn")

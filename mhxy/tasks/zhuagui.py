@@ -15,7 +15,7 @@
 一轮领一次任务可能【连打 n 场战斗，全部打完才弹一次「是否继续」】。故一轮内的推进靠两层超时：
   · loop.battle_timeout_sec（默认 10s）= **每场战斗之间**的等待：点完小闹钟(首轮)或上一场打完(后续)
     到【进入下一场】的上限。超时还没见到战斗画面 → 补点任务栏小闹钟重新寻路，连点两次防首击被吞
-    （限 loop.battle_recover_max 次，默认 3，超限中止）；判断「是否在战斗中」用公共标定的
+    （限 loop.battle_recover_max 次，默认 3，超限中止）。**「进战斗」把补点次数计数器清零**（每场独立算 recover_max，不累积到整轮）；判断「是否在战斗中」用公共标定的
     战斗界面标志 tasks.shared.templates.battle_flag（ui_state.is_present）——**未标则退回旧行为**：
     不判进战、不补点小闹钟，只等「是否继续」出现，preflight 不因此拦跑、只在跑起来时告警一次。
   · loop.round_timeout_sec（默认 3600s）= **整轮打完**的兜底上限：「是否继续」挂 60min 还不出现
@@ -362,6 +362,7 @@ class ZhuaguiTask(Task):
                     battles += 1
                     ctx.log(f"第 {round_no} 轮第 {battles} 场：已进战，等打完…", level="hit")
                     last_diag = now
+                    recover = 0          # 刚进战斗：本轮内补点小闹钟次数重置（每场独立算 recover_max）
                 in_battle_last = True
                 non_battle_since = None          # 战斗中不计「战斗间」时长
             else:

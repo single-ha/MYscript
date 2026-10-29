@@ -18,6 +18,7 @@
   → 结束判定（转「离开」）两条：
      ①命中「失败」标志 → 先点掉失败结算，「离开」按钮才点得到；
      ②累计点「进入战斗」达 N 次（N = 难度关卡战斗次数，配置卡可调）后、当前处于非战斗态
+       且**非战斗态已连续维持 10s 以上**（防止过场/切换动画被误判为战斗结束）
        （未匹配到共享「战斗界面标志」battle_flag）→ 点「离开」退出秘境。
         注意：每次点完「进入战斗」先等约 1s 再判战斗态，避免过场被误判为已结束。
   → 每个号只进一次秘境（不再重开活动多轮）。
@@ -213,7 +214,7 @@ class SecretRealmTask(Task):
         return {"ctx": wctx, "state": S_OPEN_ACTIVITY, "t_state": 0.0,
                 "t_battle": 0.0, "t_diag": 0.0, "scrolls": 0,
                 "picked_dungeon": False, "entered_battle": False,
-                "eb_clicks": 0, "t_eb": 0.0,
+                "eb_clicks": 0, "t_eb": 0.0, "t_non_battle": 0.0,
                 "runs": 0, "recover": 0, "done": False, "dead_logged": False}
 
     @staticmethod
@@ -553,11 +554,18 @@ class SecretRealmTask(Task):
             return
 
         # 3) 结束判定：累计点「进入战斗」满 N 次、且当前为非战斗态（未匹配到共享「战斗界面标志」
-        #    battle_flag）→ 点「离开」退出。点完进入战斗后先等 1s 再判，避免过场被误判为已结束。
+        #    battle_flag）且非战斗态已连续维持 10s 以上 → 点「离开」退出。点完进入战斗后先等 1s
+        #    再判，避免过场被误判为已结束。
+        now = time.time()
         in_battle = ui_state.is_present(cur, self.flags, "battle_flag", threshold)
-        if rec["eb_clicks"] >= self.battle_rounds and not in_battle \
-                and (time.time() - rec["t_eb"]) >= 1.0:
-            ctx.log(f"已点「进入战斗」{rec['eb_clicks']}/{self.battle_rounds} 次且非战斗态 → "
+        if in_battle:
+            rec["t_non_battle"] = 0.0          # 重新进战斗：非战斗计时清零
+        elif rec["t_non_battle"] == 0.0:
+            rec["t_non_battle"] = now          # 首次进入非战斗态：开始计时
+        if (rec["eb_clicks"] >= self.battle_rounds and not in_battle
+                and rec["t_non_battle"] > 0
+                and (now - rec["t_non_battle"]) >= 10.0):
+            ctx.log(f"已点「进入战斗」{rec['eb_clicks']}/{self.battle_rounds} 次且非战斗态已持续 10s → "
                     f"判定本轮结束，去点「离开」。", level="hit")
             self._goto(rec, S_LEAVE)
             return
