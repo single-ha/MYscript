@@ -341,6 +341,8 @@ class DungeonBaseTask(TuoyingFlow, Task):
             先点它重新寻路再等（最多 enter_clock_retries 次，同旧语义）
           · 发起战斗场次达 max_rounds 上限 → 强制收尾防死循环
           · 静止画面兜底：画面连续静止 still_end_sec 秒（结算界面一闪而过/副本结束后的静止场景）也判结束
+          · 重复点击看门狗：同一模板在几乎同一位置短时间内连点超上限 → 该模板退避一段时间并告警，
+            防模板误命中/按钮已消失却仍匹配到背景时对同一位置无限连点
         返回：True=正常/兜底收尾；False=should_stop 中止。"""
         entry_to = float(loop.get("entry_skip_sec", 60))
         step_to = float(loop.get("step_timeout_sec", 30))
@@ -357,6 +359,33 @@ class DungeonBaseTask(TuoyingFlow, Task):
         stage_at = time.time()        # 当前阶段起点（开局=刚进副本）
         stage_to = entry_to           # 当前阶段空闲超时
         clock_cool_until = 0.0        # 小闹钟冷却截止：冷却期内小闹钟再次出现不再重复点
+        clock_prev_frame = None       # 上次点小闹钟时的画面（判断寻路后画面有没有变化）
+        skip_cool_until = 0.0         # 点过「跳过剧情/新版跳过剧情」后的短冷却（防同一帧连点）
+        # 重复点击看门狗：模板误命中（或按钮已消失、模板仍匹配到背景）时，避免对同一位置无限连点。
+        repeats = {}                  # key -> {"x","y","n","first_t","until"}
+        repeat_radius = 6             # 判定「同一位置」的像素半径
+        repeat_limit = 5              # 同位置连续点击上限（超过即退避）
+        repeat_window = 45.0          # 计数窗口（秒）
+        repeat_backoff = 20.0         # 触顶后该模板退避时长（秒）
+
+        def _repeat_blocked(key, now):
+            """该模板此刻是否要看门狗退避（True=本轮先别点它，让其它识别推进）。"""
+            rec = repeats.get(key)
+            return bool(rec) and now < rec.get("until", 0.0)
+
+        def _repeat_record(key, x, y, now):
+            """记一次点击；同位置短时间内连点超上限 → 该模板退避一段时间并告警一次。"""
+            rec = repeats.get(key)
+            if (rec is None or now - rec["first_t"] > repeat_window
+                    or abs(rec["x"] - x) > repeat_radius or abs(rec["y"] - y) > repeat_radius):
+                rec = {"x": x, "y": y, "n": 0, "first_t": now, "until": 0.0}
+                repeats[key] = rec
+            rec["n"] += 1
+            if rec["n"] > repeat_limit:
+                rec.update(n=0, first_t=now, x=x, y=y, until=now + repeat_backoff)
+                ctx.log(f"「{key}」同位置已连点 {repeat_limit + 1} 次仍没消失，疑似模板误命中——"
+                        f"该模板退避 {repeat_backoff:.0f}s，先靠其它识别推进。", level="warn")
+
         bl_warned = False             # battle_flag 未标定只告警一次
         last_diag = 0.0
         # 静止画面兜底状态（结算界面一闪而过/副本已结束的静止场景）
@@ -407,12 +436,14 @@ class DungeonBaseTask(TuoyingFlow, Task):
 
             # ④ 跳过剧情：点它（过剧情/上一场打完续战），随后等待窗口重开（可点小闹钟寻路）
             hit = self._match_scene(cur, rect, "skip", threshold)
-            if hit is not None:
+            if hit is not None and now >= skip_cool_until and not _repeat_blocked("skip", now):
                 self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点「跳过剧情」（{hit[2]:.3f}）。", level="hit")
+                _repeat_record("skip", hit[0], hit[1], now)
                 stage_at = now
                 stage_to = step_to
                 clock_cool_until = 0.0
+                skip_cool_until = now + 1.0   # 点完给界面一点时间消失，防同一帧连点
                 self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
                 continue
 
@@ -431,24 +462,30 @@ class DungeonBaseTask(TuoyingFlow, Task):
 
             # ⑤b 新版跳过剧情：点它（新版副本的跳过剧情按钮），随后等待窗口重开
             hit = self._match_scene(cur, rect, "skip_new", threshold)
-            if hit is not None:
+            if hit is not None and now >= skip_cool_until and not _repeat_blocked("skip_new", now):
                 self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点「新版跳过剧情」（{hit[2]:.3f}）。", level="hit")
+                _repeat_record("skip_new", hit[0], hit[1], now)
                 stage_at = now
                 stage_to = step_to
                 clock_cool_until = 0.0
+                skip_cool_until = now + 1.0   # 点完给界面一点时间消失，防同一帧连点
                 self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
                 continue
 
             # ⑥ 小闹钟：点它寻路（不在冷却期才点，防寻路动画期间画面里图标未消失被反复重寻路；
-            #    真没寻到位时由冷却机制自然重试）
+            #    寻路后画面几乎没变=没推进，自动把冷却拉长到 8s，避免 3s 一次地空点）
             hit = self._match_scene(cur, rect, "clock", threshold)
-            if hit is not None and now >= clock_cool_until:
+            if hit is not None and now >= clock_cool_until and not _repeat_blocked("clock", now):
                 self.click_after_hit(ctx, hit[0], hit[1])
                 ctx.log(f"点「小闹钟」寻路（{hit[2]:.3f}）。", level="hit")
+                _repeat_record("clock", hit[0], hit[1], now)
                 stage_at = now
                 stage_to = step_to
-                clock_cool_until = now + 3.0  # 固定 3s 冷却
+                moved = (clock_prev_frame is None
+                         or vision.frame_diff(clock_prev_frame, cur) >= 2.0)
+                clock_cool_until = now + (3.0 if moved else 8.0)
+                clock_prev_frame = cur
                 self._interruptible_sleep(ctx, self._jitter(poll_sec, ctx))
                 continue
 

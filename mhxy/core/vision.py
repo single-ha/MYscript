@@ -34,29 +34,45 @@ def clear_template_cache():
         _template_cache.clear()
 
 
-# ---- 匹配结果按帧缓存（P2：同一帧内同一 (scene, template, threshold) 只 matchTemplate 一次）----
-# key: (id(scene_bgr), id(template_bgr), threshold) -> 匹配结果（None 或 (cx, cy, score)）
-# numpy 数组的 id() 在对象生命周期内稳定，同一帧内同一 scene 数组被多个模板或同一模板
-# 重复匹配时可直接复用，避免重复 cv2.matchTemplate 全图扫描。
+# ---- 匹配结果「按帧」缓存（P2：同一帧内同一 (template, threshold) 只跑一次 matchTemplate）----
+# ⚠ 只缓存【最近一帧】，并强引用该帧与其模板对象：
+#   numpy 数组的 id() 就是对象地址；数组释放后地址会被下一次 grab() 的新帧复用。若像早期实现那样
+#   按 id 长期缓存，新帧会命中旧帧的结果——按钮早已消失却仍返回旧命中坐标，任务就会对同一位置
+#   无限连点（2026-10-29 引入、2026-10-30 踩坑：副本内反复点「跳过剧情/小闹钟」同一位置）。
+#   强引用最近一帧 → 其地址不会被回收复用；换帧必是另一个对象（identity 判等）→ 必然 miss 重算。
+#   同帧内 skip/clock 等多个模板共用同一个 scene 时仍能命中，性能收益保留；最多多留一张图内存。
 _MISSING = object()
-_match_frame_cache = {}
+_match_memo_scene = None      # 强引用：最近一次参与缓存的帧（防 id 被回收复用）
+_match_memo = {}              # key: (id(template_bgr), threshold, kind) -> (template_bgr, result)
 _match_cache_lock = threading.Lock()
 
 
 def clear_match_cache():
-    """清空匹配结果帧缓存。适合在 scene 数组被替换前调用，避免 id 复用导致的旧结果污染。"""
+    """丢弃最近一帧的匹配结果缓存（模板重载/标定、或怀疑缓存异常时可调用）。"""
+    global _match_memo_scene, _match_memo
     with _match_cache_lock:
-        _match_frame_cache.clear()
+        _match_memo_scene = None
+        _match_memo = {}
 
 
 def _match_cache_get(scene_bgr, template_bgr, threshold, kind="match"):
     with _match_cache_lock:
-        return _match_frame_cache.get((id(scene_bgr), id(template_bgr), threshold, kind), _MISSING)
+        if scene_bgr is not _match_memo_scene:
+            return _MISSING
+        entry = _match_memo.get((id(template_bgr), threshold, kind))
+        # 模板对象也做 identity 校验（entry 里持有强引用，保证 id 未被复用）
+        if entry is None or entry[0] is not template_bgr:
+            return _MISSING
+        return entry[1]
 
 
 def _match_cache_put(scene_bgr, template_bgr, threshold, result, kind="match"):
+    global _match_memo_scene, _match_memo
     with _match_cache_lock:
-        _match_frame_cache[(id(scene_bgr), id(template_bgr), threshold, kind)] = result
+        if scene_bgr is not _match_memo_scene:
+            _match_memo_scene = scene_bgr
+            _match_memo = {}
+        _match_memo[(id(template_bgr), threshold, kind)] = (template_bgr, result)
 
 
 def _with_daily_dir(path):

@@ -54,6 +54,11 @@
     的 CLICK_DELAY/TEAM_CLICK_DELAY、点击移速倍率 CLICK_MOVE_SPEED(2.5)（均不进 config、不上设置页）。统一入口 base.Task.click_after_hit(ctx,x,y[,mouse=][,delay=])
     （core 层各自 _click_after_hit），**新任务别直接 ctx.mouse.click**。排除：sniper、弹窗守卫点×、抓鬼双击第 2 下、
     非识别驱动的盲点（区域中心右键关面板 / ui_state 交替右键）。
+12. **匹配结果缓存只能认「同一帧对象」、绝不能按 `id()` 跨帧复用（已踩坑）**：`window.grab()` 每次返回新数组，
+    数组释放后地址会被下一帧复用，若拿 `id(scene)` 当缓存键长期存结果，新帧就会命中旧帧的匹配结果——
+    按钮早已消失却仍返回旧命中坐标，任务便对同一位置无限连点（2026-10-29 引入、次日副本站着不动反复点
+    「跳过剧情/小闹钟」暴露）。现实现（vision.py）只缓存**最近一帧**并强引用该帧与模板（identity 判等），
+    换帧必然 miss 重算。给识别循环加「同位置连点看门狗」也仍在 `dungeon_base._run_rounds`。
 
 ## 架构（三层，包名 mhxy/）
 > 文件树是「地图」，只给一句话功能；实现细节看各文件 docstring 与 memory，别往这里抄。

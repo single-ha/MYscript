@@ -166,6 +166,8 @@ def calibrate_template_direct(app, task_name, key, name, toast=None, out_rel=Non
         if toast:
             toast("保存截图失败。", T.DANGER)
         return False
+    # 模板图已变：清掉内存里的模板缓存，避免重标后仍用旧图（load_template 会按路径缓存）
+    vision.clear_template_cache()
     if out_rel is None:
         tc = cfg_mod.task_config(cfg, task_name)
         tc.setdefault("templates", {})[key] = rel_path
@@ -493,6 +495,8 @@ class CalibrateDialog(ctk.CTkToplevel):
         if not vision.save_image(rel_path, crop):
             self._toast("保存模板图失败。", T.DANGER)
             return
+        # 模板图已变：清掉模板内存缓存，避免重标后仍按路径命中旧图
+        vision.clear_template_cache()
         self.tc.setdefault("templates", {})[key] = rel_path
         self._save()
         self._refresh()
@@ -561,6 +565,8 @@ class CalibrateDialog(ctk.CTkToplevel):
         if not vision.save_image(rel_path, crop):
             self._toast("保存模板图失败。", T.DANGER)
             return
+        # 同名模板可能已存在于内存缓存（重截覆盖），清掉以免继续用旧图
+        vision.clear_template_cache()
         self.tc.setdefault("watchlist", []).append(
             {"name": name, "template": rel_path, "max_price": None})
         self._save()
