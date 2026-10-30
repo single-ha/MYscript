@@ -38,6 +38,7 @@ S_OPEN_ACTIVITY = "OPEN_ACTIVITY"   # 发活动快捷键
 S_FIND_CARD = "FIND_CARD"           # 活动列表里滚轮找「运镖」条目 → 点「参加」
 S_DIALOG = "DIALOG"                 # 等首个「押送普通镖银」对话框 → 点它
 S_CONFIRM = "CONFIRM"               # 点完押送后等「确认」按钮（容错超时）
+S_TRIP_WARMUP = "TRIP_WARMUP"       # 点完「确认」后在本号前台等「运镖中/战斗」真出现，才进监控态
 S_ESCORTING = "ESCORTING"           # 运镖中：监控运镖中标志/对话框复现，续点下一趟或收尾
 
 # 模板键（用 escort_ 前缀，避免和「宝图」任务的同名模板在磁盘上互相覆盖——
@@ -219,6 +220,8 @@ class EscortTask(Task):
             self._do_dialog(ctx, rec, loop, regions, threshold)
         elif st == S_CONFIRM:
             self._do_confirm(ctx, rec, loop, regions, threshold)
+        elif st == S_TRIP_WARMUP:
+            self._do_trip_warmup(ctx, rec, loop, regions, threshold)
         elif st == S_ESCORTING:
             self._do_escorting(ctx, rec, loop, regions, threshold)
 
@@ -321,17 +324,46 @@ class EscortTask(Task):
         hit = self._match_scene(cur, scene_rect, "escort_confirm", threshold)
         if hit is not None:
             self.click_after_hit(ctx, hit[0], hit[1])
-            ctx.log(f"点「确认」（{hit[2]:.3f}），开始监控本趟运镖。", level="hit")
+            ctx.log(f"点「确认」（{hit[2]:.3f}），等运镖真正开始…", level="hit")
             self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
-            self._start_trip_monitor(rec)
+            self._goto(rec, S_TRIP_WARMUP)
             return
         if self._state_elapsed(rec) > loop.get("confirm_timeout_sec", 10):
-            ctx.log("等运镖「确认」按钮超时（可能本次无需确认），开始监控本趟。", level="warn")
-            self._start_trip_monitor(rec)
+            ctx.log("等运镖「确认」按钮超时（可能本次无需确认），等运镖开始。", level="warn")
+            self._goto(rec, S_TRIP_WARMUP)
 
-    def _start_trip_monitor(self, rec):
-        """进入运镖监控前，重置该趟的「运镖中/结束」计时。"""
-        rec["seen_ongoing"] = False
+    # ---- 点完「确认」→ 等运镖真正开始才进监控态 ----
+    # 旧行为：点完「确认」立即进 S_ESCORTING，第一步监控三者都 miss → 切下一个号。
+    # 多开时等轮转切回来，这一趟可能已结束且「运镖中」标志从未被见过（seen_ongoing=False），
+    # 于是一直停在「等运镖开始/过场」干等单趟超时(600s)。
+    # 现改为：趁本号在前台，短时内等「运镖中/战斗」标志出现（内部循环不轮转别的号），
+    # 见到才转 S_ESCORTING —— 这样首次监控就设 seen_ongoing=True，从根上消除误判窗口。
+    def _do_trip_warmup(self, ctx, rec, loop, regions, threshold):
+        wait = float(loop.get("trip_start_wait_sec", 8.0))
+        deadline = time.time() + wait
+        scene_rect = self._scene_rect(ctx, regions)
+        while not ctx.should_stop():
+            cur = ctx.window.grab_screen(scene_rect)
+            if ui_state.is_present(cur, self.flags, "escort_ongoing", threshold):
+                ctx.log("「运镖中」标志已出现，进入运镖监控。", level="hit")
+                self._start_trip_monitor(rec, seen=True)
+                return
+            if ui_state.is_present(cur, self.flags, "battle_flag", threshold):
+                ctx.log("已直接进战斗，进入运镖监控（战斗期不停）。", level="hit")
+                self._start_trip_monitor(rec, seen=True)
+                return
+            if time.time() >= deadline:
+                ctx.log(f"等待 {wait:.0f}s 未见「运镖中/战斗」标志（可能标志被遮挡/识别 miss），"
+                        "仍进监控态兜底。", level="warn")
+                self._start_trip_monitor(rec)
+                return
+            self._interruptible_sleep(ctx, self._jitter(0.4, ctx))
+
+    def _start_trip_monitor(self, rec, seen=False):
+        """进入运镖监控前，重置该趟的「运镖中/结束」计时。
+        seen=True：预热期已亲眼见过「运镖中/战斗」标志 → 直接记 seen_ongoing，避免监控首帧
+        恰好 miss 时被误判「等运镖开始/过场」。"""
+        rec["seen_ongoing"] = bool(seen)
         rec["gone_since"] = None
         rec["no_dlg_since"] = None
         rec["t_trip"] = time.time()
