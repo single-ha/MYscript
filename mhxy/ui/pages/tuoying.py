@@ -77,6 +77,61 @@ class TuoyingPage(ctk.CTkFrame):
                       border_width=1, border_color=T.BORDER,
                       command=self.refresh).pack(side="left")
 
+        self._build_humanize_row(card)
+
+    def _build_humanize_row(self, card):
+        """拟人化强度滑动条（tasks.tuoying.loop.tuoying_humanize，0~1，改动即保存）。
+        command 只刷数值标签，<ButtonRelease-1> 才落盘，避免拖动过程中反复写 config.json。"""
+        box = ctk.CTkFrame(card, fg_color="transparent")
+        box.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 14))
+        box.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(box, text="拟人化程度", font=self.fonts["body_b"], text_color=T.TEXT,
+                     width=110, anchor="w").grid(row=0, column=0, sticky="w")
+        self.var_humanize = ctk.DoubleVar(value=self._get_humanize())
+        self.lbl_humanize = ctk.CTkLabel(box, text=f"{self.var_humanize.get():.2f}",
+                                         font=self.fonts["body_b"], text_color=T.ACCENT,
+                                         width=48, anchor="e")
+        self.lbl_humanize.grid(row=0, column=2, sticky="e", padx=(8, 0))
+        self.slider_humanize = ctk.CTkSlider(
+            box, from_=0.0, to=1.0, number_of_steps=20, variable=self.var_humanize,
+            command=self._on_humanize_move, progress_color=T.ACCENT,
+            button_color=T.ACCENT, button_hover_color=T.ACCENT_HOVER)
+        self.slider_humanize.grid(row=0, column=1, sticky="ew", padx=10)
+        self.slider_humanize.bind("<ButtonRelease-1>", lambda _e: self._save_humanize())
+        hint = ctk.CTkLabel(
+            box, text="每次自动临摹的笔顺 / 起笔方向 / 采样步长 / 停顿都会随机变化，"
+                      "不再每次都一模一样；只改走法，不影响图案覆盖率与「完成」判定。"
+                      "0 = 固定不变（旧行为），1 = 变化最大。",
+            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
+        hint.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        bind_wraplength(hint)
+
+    def _get_humanize(self):
+        cfg = getattr(self.app, "cfg", None)
+        if not cfg:
+            cfg = cfg_mod.load_config()
+        # 直接读本任务原始配置（不走 task_config 合并，避免把共享标定叠加产物读进来）
+        raw = ((cfg.get("tasks", {}) or {}).get(self.TASK_NAME, {}) or {})
+        try:
+            v = float((raw.get("loop") or {}).get("tuoying_humanize", 0.6))
+        except (TypeError, ValueError):
+            v = 0.6
+        return max(0.0, min(1.0, v))
+
+    def _on_humanize_move(self, val):
+        self.lbl_humanize.configure(text=f"{float(val):.2f}")
+
+    def _save_humanize(self):
+        cfg = cfg_mod.load_config()
+        # 只写本任务自己的 loop 键：不调 task_config（它会叠加共享 regions/templates，
+        # 整体回写会把共享标定污染进 tasks.tuoying）
+        loop = (cfg.setdefault("tasks", {}).setdefault(self.TASK_NAME, {})
+                   .setdefault("loop", {}))
+        loop["tuoying_humanize"] = round(max(0.0, min(1.0, float(self.var_humanize.get()))), 2)
+        cfg_mod.save_config(cfg)
+        self.app.cfg = cfg
+        self._log_line(f"拟人化程度已保存：{loop['tuoying_humanize']:.2f}", "info")
+
     # ---- 主体：完成度 + 说明 ----
     def _build_body(self):
         c = Card(self)
@@ -132,6 +187,10 @@ class TuoyingPage(ctk.CTkFrame):
                  + f"；未完成状态按钮：{'●' if todo_ok else '○'}（可选建议）"
                  + ("　✓ 可全自动临摹" if ready else "　（需框选绘制区 + 上传按钮 + 标题）"),
             text_color=T.SUCCESS if ready else T.WARN)
+        if getattr(self, "var_humanize", None) is not None:
+            v = self._get_humanize()
+            self.var_humanize.set(v)
+            self.lbl_humanize.configure(text=f"{v:.2f}")
 
 
 

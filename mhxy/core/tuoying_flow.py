@@ -135,6 +135,9 @@ class TuoyingFlow:
         save_debug = scribble.debug_enabled(tuo_loop)
         sample_step = loop.get("tuoying_sample_step", 5.0)
         trace_speed = loop.get("tuoying_speed", 1.0)
+        # 拟人化强度（0=旧确定性走法）：笔顺/起笔方向/采样步长/停顿随机化，只在「怎么走」层面，
+        # 不影响笔画集合与覆盖（见 scribble.trace_pattern 的 humanize 说明）。
+        humanize = tuo_loop.get("tuoying_humanize", 0.6)
         if assets["todo"] is None:
             ctx.log("⚠ 未标定「未完成状态按钮」→ 描摹中途无法判定图案是否达标，只能描完再点「上传」。"
                     "想「描够一笔就停」请去「工具→拓印」补标该项。", level="warn")
@@ -170,6 +173,7 @@ class TuoyingFlow:
                 ok = scribble.trace_pattern(ctx.mouse, rect, frame,
                                         sample_step=sample_step,
                                         speed=trace_speed, polarity=polarity, params=params,
+                                        humanize=humanize,
                                         on_stroke=_check_upload, should_stop=ctx.should_stop)
                 if ok is None or ctx.should_stop():
                     return False               # 急停：描摹被中断

@@ -139,9 +139,35 @@ def polarity_from_loop(loop, default="dark"):
     return v if v in ("dark", "light", "auto") else default
 
 
+def _humanize_order(strokes, strength):
+    """按拟人度重排走笔顺序：最长笔永远第一，其余按长度分档、档内随机。
+
+    只改「顺序」不改「集合」：走的仍是同一批骨架点，覆盖与笔画数完全等价，完成度判定不受影响。
+    最长笔固定第一是关键——万一中途被急停、或描几笔就被判「完成」，核心覆盖已经落下。
+    strength: 0~1（0=严格长度降序，旧行为；越大档内打乱越彻底）。"""
+    ordered = sorted(strokes, key=len, reverse=True)
+    if strength <= 0 or len(ordered) < 3:
+        return ordered
+    head, rest = ordered[0], ordered[1:]
+    max_len = max(1, len(head))
+    tiers = {}
+    for s in rest:
+        # 长度每差 ~10% 算一档：只有长度相近的笔画才互换，避免把长笔排到短笔后面
+        bucket = int(len(s) * 10.0 / max_len)
+        tiers.setdefault(bucket, []).append(s)
+    p_shuffle = max(0.0, min(1.0, strength))
+    out = [head]
+    for bucket in sorted(tiers, reverse=True):
+        group = tiers[bucket]
+        if len(group) > 1 and random.random() < p_shuffle:
+            random.shuffle(group)
+        out.extend(group)
+    return out
+
+
 def trace_pattern(mouse, rect, frame_bgr, speed=1.0, sample_step=5,
                   min_area_ratio=None, label="绘制区", polarity="auto", params=None,
-                  on_stroke=None, should_stop=None):
+                  on_stroke=None, should_stop=None, humanize=0.0):
     """识别 rect（屏幕绝对坐标 [x,y,w,h]）内 frame_bgr（该矩形截屏）里的线条图案并沿其描摹。
 
     - 先调 _extract_strokes 分离前景线条、拆成连续笔画路径（已按最长优先排序）。
@@ -155,6 +181,11 @@ def trace_pattern(mouse, rect, frame_bgr, speed=1.0, sample_step=5,
     - should_stop: 可选可调用 `() -> bool`，描摹途中**频繁轮询**它（每个笔画、每个采样点、覆盖补全
       每轮）。返回 True 时立即中止描摹并**返回 None**（与「认不出图案=False」区分，调用方据此识别急停）。
       不传则不可中断（★2026-10-18：用户报「拓印急停不管用」，就是此前从不查 stop）。
+    - humanize: 0~1 拟人化强度（tasks.tuoying.loop.tuoying_humanize，默认 0.6）。
+      只随机化「怎么走」——笔顺（最长笔固定第一、其余档内乱序）、每笔起收方向（~50% 反向）、
+      每笔采样步长（±20%）、起笔/换笔停顿与中途微停、每笔走速（±10%）。
+      **不碰笔画集合、不横向摆动**（★2026-10-22 拍板不要 Z 字），故覆盖与「完成」判定不受影响；
+      0 = 完全恢复旧的确定性走法。
 
     返回 True=描完/被 on_stroke 判定完成；False=认不出图案（转手动兜底）；None=被 should_stop 急停。
     """
@@ -165,26 +196,38 @@ def trace_pattern(mouse, rect, frame_bgr, speed=1.0, sample_step=5,
                                      polarity=polarity, params=params, want_meta=True)
     if not strokes:
         return False
+    hz = max(0.0, min(1.0, float(humanize or 0.0)))
     p = _merge_params(params)
     skel = (meta or {}).get("skel")
     # 覆盖补全：走笔只沿骨架，故按「骨架像素是否被走到」找漏段补笔（基准=骨架，不是墨迹）
     strokes = _cover_fill(strokes, skel, sample_step,
                           max_strokes=int(p["max_strokes"]), should_stop=should_stop)
-    # 最长笔优先：核心笔画先描（万一中途被停，覆盖占比已经最大）
-    strokes.sort(key=len, reverse=True)
+    # 最长笔优先（humanize 时只在长度相近的笔画之间打乱）：核心笔画先描，万一中途被停覆盖最大
+    strokes = _humanize_order(strokes, hz)
+
+    def _j(base):
+        """按拟人度只向上放宽的抖动（0=原值）。"""
+        return base * (1.0 + random.uniform(0.0, 0.6 * hz))
+
+    p_reverse = 0.5 * hz                        # 每笔反向起笔的概率（0.6 强度≈30%）
     for idx, stroke in enumerate(strokes):
         if should_stop is not None and should_stop():
             return None                        # 急停：还没开始这笔画就停
         if not stroke:
             continue
+        if hz > 0 and random.random() < p_reverse:
+            stroke = stroke[::-1]              # 反向：同一条骨架，起笔/收笔对调
+        stroke_speed = speed * random.uniform(1.0 - 0.1 * hz, 1.0 + 0.1 * hz)
+        # 每笔采样步长 ±20%：采样点不同 → 轨迹折线不同；_cover_fill 仍用基准步长，补笔判定不恶化
+        stroke_step = max(1.0, float(sample_step) * random.uniform(1.0 - 0.2 * hz, 1.0 + 0.2 * hz))
         # 起笔（松开状态移进起点附近）
         s0 = stroke[0]
-        mouse.human_move(x + s0[0], y + s0[1], speed=speed)
-        time.sleep(random.uniform(0.05, 0.15))
+        mouse.human_move(x + s0[0], y + s0[1], speed=stroke_speed)
+        time.sleep(_j(0.05) + random.uniform(0.0, 0.10 + 0.10 * hz))
         mouse.hold()
         try:
-            _trace_stroke(mouse, x, y, stroke, sample_step=sample_step, speed=speed,
-                          should_stop=should_stop)
+            _trace_stroke(mouse, x, y, stroke, sample_step=stroke_step, speed=stroke_speed,
+                          should_stop=should_stop, humanize=hz)
         finally:
             try:
                 mouse.release()
@@ -192,7 +235,8 @@ def trace_pattern(mouse, rect, frame_bgr, speed=1.0, sample_step=5,
                 pass
         if should_stop is not None and should_stop():
             return None                        # 刚被急停：别再做换笔/回调（回调会点上传）
-        time.sleep(random.uniform(0.15, 0.4))     # 笔画之间歇手，像人换笔
+        # 笔画之间歇手，像人换笔（humanize 时上限放宽到 ~0.6s）
+        time.sleep(0.15 * (1.0 + 0.3 * hz) + random.uniform(0.0, 0.25 + 0.20 * hz))
         # 每描完一笔回调一次：调用方借此检测「完成/上传」按钮是否已出现；返回 True=已完成，停止描摹
         if on_stroke is not None:
             try:
@@ -891,13 +935,19 @@ def _skeleton_to_strokes(skel):
 # ----------------------------------------------------------------------
 # 沿一条笔画拖动：分段采样、直接沿骨架走（★2026-10-22 用户拍板：不要 Z 字锯齿）
 # ----------------------------------------------------------------------
-def _trace_stroke(mouse, ox, oy, stroke, sample_step=5, speed=1.7, should_stop=None):
+def _trace_stroke(mouse, ox, oy, stroke, sample_step=5, speed=1.7, should_stop=None,
+                  humanize=0.0):
     """按住状态下，沿 stroke（帧内相对坐标）骨架点序**直接**依次移动。
     ox/oy 为绘制区屏幕绝对左上角，把帧内坐标换算回屏幕坐标。
     （旧版在每个采样点做法向摆动仿笔宽/铺满粗区；★2026-10-22 用户拍板「不要Z字临摹，
-    走笔直接按照骨架走」——去掉全部横向偏移。）"""
+    走笔直接按照骨架走」——去掉全部横向偏移。）
+
+    humanize>0 时只加「节奏抖动」：偶尔在采样点之间插一个 20~60ms 的微停（概率随强度上升），
+    不改变落点、不横向摆动 → 覆盖与完成度不受影响，只是走笔更不像机器匀速。"""
     step = max(1, int(sample_step))          # 配置里可能是 float（如 5.0），range 步长必须 int
     n = len(stroke)
+    hz = max(0.0, min(1.0, float(humanize or 0.0)))
+    pause_chance = 0.02 * hz                 # 每个采样点的微停概率（0.6 强度≈1.2%）
     for i in range(0, n, step):
         if should_stop is not None and should_stop():
             return                            # 急停：尽快交出控制权（每个采样点查一次）
@@ -905,6 +955,9 @@ def _trace_stroke(mouse, ox, oy, stroke, sample_step=5, speed=1.7, should_stop=N
         # glide=轻量平滑移动（1~3 小步）；描摹采样点很密，用 human_move 的 6~14 步会慢到分钟级
         mouse.glide(ox + bx, oy + by, speed=speed)
         time.sleep(random.uniform(0.001, 0.004) / speed if speed else 0.001)
+        if hz > 0 and random.random() < pause_chance:
+            # 中途「手抖一下/犹豫一下」：只停不动，绝不改落点（改了就有越出图案/掉完成度的风险）
+            time.sleep(random.uniform(0.02, 0.06))
     if n and (n - 1) % step != 0:            # 收尾补到终点
         bx, by = stroke[-1]
         mouse.glide(ox + bx, oy + by, speed=speed)

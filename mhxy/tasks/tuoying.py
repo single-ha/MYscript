@@ -149,6 +149,8 @@ class TuoyingTask(Task):
         upload_timeout = loop.get("tuoying_upload_sec", 6.0)
         sample_step = loop.get("tuoying_sample_step", 5.0)
         trace_speed = loop.get("tuoying_speed", 1.0)
+        # 拟人化强度在拓印工具自己的命名空间（tasks.tuoying.loop.tuoying_humanize），与拓印页滑动条同源
+        humanize = (ctx.task_cfg(_NS).get("loop", {}) or {}).get("tuoying_humanize", 0.6)
         if todo_tpl is None:
             ctx.log("⚠ 未标定「未完成状态按钮」→ 描摹中途无法判定图案是否达标，只能描完再点「上传」。"
                     "想「描够一笔就停」请在本页补标该项。", level="warn")
@@ -183,6 +185,7 @@ class TuoyingTask(Task):
                                             sample_step=sample_step,
                                             speed=trace_speed, label="拓印绘制区",
                                             polarity=polarity, params=params,
+                                            humanize=humanize,
                                             on_stroke=_check_upload, should_stop=ctx.should_stop)
                 if ok is None or ctx.should_stop():
                     return                     # 急停：描摹被中断
