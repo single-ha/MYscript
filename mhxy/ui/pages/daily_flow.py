@@ -16,6 +16,8 @@
 import copy
 from datetime import datetime, timedelta
 
+import tkinter as tk
+
 import customtkinter as ctk
 
 from .. import theme as T
@@ -66,6 +68,7 @@ class DailyFlowPage(ctk.CTkFrame):
         self._group_on = {"multi": True, "single": True}
         self._rows = {}
         self._drag = None
+        self._drag_line = None   # 拖拽时的目标位置彩色细线预览
         self._flat = []
         self._wait_until = None      # 定时延迟执行：晚于该时刻才真正启动
 
@@ -516,26 +519,112 @@ class DailyFlowPage(ctk.CTkFrame):
             return
         for k, r in self._rows.items():
             if r["frame"] is frame:
-                self._drag = {"key": k}
+                self._drag = {"key": k, "ghost": None}
                 frame.configure(fg_color=T.BTN)
                 frame.tkraise()
+                # 创建 ghost 浮窗：跟随鼠标显示被拖拽行的标题和背景色
+                try:
+                    ghost = tk.Toplevel(self)
+                    ghost.overrideredirect(True)
+                    ghost.attributes("-topmost", True)
+                    try:
+                        ghost.attributes("-alpha", 0.85)
+                    except Exception:
+                        pass
+                    inner = tk.Label(
+                        ghost, text=str(r["title"].cget("text")),
+                        bg=self._hex(T.BTN), fg=self._hex(T.TEXT),
+                        font=self.fonts["body_b"], padx=14, pady=6)
+                    inner.pack()
+                    ghost.geometry(f"+{event.x_root + 14}+{event.y_root + 10}")
+                    self._drag["ghost"] = ghost
+                except Exception:
+                    self._drag["ghost"] = None
                 return
+
+    @staticmethod
+    def _hex(color):
+        """theme 颜色可能是 tuple（CTk 支持），tk 控件只认字符串，取其主色。"""
+        if isinstance(color, (tuple, list)):
+            color = color[0]
+        return color if isinstance(color, str) else "#2b2b2b"
 
     def _drag_motion(self, event):
         if not self._drag:
             return
+        # ghost 跟随鼠标（屏幕坐标）
+        ghost = self._drag.get("ghost")
+        if ghost is not None:
+            try:
+                ghost.geometry(f"+{event.x_root + 14}+{event.y_root + 10}")
+            except Exception:
+                pass
         tgt = self._target_at_pointer()
-        if tgt is None or tgt == self._drag["key"]:
+        if tgt is not None and tgt != self._drag["key"]:
+            # 拖拽过程中只调整显示顺序（不改 _steps 数据、不存盘），避免连续写盘导致闪烁
+            self._reorder_flat(self._drag["key"], tgt)
+            self._grid_all()
+            self._drag["key"] = tgt
+        self._place_drag_line(event)
+
+    def _place_drag_line(self, event):
+        """按鼠标 Y 位置在目标插入点显示彩色细线预览。"""
+        try:
+            self.list_frame.update_idletasks()
+        except Exception:
             return
-        # 拖拽过程中只调整显示顺序（不改 _steps 数据、不存盘），避免连续写盘导致闪烁
-        self._reorder_flat(self._drag["key"], tgt)
-        self._grid_all()
-        self._drag["key"] = tgt
+        base_y = self.list_frame.winfo_rooty()
+        rel = event.y_root - base_y
+        y = None
+        for entry in self._flat:
+            f = self._rows[entry[1]]["frame"]
+            if not f.winfo_ismapped():
+                continue
+            top = f.winfo_rooty() - base_y
+            h = f.winfo_height()
+            if rel < top + h / 2:
+                y = max(0, top - 3)
+                break
+            y = top + h + 1
+        if y is None:
+            self._hide_drag_line()
+            return
+        if getattr(self, "_drag_line", None) is None:
+            try:
+                self._drag_line = tk.Frame(
+                    self.list_frame, bg=self._hex(T.ACCENT), height=3,
+                    bd=0, highlightthickness=0)
+            except Exception:
+                self._drag_line = None
+                return
+        try:
+            self._drag_line.place(x=10, y=y, relwidth=0.97)
+            self._drag_line.lift()
+        except Exception:
+            pass
+
+    def _hide_drag_line(self):
+        if getattr(self, "_drag_line", None) is not None:
+            try:
+                self._drag_line.place_forget()
+            except Exception:
+                pass
 
     def _drag_end(self, event):
         if not self._drag:
             return
-        self._rows[self._drag["key"]]["frame"].configure(fg_color=T.SURFACE_2)
+        # 先销毁 ghost 浮窗和预览细线（失败不能影响落盘流程）
+        try:
+            if self._drag.get("ghost") is not None:
+                self._drag["ghost"].destroy()
+        except Exception:
+            pass
+        self._drag["ghost"] = None
+        self._hide_drag_line()
+        try:
+            self._rows[self._drag["key"]]["frame"].configure(fg_color=T.SURFACE_2)
+        except Exception:
+            pass
         # 把拖拽过程累积的 _flat 顺序同步回 _steps 数据，并一次性存盘
         self._sync_steps_from_flat()
         self._save_steps()
