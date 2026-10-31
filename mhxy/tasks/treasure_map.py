@@ -391,7 +391,7 @@ class TreasureMapTask(TuoyingFlow, Task):
     # ---- 阶段 A：收集监控（每访问一次扫一帧；人物持续静止=收集完成，转挖宝）----
     def _do_collecting(self, ctx, rec, loop, regions, threshold):
         idle_need = loop.get("collect_idle_sec", 4.0)
-        overall = loop.get("collect_timeout_sec", 600)
+        overall = loop.get("collect_timeout_sec", 900)
         still_diff = loop.get("still_diff", _STILL_DIFF)
         if time.time() - rec["t0"] > overall:
             # 超时不回退阶段A（活动已参加、按钮已变「已参加」，重开会连环卡死）；
