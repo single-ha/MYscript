@@ -12,6 +12,7 @@
 """
 
 import copy
+from datetime import datetime, timedelta
 
 import customtkinter as ctk
 
@@ -61,6 +62,7 @@ class DailyFlowPage(ctk.CTkFrame):
         self._rows = {}
         self._drag = None
         self._flat = []
+        self._wait_until = None      # 定时延迟执行：晚于该时刻才真正启动
 
         self.var_limit = ctk.StringVar(value="0")
         self.var_shutdown = ctk.BooleanVar(value=False)
@@ -541,10 +543,41 @@ class DailyFlowPage(ctk.CTkFrame):
             self._log_line("正在停止…", "warn")
             self.btn_run.configure(text="停止中…", state="disabled")
             return
+        if self._wait_until is not None:
+            self._wait_until = None
+            self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
+                                   hover_color=T.ACCENT_HOVER, state="normal")
+            self._log_line("已取消定时等待，本次不执行。", "warn")
+            return
         if save:
             self._save_steps()
         self.app.cfg = cfg_mod.load_config()
+        tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
+        sched = (tc.get("loop", {}) or {}).get("schedule", "") or ""
+        target = self._sched_wait_target(sched, datetime.now())
+        if target is not None:
+            self._wait_until = target
+            self.btn_run.configure(text=f"等待到 {target:%m-%d %H:%M}…（再点取消）",
+                                   fg_color=T.WARN, hover_color=T.WARN_HOVER, state="normal")
+            self._log_line(f"已设定时延迟执行：将等到 {target:%Y-%m-%d %H:%M} 才开始（再点一次按钮可取消）。", "warn")
+            return
         self._start_runner()
+
+    @staticmethod
+    def _sched_wait_target(sched, now):
+        if not sched or ":" not in sched:
+            return None
+        try:
+            hh, mm = sched.split(":")
+            hh, mm = int(hh), int(mm)
+        except (ValueError, TypeError):
+            return None
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            return None
+        target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return target
 
     def _start_runner(self):
         task_cls = get_task(self.TASK_NAME)
@@ -562,9 +595,26 @@ class DailyFlowPage(ctk.CTkFrame):
 
     def _log_line(self, msg, level="info"):
         if hasattr(self.app, "log_line"):
-            self.app.log_line(msg, level)
+            self.app.log_line(msg, level, getattr(self, "LOG_SOURCE", None))
         else:
             print(f"[{level}] {msg}")
+
+    def _on_runner_finished(self):
+        self.runner = None
+        self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
+                               hover_color=T.ACCENT_HOVER, state="normal")
+
+    def pump(self):
+        if self.runner:
+            for level, msg, src in self.runner.drain_logs():
+                self.app.log_line(msg, level, getattr(self, "LOG_SOURCE", None))
+            if not self.runner.is_running() and self.btn_run.cget("text") != self.RUN_LABEL:
+                self._on_runner_finished()
+        elif self._wait_until is not None:
+            if datetime.now() >= self._wait_until:
+                self._wait_until = None
+                self._log_line("⏰ 定时时刻到，开始日常…", "warn")
+                self._start_runner()
 
     def _start_single(self, name):
         if self.runner and self.runner.is_running():
