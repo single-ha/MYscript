@@ -156,6 +156,10 @@ class Tooltip:
         self._tip = None
         widget.bind("<Enter>", self._on_enter)
         widget.bind("<Leave>", self._on_leave)
+        # 左键按下立即收起：任务卡按钮点击后会销毁重建整行，被销毁控件不会再收到
+        # <Leave>，提示窗会一直悬着不消失；add="+" 追加，不覆盖控件原有的点击行为
+        # （如任务名上的「单跑」<Button-1>）。
+        widget.bind("<ButtonPress>", self._on_leave, add="+")
         Tooltip._live.add(self)
         self._bind_toplevel()
 
