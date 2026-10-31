@@ -71,6 +71,7 @@ class DailyFlowPage(ctk.CTkFrame):
         self._drag_line = None   # 拖拽时的目标位置彩色细线预览
         self._flat = []
         self._wait_until = None      # 定时延迟执行：晚于该时刻才真正启动
+        self._removed = []       # 用户明确移出流程的任务（存 tasks.daily.removed_tasks）
 
         # 顶部固定设置变量
         self.var_limit = ctk.StringVar(value="0")
@@ -106,45 +107,28 @@ class DailyFlowPage(ctk.CTkFrame):
         card.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 14))
         card.grid_columnconfigure(0, weight=1)
 
-        top = ctk.CTkFrame(card, fg_color="transparent")
-        top.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 10))
-        top.grid_columnconfigure(1, weight=1)
-        # 仅保留「刷新配置」工具按钮
-        tools = ctk.CTkFrame(top, fg_color="transparent")
-        tools.grid(row=0, column=2, sticky="e")
-        ctk.CTkButton(tools, text="刷新配置", font=self.fonts["body"], height=36, width=104,
-                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
-                      text_color=T.TEXT, border_width=1, border_color=T.BORDER,
-                      command=self.refresh).pack(side="left")
+        # 单行：整体时间上限 | 自动拓印 | 刷新配置
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.grid(row=0, column=0, sticky="ew", padx=16, pady=12)
 
-        ctk.CTkFrame(card, fg_color=T.BORDER, height=1).grid(
-            row=1, column=0, sticky="ew", padx=16, pady=(0, 4))
-
-        opts = ctk.CTkFrame(card, fg_color="transparent")
-        opts.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 10))
-        opts.grid_columnconfigure(0, weight=1)
-        opts.grid_columnconfigure(1, weight=1)
-
-        # 整体时间上限（保留，固定不参与拖拽）
-        lim = ctk.CTkFrame(opts, fg_color="transparent")
-        lim.grid(row=0, column=0, sticky="w", padx=(0, 26), pady=(10, 0))
-        ctk.CTkLabel(lim, text="整体时间上限(分钟，0=不限)", font=self.fonts["body"],
+        ctk.CTkLabel(row, text="整体时间上限(分钟，0=不限)", font=self.fonts["body"],
                      text_color=T.TEXT).pack(side="left")
-        self.lim_ent = ctk.CTkEntry(lim, textvariable=self.var_limit, width=70,
+        self.lim_ent = ctk.CTkEntry(row, textvariable=self.var_limit, width=70,
                                     font=self.fonts["body"], fg_color=T.SURFACE_2,
                                     border_color=T.BORDER)
-        self.lim_ent.pack(side="left", padx=(8, 0))
+        self.lim_ent.pack(side="left", padx=(8, 24))
 
-        # 自动拓印（保留，固定不参与拖拽）
-        tuo = ctk.CTkFrame(opts, fg_color="transparent")
-        tuo.grid(row=0, column=1, sticky="e", pady=(10, 0))
-        tuo_lbl = ctk.CTkLabel(tuo, text="自动拓印（关闭后遇拓印弹窗转手动）",
-                               font=self.fonts["body"], text_color=T.TEXT)
-        tuo_lbl.pack(side="left")
+        ctk.CTkLabel(row, text="自动拓印（关闭后遇拓印弹窗转手动）",
+                     font=self.fonts["body"], text_color=T.TEXT).pack(side="left")
         self.switch_auto_tuoying = ctk.CTkSwitch(
-            tuo, text="", width=44, progress_color=T.ACCENT, fg_color=T.BTN,
+            row, text="", width=44, progress_color=T.ACCENT, fg_color=T.BTN,
             button_color=T.ON_ACCENT, command=self._toggle_auto_tuoying)
         self.switch_auto_tuoying.pack(side="left", padx=(8, 0))
+
+        ctk.CTkButton(row, text="刷新配置", font=self.fonts["body"], height=32, width=104,
+                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
+                      text_color=T.TEXT, border_width=1, border_color=T.BORDER,
+                      command=self.refresh).pack(side="right")
 
     # ------------------------------------------------------------------ 添加任务入口
     def _build_add_task(self):
@@ -185,6 +169,8 @@ class DailyFlowPage(ctk.CTkFrame):
         name = self.var_add_task.get()
         if not name or name in {s["task"] for s in self._steps}:
             return
+        if name in self._removed:
+            self._removed.remove(name)
         self._steps.append({"task": name, "enabled": True})
         self._save_steps()
         self._steps_sig = None
@@ -224,7 +210,8 @@ class DailyFlowPage(ctk.CTkFrame):
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         self._group_on = {g: bool((tc.get("group_enabled") or {}).get(g, True))
                           for g in GROUPS}
-        self._steps = self._normalize(tc.get("steps", []))
+        self._removed = [t for t in (tc.get("removed_tasks") or [])]
+        self._steps = self._normalize(tc.get("steps", []), self._removed)
         loopc = tc.get("loop", {}) or {}
         self.var_limit.set(str(loopc.get("time_limit_min", 0)))
         self.var_shutdown.set(bool(loopc.get("shutdown_after", False)))
@@ -245,22 +232,31 @@ class DailyFlowPage(ctk.CTkFrame):
                 self.switch_auto_tuoying.deselect()
 
     @staticmethod
-    def _normalize(stored):
-        """把存储的 steps 规整：只保留 CHAINABLE 里的任务，去重，排除 dungeon
-       （已被5个副本子任务彻底替代），未在存储里的新任务补到末尾（默认启用）。"""
+    def _normalize(stored, removed=()):
+        """把存储的 steps 规整：任务="" 的空白占位保留不动；只保留 CHAINABLE 里的
+        任务，去重，排除 dungeon（已被5个副本子任务彻底替代）；removed_tasks 里
+        明确移除的任务不再补到末尾。未存储的新任务仍补到末尾（默认启用）。"""
+        removed = set(removed or ())
         out, seen = [], set()
         for s in stored or []:
-            if isinstance(s, dict) and s.get("task") in CHAINABLE and s["task"] not in seen \
-                    and s["task"] != "dungeon":
-                out.append({"task": s["task"], "enabled": bool(s.get("enabled", True))})
-                seen.add(s["task"])
-        for t in CHAINABLE:
-            if t not in seen and t != "dungeon":
-                out.append({"task": t, "enabled": True})
-                seen.add(t)
+            if not isinstance(s, dict):
+                continue
+            task = s.get("task", "")
+            if task == "":
+                out.append({"task": "", "enabled": bool(s.get("enabled", False))})
+                continue
+            if task in CHAINABLE and task != "dungeon" and task not in seen:
+                out.append({"task": task, "enabled": bool(s.get("enabled", True))})
+                seen.add(task)
+        for task in CHAINABLE:
+            if task not in seen and task != "dungeon" and task not in removed:
+                out.append({"task": task, "enabled": True})
+                seen.add(task)
         return out
 
     def _task_display_name(self, name):
+        if not name:
+            return "空白任务"
         if name in _SUB_TASK_TITLES:
             return _SUB_TASK_TITLES[name]
         cls = get_task(name)
@@ -281,6 +277,8 @@ class DailyFlowPage(ctk.CTkFrame):
         if not step.get("enabled"):
             return False
         name = step.get("task")
+        if not name:
+            return False   # 空白占位不参与执行
         # 新页面不再有合并的「dungeon」行，只保留5个独立子任务，无需额外勾选判断
         return True
 
@@ -293,11 +291,12 @@ class DailyFlowPage(ctk.CTkFrame):
             w.destroy()
         self._rows = {}
         self._flat = []
-        for step in self._steps:
+        for i, step in enumerate(self._steps):
             name = step["task"]
-            rec = self._build_row("task", name, step)
-            self._rows[name] = rec
-            self._flat.append(("row", name))
+            uid = name if name else f"_blank{i}"   # 空白占位行用唯一 key
+            rec = self._build_row("task", uid, step)
+            self._rows[uid] = rec
+            self._flat.append(("row", uid))
         for key, label in FLOW_CONTROL_TASKS:
             enabled = self._flow_control_enabled(key)
             rec = self._build_row("flow", key, {"task": key, "enabled": enabled, "_label": label})
@@ -382,7 +381,7 @@ class DailyFlowPage(ctk.CTkFrame):
         title._txt_base = T.TEXT
         title.grid(row=0, column=0, padx=12, pady=4)
         chip.grid(row=0, column=0, sticky="w")
-        if kind == "task":
+        if kind == "task" and name:
             title.bind("<Button-1>", lambda e, nm=name: self._start_single(nm))
         title.bind("<Enter>",
                    lambda e, ch=chip, tl=title: (ch.configure(fg_color=T.ACCENT),
@@ -391,8 +390,11 @@ class DailyFlowPage(ctk.CTkFrame):
                    lambda e, ch=chip, tl=title:
                    (ch.configure(fg_color=getattr(tl, "_chip_base", T.BTN)),
                     tl.configure(text_color=getattr(tl, "_txt_base", T.TEXT))))
-        Tooltip(title, f"点任务名 = 单独跑这一个任务（一次性，不落盘）\n整条龙一起跑用「开始日常」",
-                self.fonts)
+        if kind == "task" and not name:
+            Tooltip(title, "空白占位：点「🔁 改」从支持的日常任务里选一个填进来。", self.fonts)
+        else:
+            Tooltip(title, f"点任务名 = 单独跑这一个任务（一次性，不落盘）\n整条龙一起跑用「开始日常」",
+                    self.fonts)
 
         st_text, st_color = self._ready_meta(name, step.get("enabled", True), kind)
         ready_lbl = ctk.CTkButton(mid, text="", font=self.fonts["small"], height=24,
@@ -400,18 +402,41 @@ class DailyFlowPage(ctk.CTkFrame):
         self._style_ready(ready_lbl, st_text, st_color)
         ready_lbl.grid(row=0, column=1, sticky="e", padx=(10, 0))
 
-        cfg_btn = ctk.CTkButton(row, text="⚙ 配置", font=self.fonts["small"], height=24,
-                                corner_radius=T.RADIUS_SM, border_width=0,
-                                fg_color=T.BTN, text_color=T.TEXT, cursor="hand2",
-                                command=lambda nm=name: self._open_task_config(nm))
-        cfg_btn.grid(row=0, column=3, rowspan=2, padx=(4, 6), pady=5)
-        Tooltip(cfg_btn, "打开该任务在「任务配置」页的配置卡（标定 / 参数）。", self.fonts)
+        if kind == "task" and not name:
+            cfg_btn = None   # 空白占位没有配置卡
+        else:
+            cfg_btn = ctk.CTkButton(row, text="⚙ 配置", font=self.fonts["small"], height=24,
+                                    corner_radius=T.RADIUS_SM, border_width=0,
+                                    fg_color=T.BTN, text_color=T.TEXT, cursor="hand2",
+                                    command=lambda nm=name: self._open_task_config(nm))
+            cfg_btn.grid(row=0, column=3, rowspan=2, padx=(4, 6), pady=5)
+            Tooltip(cfg_btn, "打开该任务在「任务配置」页的配置卡（标定 / 参数）。", self.fonts)
+
+        if kind == "task":
+            chg_btn = ctk.CTkButton(row, text="🔁 改", font=self.fonts["small"], height=24,
+                                    width=44, corner_radius=T.RADIUS_SM, border_width=0,
+                                    fg_color=T.BTN, text_color=T.TEXT, cursor="hand2",
+                                    command=lambda k=key: self._change_task(k))
+            chg_btn.grid(row=0, column=4, rowspan=2, padx=(4, 0), pady=5)
+            Tooltip(chg_btn, "从支持的日常任务里选一个，替换当前任务（空白占位也可用）。", self.fonts)
+            add_btn = ctk.CTkButton(row, text="＋", font=self.fonts["body_b"], height=24,
+                                    width=30, corner_radius=T.RADIUS_SM, border_width=0,
+                                    fg_color=T.BTN, text_color=T.TEXT, cursor="hand2",
+                                    command=lambda k=key: self._add_below(k))
+            add_btn.grid(row=0, column=5, rowspan=2, padx=(4, 0), pady=5)
+            Tooltip(add_btn, "在该任务下方插入一个空白占位，之后点「🔁 改」选定任务。", self.fonts)
+            del_btn = ctk.CTkButton(row, text="✕", font=self.fonts["body_b"], height=24,
+                                    width=30, corner_radius=T.RADIUS_SM, border_width=0,
+                                    fg_color=T.BTN, text_color=T.DANGER, cursor="hand2",
+                                    command=lambda k=key: self._remove_task(k))
+            del_btn.grid(row=0, column=6, rowspan=2, padx=(4, 0), pady=5)
+            Tooltip(del_btn, "把这个任务从流程中移除（引擎也不会再自动补回）。", self.fonts)
 
         var = ctk.BooleanVar(value=bool(step.get("enabled", True)))
         sw = ctk.CTkSwitch(row, text="", variable=var, width=44,
                            progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
                            command=lambda nm=key, v=var: self._toggle_step(nm, v, kind))
-        sw.grid(row=0, column=4, rowspan=2, padx=(8, 14), pady=5)
+        sw.grid(row=0, column=7, rowspan=2, padx=(8, 14), pady=5)
 
         return {"frame": row, "name": name, "badge": badge, "ready": ready_lbl,
                 "ready_text": st_text, "ready_color": st_color, "title": title,
@@ -421,6 +446,8 @@ class DailyFlowPage(ctk.CTkFrame):
         if kind == "flow":
             return ("开启" if enabled else "停用",
                     T.SUCCESS if enabled else T.TEXT_DIM)
+        if not name:
+            return "空白占位", T.TEXT_DIM
         if not enabled:
             return "未选中", T.TEXT_DIM
         if not self._task_status(name):
@@ -469,20 +496,19 @@ class DailyFlowPage(ctk.CTkFrame):
                                           text_color=T.TEXT_DIM)
     # ------------------------------------------------------------------ 启用切换 / 拖拽 / 保存
     def _toggle_step(self, key, var, kind):
+        rec = self._rows.get(key)
+        if rec is None:
+            return
         if kind == "task":
-            for s in self._steps:
-                if s["task"] == key:
-                    s["enabled"] = bool(var.get())
-                    break
+            rec["step"]["enabled"] = bool(var.get())
             self._save_steps()
         else:
             self._set_flow_control(key, bool(var.get()))
-        rec = self._rows.get(key)
-        if rec is not None:
-            st_text, st_color = self._ready_meta(rec["name"],
-                                                 bool(var.get()), kind)
-            rec["ready_text"], rec["ready_color"] = st_text, st_color
-            self._style_ready(rec["ready"], st_text, st_color)
+        st_text, st_color = self._ready_meta(rec["name"],
+                                             bool(var.get()), kind)
+        rec["ready_text"], rec["ready_color"] = st_text, st_color
+        self._style_ready(rec["ready"], st_text, st_color)
+        # 开关状态参与渲染签名：重渲染让编号/执行序列保持一致
         self._steps_sig = None
         self._render_steps()
 
@@ -491,6 +517,7 @@ class DailyFlowPage(ctk.CTkFrame):
         tc = cfg_mod.task_config(cfg, self.TASK_NAME)
         tc["steps"] = [{"task": s["task"], "enabled": bool(s["enabled"])}
                        for s in self._steps]
+        tc["removed_tasks"] = list(dict.fromkeys(self._removed))
         loopc = tc.setdefault("loop", {})
         try:
             loopc["time_limit_min"] = max(0.0, round(float(self.var_limit.get()), 1))
@@ -589,6 +616,13 @@ class DailyFlowPage(ctk.CTkFrame):
         if y is None:
             self._hide_drag_line()
             return
+        line = getattr(self, "_drag_line", None)
+        if line is not None:
+            try:
+                if not line.winfo_exists():
+                    self._drag_line = None
+            except Exception:
+                self._drag_line = None
         if getattr(self, "_drag_line", None) is None:
             try:
                 self._drag_line = tk.Frame(
@@ -652,11 +686,117 @@ class DailyFlowPage(ctk.CTkFrame):
             self._flat = flat_items
 
     def _sync_steps_from_flat(self):
-        """把 _flat 里 task 行的顺序写回 _steps（拖拽结束时调用）。"""
-        task_order = [key for kind, key in self._flat if kind == "task"]
-        new_steps = [s for s in self._steps if s["task"] in task_order]
-        new_steps.sort(key=lambda s: task_order.index(s["task"]))
-        self._steps = new_steps
+        """把 _flat 里 task 行的顺序写回 _steps（拖拽结束时调用）。
+        空白占位行以 _blank{i} 这个 uid 对应回 _steps 的位置。"""
+        steps_by_uid = {}
+        for i, s in enumerate(self._steps):
+            steps_by_uid[s["task"] if s["task"] else f"_blank{i}"] = s
+        order = [key for kind, key in self._flat if kind == "task"]
+        self._steps = [steps_by_uid[k] for k in order if k in steps_by_uid]
+
+    # ------------------------------------------------------------------ 行内任务按钮（改 / 加 / 移除）
+    def _change_task(self, key):
+        rec = self._rows.get(key)
+        if rec is None or rec["kind"] != "task":
+            return
+        step, old = rec["step"], rec["step"].get("task")
+        present = {s["task"] for s in self._steps}
+        choices = [t for t in CHAINABLE if t != "dungeon" and t not in present]
+        if not choices:
+            self._log_line("支持的日常任务都已在流程里，没有可更换的了。", "warn")
+            return
+        disp = [self._task_display_name(t) for t in choices]
+        win = ctk.CTkToplevel(self)
+        win.title("更改任务")
+        win.transient(self)
+        try:
+            win.attributes("-topmost", True)
+        except Exception:
+            pass
+        win.geometry(f"+{self.winfo_rootx() + 220}+{self.winfo_rooty() + 160}")
+        win.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(win, text=("为空白占位选择一个任务：" if not old
+                                else f"替换「{self._task_display_name(old)}」为："),
+                     font=self.fonts["h2"], text_color=T.TEXT).grid(
+            row=0, column=0, padx=18, pady=(16, 6), sticky="w")
+        var = ctk.StringVar(value=disp[0])
+        cmb = ctk.CTkComboBox(win, variable=var, values=disp, width=240,
+                              state="readonly", font=self.fonts["body"])
+        cmb.grid(row=1, column=0, padx=18, pady=4, sticky="ew")
+
+        def _confirm(_event=None):
+            val = var.get()
+            if val in disp:
+                win.destroy()
+                self._apply_change_task(step, old, choices[disp.index(val)])
+
+        cmb.bind("<Return>", _confirm)
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.grid(row=2, column=0, padx=18, pady=(8, 16), sticky="e")
+        ctk.CTkButton(btns, text="取消", font=self.fonts["body"], width=76, height=32,
+                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
+                      text_color=T.TEXT, command=win.destroy).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btns, text="确定", font=self.fonts["body"], width=76, height=32,
+                      corner_radius=T.RADIUS_SM, fg_color=T.ACCENT,
+                      hover_color=T.ACCENT_HOVER, text_color=T.ON_ACCENT,
+                      command=_confirm).pack(side="left")
+
+        def _grab():
+            try:
+                win.grab_set()
+                win.focus_set()
+            except Exception:
+                pass
+        win.after(60, _grab)
+
+    def _apply_change_task(self, step, old, new):
+        step["task"] = new
+        step["enabled"] = True
+        # 旧任务被换掉就标记为「已移除」：界面/引擎不会再把它当缺行补回
+        if old and old not in {s["task"] for s in self._steps if s is not step}:
+            if old not in self._removed:
+                self._removed.append(old)
+        if new in self._removed:
+            self._removed.remove(new)
+        self._save_steps()
+        self._steps_sig = None
+        self._render_steps()
+        self._refresh_add_task_combo()
+        self._log_line(f"已换成为「{self._task_display_name(new)}」。", "info")
+
+    def _add_below(self, key):
+        rec = self._rows.get(key)
+        if rec is None or rec["kind"] != "task":
+            return
+        step = rec["step"]
+        try:
+            idx = self._steps.index(step)
+        except ValueError:
+            idx = len(self._steps) - 1
+        self._steps.insert(idx + 1, {"task": "", "enabled": False})
+        self._save_steps()
+        self._steps_sig = None
+        self._render_steps()
+        self._refresh_add_task_combo()
+        self._log_line("已在下方插入空白占位：点该行的「🔁 改」选定任务。", "info")
+
+    def _remove_task(self, key):
+        rec = self._rows.get(key)
+        if rec is None or rec["kind"] != "task":
+            return
+        step = rec["step"]
+        name = step.get("task")
+        if name and name not in self._removed:
+            self._removed.append(name)
+        try:
+            self._steps.remove(step)
+        except ValueError:
+            pass
+        self._save_steps()
+        self._steps_sig = None
+        self._render_steps()
+        self._refresh_add_task_combo()
+        self._log_line(f"已把「{self._task_display_name(name)}」移出流程。", "info")
 
     # ------------------------------------------------------------------ 控制区回调
     def _toggle_auto_tuoying(self):

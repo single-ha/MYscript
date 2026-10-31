@@ -670,12 +670,15 @@ class DailyTask(Task):
         # 单跑：内存覆盖的 steps 就是「只跑这个任务」，**不做缺行补齐**——否则会把其它
         # CHAINABLE 任务全补回来、单跑变成跑整条链（_single_build_cfg 置的标记）。
         explicit_only = bool(tc.get("explicit_steps"))
+        # 「移除任务」标记：日常流程控制页明确移出的任务，存了也不跑、也不再当缺行补回
+        # （空白占位 task="" 本就不在 CHAINABLE，天然跳过）。
+        removed = set(tc.get("removed_tasks") or ())
         out, seen = [], set()
         for step in tc.get("steps", []):
             if not isinstance(step, dict):
                 continue
             name = step.get("task")
-            if name not in CHAINABLE:
+            if name not in CHAINABLE or name in removed:
                 continue
             seen.add(name)          # 存在即可（禁用的行也算「存过」，见下：不能被当成缺行补回来）
             if not dungeon_ok(name):
@@ -688,7 +691,8 @@ class DailyTask(Task):
         # 单跑（explicit_steps）时跳过补齐，保持「只跑指定的那一个」。
         if not explicit_only:
             for name in CHAINABLE:
-                if name not in seen and group_on(name) and dungeon_ok(name):
+                if name not in seen and name not in removed \
+                        and group_on(name) and dungeon_ok(name):
                     out.append(name)
         # 按区拼段（分段顺序与界面共用 tasks.daily.GROUPS），否则会「界面显示这步先跑、
         # 引擎却先跑另一步」——尤其是还没被界面保存过的旧 config（存的原序不一定是区序）。
