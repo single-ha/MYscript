@@ -356,13 +356,6 @@ class DailyFlowPage(ctk.CTkFrame):
         grip.bind("<B1-Motion>", self._drag_motion)
         grip.bind("<ButtonRelease-1>", self._drag_end)
 
-        # 整行可拖拽（除按钮/开关外）：在 row 和 mid 上绑定同一套拖拽事件，
-        # handler 内部会忽略来自按钮/开关的事件，保留它们原有的点击行为。
-        for _w in (row, mid):
-            _w.bind("<Button-1>", lambda e, r=row: self._drag_start(e, r))
-            _w.bind("<B1-Motion>", self._drag_motion)
-            _w.bind("<ButtonRelease-1>", self._drag_end)
-
         badge = ctk.CTkLabel(row, text="·", font=self.fonts["body_b"], width=26, height=26,
                              corner_radius=13, text_color=T.TEXT_DIM, fg_color=T.SURFACE)
         badge.grid(row=0, column=1, rowspan=2, padx=(2, 12), pady=5)
@@ -371,6 +364,13 @@ class DailyFlowPage(ctk.CTkFrame):
         mid.grid(row=0, column=2, rowspan=2, sticky="ew", pady=5)
         mid.grid_columnconfigure(0, weight=0)
         mid.grid_columnconfigure(1, weight=1)
+        # 整行可拖拽（除按钮/开关外）：在 row 和 mid 上绑定同一套拖拽事件，
+        # handler 内部会忽略来自按钮/开关的事件，保留它们原有的点击行为。
+        for _w in (row, mid):
+            _w.bind("<Button-1>", lambda e, r=row: self._drag_start(e, r))
+            _w.bind("<B1-Motion>", self._drag_motion)
+            _w.bind("<ButtonRelease-1>", self._drag_end)
+
         chip_fg = T.BTN
         chip = ctk.CTkFrame(mid, fg_color=chip_fg, corner_radius=T.RADIUS_SM)
         title = ctk.CTkLabel(chip, text=label, font=self.fonts["body_b"],
