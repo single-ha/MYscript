@@ -192,7 +192,7 @@ class DailyFlowPage(ctk.CTkFrame):
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(row=3, column=0, sticky="nsew", padx=4)
         body.grid_columnconfigure(0, weight=1)
-        body.grid_rowconfigure(1, weight=1)
+        body.grid_rowconfigure(0, weight=1)
 
         left = Card(body)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
@@ -356,6 +356,13 @@ class DailyFlowPage(ctk.CTkFrame):
         grip.bind("<B1-Motion>", self._drag_motion)
         grip.bind("<ButtonRelease-1>", self._drag_end)
 
+        # 整行可拖拽（除按钮/开关外）：在 row 和 mid 上绑定同一套拖拽事件，
+        # handler 内部会忽略来自按钮/开关的事件，保留它们原有的点击行为。
+        for _w in (row, mid):
+            _w.bind("<Button-1>", lambda e, r=row: self._drag_start(e, r))
+            _w.bind("<B1-Motion>", self._drag_motion)
+            _w.bind("<ButtonRelease-1>", self._drag_end)
+
         badge = ctk.CTkLabel(row, text="·", font=self.fonts["body_b"], width=26, height=26,
                              corner_radius=13, text_color=T.TEXT_DIM, fg_color=T.SURFACE)
         badge.grid(row=0, column=1, rowspan=2, padx=(2, 12), pady=5)
@@ -502,6 +509,11 @@ class DailyFlowPage(ctk.CTkFrame):
         self.app.cfg = cfg
 
     def _drag_start(self, event, frame):
+        # 点击按钮/开关/下拉框等交互控件时，不启动拖拽（保留它们原有行为）
+        src = event.widget
+        from customtkinter import CTkButton, CTkSwitch, CTkComboBox
+        if isinstance(src, (CTkButton, CTkSwitch, CTkComboBox)):
+            return
         for k, r in self._rows.items():
             if r["frame"] is frame:
                 self._drag = {"key": k}
