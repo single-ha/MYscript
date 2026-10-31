@@ -246,7 +246,9 @@ class DailyFlowPage(ctk.CTkFrame):
                 out.append({"task": "", "enabled": bool(s.get("enabled", False))})
                 continue
             if task in CHAINABLE and task != "dungeon" and task not in seen:
-                out.append({"task": task, "enabled": bool(s.get("enabled", True))})
+                # 任务卡没有开关了：在流程里=启用；旧 config 存的 enabled=False
+                # 一律视为 True，禁用改用「移除」表达。
+                out.append({"task": task, "enabled": True})
                 seen.add(task)
         for task in CHAINABLE:
             if task not in seen and task != "dungeon" and task not in removed:
@@ -429,18 +431,23 @@ class DailyFlowPage(ctk.CTkFrame):
                                     width=30, corner_radius=T.RADIUS_SM, border_width=0,
                                     fg_color=T.BTN, text_color=T.DANGER, cursor="hand2",
                                     command=lambda k=key: self._remove_task(k))
-            del_btn.grid(row=0, column=6, rowspan=2, padx=(4, 0), pady=5)
+            del_btn.grid(row=0, column=6, rowspan=2, padx=(4, 14), pady=5)
             Tooltip(del_btn, "把这个任务从流程中移除（引擎也不会再自动补回）。", self.fonts)
 
-        var = ctk.BooleanVar(value=bool(step.get("enabled", True)))
-        sw = ctk.CTkSwitch(row, text="", variable=var, width=44,
-                           progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
-                           command=lambda nm=key, v=var: self._toggle_step(nm, v, kind))
-        sw.grid(row=0, column=7, rowspan=2, padx=(8, 14), pady=5)
-
-        return {"frame": row, "name": name, "badge": badge, "ready": ready_lbl,
-                "ready_text": st_text, "ready_color": st_color, "title": title,
-                "chip": chip, "sw": sw, "kind": kind, "key": key, "step": step}
+        rec = {"frame": row, "name": name, "badge": badge, "ready": ready_lbl,
+               "ready_text": st_text, "ready_color": st_color, "title": title,
+               "chip": chip, "kind": kind, "key": key, "step": step}
+        if kind == "flow":
+            # 流程控制行保留开关：定时/关机等唯一启停入口
+            var = ctk.BooleanVar(value=bool(step.get("enabled", True)))
+            sw = ctk.CTkSwitch(row, text="", variable=var, width=44,
+                               progress_color=T.ACCENT, fg_color=T.BTN,
+                               button_color=T.ON_ACCENT,
+                               command=lambda nm=key, v=var: self._toggle_step(nm, v, kind))
+            sw.grid(row=0, column=7, rowspan=2, padx=(8, 14), pady=5)
+            rec["sw"] = sw
+        # 任务卡不再有开关：禁用=移除，启用=在流程里
+        return rec
 
     def _ready_meta(self, name, enabled, kind):
         if kind == "flow":
@@ -448,8 +455,6 @@ class DailyFlowPage(ctk.CTkFrame):
                     T.SUCCESS if enabled else T.TEXT_DIM)
         if not name:
             return "空白占位", T.TEXT_DIM
-        if not enabled:
-            return "未选中", T.TEXT_DIM
         if not self._task_status(name):
             return "⚠ 还需标定", T.WARN
         return "✓ 已就绪", T.SUCCESS
