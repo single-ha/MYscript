@@ -9,6 +9,8 @@
     关机固定在链结尾，其余按各自逻辑位置生效。
   · 整体时间上限、自动拓印保留在顶部固定设置（不参与拖拽）。
 配置与「日常」页读同一份 tasks.daily.steps / group_enabled / loop，两页数据互通。
+本页不放「开始日常」与「调整窗口」按钮（启动由旧「日常」页承担）；
+定时到点自动启动仍由 pump() 处理。
 """
 
 import copy
@@ -26,14 +28,17 @@ from ...tasks.daily import (
     DUNGEON_SUB_TASKS, get_selected_dungeon_titles,
 )
 from ...core.config import SINGLE_TASK_ORDER
-from ..common import Card, Tooltip, bind_wraplength
+from ..common import Card, Tooltip, bind_wraplength, required_regions, required_templates
 
 _SINGLE_ORDER = list(SINGLE_TASK_ORDER)
 
-_TASK_TITLES = {
-    "treasure_map": "宝图", "secret_realm": "秘境降妖", "appreciation": "趣味鉴赏",
-    "sanjie": "三界奇缘", "escort": "运镖", "guild_checkin": "帮派签到",
-    "activity_reward": "活跃度奖励", "guaguale": "刮刮乐", "zhuagui": "抓鬼",
+# 5个副本子任务对应的任务类名（用于显示标题）
+_SUB_TASK_TITLES = {
+    "dt_60_xiashi": "60级侠士副本",
+    "dt_70_xiashi": "70级侠士副本",
+    "dt_60_common1": "60级普通1",
+    "dt_60_common2": "60级普通2",
+    "dt_70_common": "710级普通",
 }
 
 FLOW_CONTROL_TASKS = [
@@ -64,13 +69,11 @@ class DailyFlowPage(ctk.CTkFrame):
         self._flat = []
         self._wait_until = None      # 定时延迟执行：晚于该时刻才真正启动
 
+        # 顶部固定设置变量
         self.var_limit = ctk.StringVar(value="0")
         self.var_shutdown = ctk.BooleanVar(value=False)
         self.var_schedule_on = ctk.BooleanVar(value=False)
         self.var_schedule_time = ctk.StringVar(value="10:00")
-        self.var_disband = ctk.BooleanVar(value=False)
-        self.var_skip_team = ctk.BooleanVar(value=False)
-        self.switch_auto_organize = None
         self.switch_auto_tuoying = None
 
         self.grid_columnconfigure(0, weight=1)
@@ -78,6 +81,7 @@ class DailyFlowPage(ctk.CTkFrame):
 
         self._build_header()
         self._build_control()
+        self._build_add_task()
         self._build_body()
         self.refresh()
     # ------------------------------------------------------------------ 头部
@@ -93,7 +97,7 @@ class DailyFlowPage(ctk.CTkFrame):
                        "整理/已组队）可独立启停，定时固定在链开头、关机固定在链结尾。",
                 self.fonts)
 
-    # ------------------------------------------------------------------ 控制区
+    # ------------------------------------------------------------------ 控制区（不放“开始日常”“调整窗口”）
     def _build_control(self):
         card = Card(self)
         card.grid(row=1, column=0, sticky="ew", padx=4, pady=(0, 14))
@@ -102,21 +106,13 @@ class DailyFlowPage(ctk.CTkFrame):
         top = ctk.CTkFrame(card, fg_color="transparent")
         top.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 10))
         top.grid_columnconfigure(1, weight=1)
-        self.btn_run = ctk.CTkButton(top, text=self.RUN_LABEL, font=self.fonts["btn"],
-                                     height=46, width=200, corner_radius=T.RADIUS_SM,
-                                     fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
-                                     text_color=T.ON_ACCENT, command=self._toggle_run)
-        self.btn_run.grid(row=0, column=0, sticky="w")
+        # 仅保留「刷新配置」工具按钮
         tools = ctk.CTkFrame(top, fg_color="transparent")
         tools.grid(row=0, column=2, sticky="e")
-        ctk.CTkButton(tools, text="调整窗口", font=self.fonts["body"], height=36, width=104,
-                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
-                      text_color=T.TEXT, border_width=1, border_color=T.BORDER,
-                      command=self._adjust_windows).pack(side="left")
         ctk.CTkButton(tools, text="刷新配置", font=self.fonts["body"], height=36, width=104,
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
                       text_color=T.TEXT, border_width=1, border_color=T.BORDER,
-                      command=self.refresh).pack(side="left", padx=(8, 0))
+                      command=self.refresh).pack(side="left")
 
         ctk.CTkFrame(card, fg_color=T.BORDER, height=1).grid(
             row=1, column=0, sticky="ew", padx=16, pady=(0, 4))
@@ -126,6 +122,7 @@ class DailyFlowPage(ctk.CTkFrame):
         opts.grid_columnconfigure(0, weight=1)
         opts.grid_columnconfigure(1, weight=1)
 
+        # 整体时间上限（保留，固定不参与拖拽）
         lim = ctk.CTkFrame(opts, fg_color="transparent")
         lim.grid(row=0, column=0, sticky="w", padx=(0, 26), pady=(10, 0))
         ctk.CTkLabel(lim, text="整体时间上限(分钟，0=不限)", font=self.fonts["body"],
@@ -135,6 +132,7 @@ class DailyFlowPage(ctk.CTkFrame):
                                     border_color=T.BORDER)
         self.lim_ent.pack(side="left", padx=(8, 0))
 
+        # 自动拓印（保留，固定不参与拖拽）
         tuo = ctk.CTkFrame(opts, fg_color="transparent")
         tuo.grid(row=0, column=1, sticky="e", pady=(10, 0))
         tuo_lbl = ctk.CTkLabel(tuo, text="自动拓印（关闭后遇拓印弹窗转手动）",
@@ -144,10 +142,55 @@ class DailyFlowPage(ctk.CTkFrame):
             tuo, text="", width=44, progress_color=T.ACCENT, fg_color=T.BTN,
             button_color=T.ON_ACCENT, command=self._toggle_auto_tuoying)
         self.switch_auto_tuoying.pack(side="left", padx=(8, 0))
+
+    # ------------------------------------------------------------------ 添加任务入口
+    def _build_add_task(self):
+        card = Card(self)
+        card.grid(row=2, column=0, sticky="ew", padx=4, pady=(0, 10))
+        card.grid_columnconfigure(1, weight=1)
+
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.grid(row=0, column=0, sticky="ew", padx=16, pady=10)
+        row.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(row, text="添加任务到流程：", font=self.fonts["body"],
+                     text_color=T.TEXT).pack(side="left", padx=(0, 8))
+
+        self.var_add_task = ctk.StringVar(value="")
+        self.cmb_add_task = ctk.CTkComboBox(row, variable=self.var_add_task,
+                                            values=[], width=200, font=self.fonts["body"],
+                                            state="readonly")
+        self.cmb_add_task.pack(side="left", padx=(0, 8))
+        self._refresh_add_task_combo()
+
+        ctk.CTkButton(row, text="添加", font=self.fonts["body"], height=34, width=70,
+                      corner_radius=T.RADIUS_SM, fg_color=T.ACCENT,
+                      hover_color=T.ACCENT_HOVER, text_color=T.ON_ACCENT,
+                      command=self._do_add_task).pack(side="left")
+
+    def _refresh_add_task_combo(self):
+        """下拉框列出 CHAINABLE 中尚未加入流程的任务（排除 dungeon，已被5子任务替代）。"""
+        present = {s["task"] for s in self._steps}
+        opts = [t for t in CHAINABLE if t not in present and t != "dungeon"]
+        self.cmb_add_task.configure(values=opts)
+        if opts:
+            self.var_add_task.set(opts[0])
+        else:
+            self.var_add_task.set("")
+
+    def _do_add_task(self):
+        name = self.var_add_task.get()
+        if not name or name in {s["task"] for s in self._steps}:
+            return
+        self._steps.append({"task": name, "enabled": True})
+        self._save_steps()
+        self._steps_sig = None
+        self._render_steps()
+        self._refresh_add_task_combo()
     # ------------------------------------------------------------------ 主体
     def _build_body(self):
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.grid(row=2, column=0, sticky="nsew", padx=4)
+        body.grid(row=3, column=0, sticky="nsew", padx=4)
         body.grid_columnconfigure(0, weight=1)
         body.grid_rowconfigure(1, weight=1)
 
@@ -186,22 +229,13 @@ class DailyFlowPage(ctk.CTkFrame):
         self.var_schedule_on.set(bool(sched))
         if sched and ":" in sched:
             self.var_schedule_time.set(sched)
-        self.var_disband.set(bool(cfg_mod.task_config(self.app.cfg, "teaming")
-                                  .get("auto_disband", False)))
-        self.var_skip_team.set(bool(cfg_mod.task_config(self.app.cfg, "teaming")
-                                    .get("skip_team", False)))
-        ob = cfg_mod.task_config(self.app.cfg, "organize_bag")
-        tuo_tc = cfg_mod.task_config(self.app.cfg, "tuoying")
         self._render_steps()
-        self._sync_controls(ob, tuo_tc)
+        self._sync_controls()
+        self._refresh_add_task_combo()
 
-    def _sync_controls(self, ob, tuo_tc):
-        if self.switch_auto_organize is not None:
-            if ob.get("auto_organize"):
-                self.switch_auto_organize.select()
-            else:
-                self.switch_auto_organize.deselect()
+    def _sync_controls(self):
         if self.switch_auto_tuoying is not None:
+            tuo_tc = cfg_mod.task_config(self.app.cfg, "tuoying")
             if tuo_tc.get("enabled", True):
                 self.switch_auto_tuoying.select()
             else:
@@ -209,23 +243,23 @@ class DailyFlowPage(ctk.CTkFrame):
 
     @staticmethod
     def _normalize(stored):
+        """把存储的 steps 规整：只保留 CHAINABLE 里的任务，去重，排除 dungeon
+       （已被5个副本子任务彻底替代），未在存储里的新任务补到末尾（默认启用）。"""
         out, seen = [], set()
         for s in stored or []:
-            if isinstance(s, dict) and s.get("task") in CHAINABLE and s["task"] not in seen:
+            if isinstance(s, dict) and s.get("task") in CHAINABLE and s["task"] not in seen \
+                    and s["task"] != "dungeon":
                 out.append({"task": s["task"], "enabled": bool(s.get("enabled", True))})
                 seen.add(s["task"])
         for t in CHAINABLE:
-            if t not in seen:
+            if t not in seen and t != "dungeon":
                 out.append({"task": t, "enabled": True})
                 seen.add(t)
         return out
 
     def _task_display_name(self, name):
-        if name == "dungeon":
-            titles = get_selected_dungeon_titles(self.app.cfg)
-            if titles:
-                return " -> ".join(titles)
-            return "刷副本（未勾选）"
+        if name in _SUB_TASK_TITLES:
+            return _SUB_TASK_TITLES[name]
         cls = get_task(name)
         return cls.title if cls else name
 
@@ -235,8 +269,8 @@ class DailyFlowPage(ctk.CTkFrame):
 
     def _calib_done(self, name, sub):
         spec = getattr(get_task(name), "CALIBRATION", None) or {}
-        need_r = [k for k in spec.get("regions", []) if k]
-        need_t = [k for k in spec.get("templates", []) if k]
+        need_r = required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get(name, ()))
+        need_t = required_templates(spec) + list(cfg_mod.TASK_SHARED_TPL_REQ.get(name, ()))
         regions, templates = sub.get("regions", {}), sub.get("templates", {})
         return all(regions.get(k) for k in need_r) and all(templates.get(k) for k in need_t)
 
@@ -244,9 +278,9 @@ class DailyFlowPage(ctk.CTkFrame):
         if not step.get("enabled"):
             return False
         name = step.get("task")
-        if name == "dungeon" and not get_selected_dungeon_titles(self.app.cfg):
-            return False
+        # 新页面不再有合并的「dungeon」行，只保留5个独立子任务，无需额外勾选判断
         return True
+
     def _render_steps(self):
         sig = self._steps_signature()
         if getattr(self, "_steps_sig", None) == sig:
@@ -379,8 +413,6 @@ class DailyFlowPage(ctk.CTkFrame):
                     T.SUCCESS if enabled else T.TEXT_DIM)
         if not enabled:
             return "未选中", T.TEXT_DIM
-        if name == "dungeon" and not get_selected_dungeon_titles(self.app.cfg):
-            return "未勾选副本", T.WARN
         if not self._task_status(name):
             return "⚠ 还需标定", T.WARN
         return "✓ 已就绪", T.SUCCESS
@@ -389,6 +421,7 @@ class DailyFlowPage(ctk.CTkFrame):
         btn.configure(text=text, text_color=color, fg_color="transparent",
                       hover_color=T.SURFACE_2, border_width=0, cursor="arrow",
                       command=None)
+
     def _grid_all(self):
         for pos, entry in enumerate(self._flat):
             kind, key = entry
@@ -424,7 +457,7 @@ class DailyFlowPage(ctk.CTkFrame):
         else:
             self.lbl_exec_order.configure(text="（无，开始日常只会空转）",
                                           text_color=T.TEXT_DIM)
-
+    # ------------------------------------------------------------------ 启用切换 / 拖拽 / 保存
     def _toggle_step(self, key, var, kind):
         if kind == "task":
             for s in self._steps:
@@ -480,21 +513,22 @@ class DailyFlowPage(ctk.CTkFrame):
         if not self._drag:
             return
         tgt = self._target_at_pointer()
-        if tgt is None:
+        if tgt is None or tgt == self._drag["key"]:
             return
-        if tgt == self._drag["key"]:
-            return
-        self._reorder(self._drag["key"], tgt)
+        # 拖拽过程中只调整显示顺序（不改 _steps 数据、不存盘），避免连续写盘导致闪烁
+        self._reorder_flat(self._drag["key"], tgt)
+        self._grid_all()
         self._drag["key"] = tgt
 
     def _drag_end(self, event):
         if not self._drag:
             return
         self._rows[self._drag["key"]]["frame"].configure(fg_color=T.SURFACE_2)
-        self._drag = None
+        # 把拖拽过程累积的 _flat 顺序同步回 _steps 数据，并一次性存盘
+        self._sync_steps_from_flat()
         self._save_steps()
-        self._steps_sig = None
-        self._render_steps()
+        self._drag = None
+        self._grid_all()
 
     def _target_at_pointer(self):
         py = self.list_frame.winfo_pointery()
@@ -507,22 +541,23 @@ class DailyFlowPage(ctk.CTkFrame):
                 return key
         return None
 
-    def _reorder(self, frm_key, to_key):
-        task_items = [s for s in self._steps]
-        frm_idx = next((i for i, s in enumerate(task_items) if s["task"] == frm_key), None)
-        to_idx = next((i for i, s in enumerate(task_items) if s["task"] == to_key), None)
+    def _reorder_flat(self, frm_key, to_key):
+        """只调整 _flat 的显示顺序（拖拽过程中用），不碰 _steps、不存盘。"""
+        flat_items = [e for e in self._flat]
+        frm_idx = next((i for i, e in enumerate(flat_items) if e[1] == frm_key), None)
+        to_idx = next((i for i, e in enumerate(flat_items) if e[1] == to_key), None)
         if frm_idx is not None and to_idx is not None:
-            task_items.insert(to_idx, task_items.pop(frm_idx))
-            self._steps = task_items
-        self._save_steps()
-        self._grid_all()
-    def _adjust_windows(self):
-        from ...core import window as win_mod
-        cfg = cfg_mod.load_config()
-        self.app.cfg = cfg
-        win_mod.arrange_windows(cfg, self.app)
-        self.refresh()
+            flat_items.insert(to_idx, flat_items.pop(frm_idx))
+            self._flat = flat_items
 
+    def _sync_steps_from_flat(self):
+        """把 _flat 里 task 行的顺序写回 _steps（拖拽结束时调用）。"""
+        task_order = [key for kind, key in self._flat if kind == "task"]
+        new_steps = [s for s in self._steps if s["task"] in task_order]
+        new_steps.sort(key=lambda s: task_order.index(s["task"]))
+        self._steps = new_steps
+
+    # ------------------------------------------------------------------ 控制区回调
     def _toggle_auto_tuoying(self):
         on = bool(self.switch_auto_tuoying.get())
         cfg = cfg_mod.load_config()
@@ -534,34 +569,38 @@ class DailyFlowPage(ctk.CTkFrame):
                         else "已关闭「自动拓印」：遇拓印弹窗不再自动描摹。"),
                        "warn" if not on else "info")
 
-    def _toggle_auto_organize(self, on):
-        self._set_flow_control("organize", on)
+    # ------------------------------------------------------------------ 运行控制（不绑按钮，供 pump 定时自动启动使用）
+    def _start_runner(self):
+        task_cls = get_task(self.TASK_NAME)
+        self.runner = TaskRunner(task_cls(), self.app.cfg)
+        ok, problems = self.runner.start()
+        if not ok:
+            for p in problems:
+                self._log_line("无法启动：" + p, "error")
+            self.runner = None
+            return
+        # 无「开始日常」按钮，运行状态由全局侧栏药丸展示
 
-    def _toggle_run(self, save=True):
-        if self.runner and self.runner.is_running():
-            self.runner.stop()
-            self._log_line("正在停止…", "warn")
-            self.btn_run.configure(text="停止中…", state="disabled")
-            return
-        if self._wait_until is not None:
-            self._wait_until = None
-            self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
-                                   hover_color=T.ACCENT_HOVER, state="normal")
-            self._log_line("已取消定时等待，本次不执行。", "warn")
-            return
-        if save:
-            self._save_steps()
-        self.app.cfg = cfg_mod.load_config()
-        tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
-        sched = (tc.get("loop", {}) or {}).get("schedule", "") or ""
-        target = self._sched_wait_target(sched, datetime.now())
-        if target is not None:
-            self._wait_until = target
-            self.btn_run.configure(text=f"等待到 {target:%m-%d %H:%M}…（再点取消）",
-                                   fg_color=T.WARN, hover_color=T.WARN_HOVER, state="normal")
-            self._log_line(f"已设定时延迟执行：将等到 {target:%Y-%m-%d %H:%M} 才开始（再点一次按钮可取消）。", "warn")
-            return
-        self._start_runner()
+    def _log_line(self, msg, level="info"):
+        if hasattr(self.app, "log_line"):
+            self.app.log_line(msg, level, getattr(self, "LOG_SOURCE", None))
+        else:
+            print(f"[{level}] {msg}")
+
+    def _on_runner_finished(self):
+        self.runner = None
+
+    def pump(self):
+        if self.runner:
+            for level, msg, src in self.runner.drain_logs():
+                self.app.log_line(msg, level, getattr(self, "LOG_SOURCE", None))
+            if not self.runner.is_running():
+                self._on_runner_finished()
+        elif self._wait_until is not None:
+            if datetime.now() >= self._wait_until:
+                self._wait_until = None
+                self._log_line("⏰ 定时时刻到，开始日常…", "warn")
+                self._start_runner()
 
     @staticmethod
     def _sched_wait_target(sched, now):
@@ -579,46 +618,10 @@ class DailyFlowPage(ctk.CTkFrame):
             target += timedelta(days=1)
         return target
 
-    def _start_runner(self):
-        task_cls = get_task(self.TASK_NAME)
-        self.runner = TaskRunner(task_cls(), self.app.cfg)
-        ok, problems = self.runner.start()
-        if not ok:
-            for p in problems:
-                self._log_line("无法启动：" + p, "error")
-            self.runner = None
-            self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
-                                   hover_color=T.ACCENT_HOVER, state="normal")
-            return
-        self.btn_run.configure(text="■  停止", fg_color=T.DANGER, hover_color=T.DANGER_HOVER,
-                               state="normal")
-
-    def _log_line(self, msg, level="info"):
-        if hasattr(self.app, "log_line"):
-            self.app.log_line(msg, level, getattr(self, "LOG_SOURCE", None))
-        else:
-            print(f"[{level}] {msg}")
-
-    def _on_runner_finished(self):
-        self.runner = None
-        self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
-                               hover_color=T.ACCENT_HOVER, state="normal")
-
-    def pump(self):
-        if self.runner:
-            for level, msg, src in self.runner.drain_logs():
-                self.app.log_line(msg, level, getattr(self, "LOG_SOURCE", None))
-            if not self.runner.is_running() and self.btn_run.cget("text") != self.RUN_LABEL:
-                self._on_runner_finished()
-        elif self._wait_until is not None:
-            if datetime.now() >= self._wait_until:
-                self._wait_until = None
-                self._log_line("⏰ 定时时刻到，开始日常…", "warn")
-                self._start_runner()
-
+    # ------------------------------------------------------------------ 单跑
     def _start_single(self, name):
         if self.runner and self.runner.is_running():
-            self._log_line("整条日常正在跑，请先「停止」再单跑。", "warn")
+            self._log_line("整条日常正在跑，请先在「日常」页停止再单跑。", "warn")
             return
         if not self._task_status(name):
             self._log_line(f"「{name}」还需标定，单跑未启动。", "warn")
@@ -641,8 +644,6 @@ class DailyFlowPage(ctk.CTkFrame):
                 self._log_line("无法启动单跑：" + p, "error")
             return
         self.runner = runner
-        self.btn_run.configure(text="■  停止", fg_color=T.DANGER,
-                               hover_color=T.DANGER_HOVER, state="normal")
 
     def _open_task_config(self, name):
         cp = self.app.pages.get("config")
