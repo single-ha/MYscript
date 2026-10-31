@@ -8,6 +8,7 @@ from .mall import MallPage
 from .weekly import WeeklyPage
 from .settings import SettingsPage
 from .daily import DailyPage
+from .daily_flow import DailyFlowPage
 from .start import StartPage
 from .organize_bag import OrganizeBagPage
 from .tuoying import TuoyingPage
@@ -29,7 +30,7 @@ from .zhuagui import ZhuaguiConfig
 
 __all__ = [
     "CategoryPage", "ConfigPage", "ToolsPage", "MallPage", "WeeklyPage",
-    "SettingsPage", "DailyPage", "StartPage",
+    "SettingsPage", "DailyPage", "DailyFlowPage", "StartPage",
     "OrganizeBagPage", "TuoyingPage", "SectGatePage", "UnderwaterPage", "MazeTowerPage",
     "TreasureMapConfig", "SecretRealmConfig", "AppreciationConfig", "SanjieConfig",
     "EscortConfig", "GuildCheckinConfig", "ActivityRewardConfig", "DungeonConfig",

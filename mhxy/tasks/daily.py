@@ -54,7 +54,9 @@ from ..ui import ui_state
 CHAINABLE_SINGLE = list(SINGLE_TASK_ORDER)
 # 多人组：跨窗口协作，作为「集体屏障」——各号走到该步停靠，汇合齐才集体跑一次。
 # "dungeon" 是「刷副本」中枢步：跑时解析成 tasks.dungeon.selected 选中的那个副本（见 _resolve）。
-MULTI_BARRIER = ["dungeon", "zhuagui"]
+# 5个副本子任务（60侠士/70侠士/60普通1/60普通2/710普通）也都算多人任务，各自只刷该本。
+DUNGEON_SUB_TASKS = ["dt_60_xiashi", "dt_70_xiashi", "dt_60_common1", "dt_60_common2", "dt_70_common"]
+MULTI_BARRIER = ["dungeon", "zhuagui"] + DUNGEON_SUB_TASKS
 CHAINABLE = CHAINABLE_SINGLE + MULTI_BARRIER
 GROUP_OF = {n: "single" for n in CHAINABLE_SINGLE}
 GROUP_OF.update({n: "multi" for n in MULTI_BARRIER})
@@ -421,6 +423,9 @@ class DailyTask(Task):
         if step_name == "dungeon":
             self._run_collective_dungeons(ctx)
             return
+        if step_name in DUNGEON_SUB_TASKS:
+            self._run_collective_single_dungeon(ctx, step_name)
+            return
         self.current_log_source = step_name   # 集体步日志来源标签=该多人任务
         title = self._title_of(step_name, ctx)
         eff_name, task_cls = self._resolve(step_name, ctx)
@@ -441,6 +446,36 @@ class DailyTask(Task):
             return
         if not ctx.should_stop():
             ctx.log(f"───── 「{title}」完成 ─────", level="hit")
+
+    def _run_collective_single_dungeon(self, ctx, dname):
+        """集体跑单个副本子任务（如 60侠士/70侠士/60普通1/60普通2/710普通）。
+        只刷该本，进本「进入」序号按该副本在标签区展示顺序里的位置点。
+        是否组队由流程中「已组队」开关决定（见 _collective_run / skip_team）。"""
+        self.current_log_source = dname
+        cls = get_task(dname)
+        if cls is None:
+            ctx.log(f"副本「{dname}」未收录，跳过。", level="warn")
+            return
+        task = cls()
+        ok, probs = task.preflight(ctx)
+        if not ok:
+            title = cls.title
+            ctx.log(f"跳过副本「{title}」（未就绪）：" + "；".join(probs), level="warn")
+            return
+        title = cls.title
+        ctx.log(f"───── 所有号已汇合，集体刷副本「{title}」({self._team_head(ctx)}) ─────", level="hit")
+        et = enter_target_for(dname)
+        if et:
+            (ctx.cfg.setdefault("tasks", {}).setdefault(DUNGEON_NS, {}))["enter_target"] = et
+        try:
+            self._any_real_run = True
+            self._collective_run(ctx, task)
+        except Exception as e:
+            ctx.log(f"「{title}」运行异常：{e}，继续后续任务。", level="error")
+            return
+        if not ctx.should_stop():
+            ctx.log(f"───── 「{title}」完成 ─────", level="hit")
+
 
     def _run_collective_dungeons(self, ctx):
         """「刷副本」集体步：把勾选中的副本**按展示顺序**（侠士本在前、类内等级低→高，

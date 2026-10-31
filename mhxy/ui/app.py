@@ -20,7 +20,7 @@ from ..core.input import get_cursor
 from .common import (DEFAULT_STOP_HOTKEY, DEFAULT_FAILSAFE, FAILSAFE_CORNERS,
                      _in_failsafe_corner, _parse_stop_hotkey, _vk_down)
 from .pages import (StartPage, DailyPage, WeeklyPage, ConfigPage, ToolsPage,
-                    SettingsPage)
+                    SettingsPage, DailyFlowPage)
 
 
 # 日志级别 -> 中文简称（筛选开关上显示；与 theme.LEVEL_COLOR 的键一致）
@@ -75,6 +75,7 @@ def prune_log_files(logs_dir, keep):
 class App(ctk.CTk):
     NAV = [("start", "🏠  起始"),
             ("daily", "🐉  日常"),
+            ("flow", "🔧  日常流程控制"),
             ("weekly", "🗓  周常"),       # 内嵌 门派闯关/海底世界/迷魂塔（多人·自动组队·队长跑循环）
             ("config", "🎛  任务配置"),   # 内嵌 单人/多人任务的全局参数+标定（运行唯一入口在「日常」）
             ("tools", "🧰  工具"),        # 内嵌 商城(抢关注)/整理背包/拓印/窗口归一化
@@ -541,6 +542,7 @@ class App(ctk.CTk):
     PAGE_CLASSES = {
         "start": StartPage,
         "daily": DailyPage,
+        "flow": DailyFlowPage,
         "weekly": WeeklyPage,
         "config": ConfigPage,
         "tools": ToolsPage,
