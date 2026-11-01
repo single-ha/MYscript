@@ -54,9 +54,35 @@ from ..ui import ui_state
 CHAINABLE_SINGLE = list(SINGLE_TASK_ORDER)
 # 多人组：跨窗口协作，作为「集体屏障」——各号走到该步停靠，汇合齐才集体跑一次。
 # "dungeon" 是「刷副本」中枢步：跑时解析成 tasks.dungeon.selected 选中的那个副本（见 _resolve）。
-# 5个副本子任务（60侠士/70侠士/60普通1/60普通2/710普通）也都算多人任务，各自只刷该本。
+# 5个副本子任务（60侠士/70侠士/60普通1/60普通2/70普通）也都算多人任务，各自只刷该本。
 DUNGEON_SUB_TASKS = ["dt_60_xiashi", "dt_70_xiashi", "dt_60_common1", "dt_60_common2", "dt_70_common"]
 MULTI_BARRIER = ["dungeon", "zhuagui"] + DUNGEON_SUB_TASKS
+# 流程控制类「集体动作」伪步骤：日常流程控制页把它们当作可拖拽的执行步骤放在链里，
+# 各号走到即汇合、用主 ctx 集体执行一次。它们不属 CHAINABLE（不参与缺行补齐/区组），
+# 位置完全由 steps 存储顺序决定。team_form=一键组队，team_disband=一键解散。
+TEAM_FORM_STEP = "team_form"
+TEAM_DISBAND_STEP = "team_disband"
+TEAM_STEPS = [TEAM_FORM_STEP, TEAM_DISBAND_STEP]
+TEAM_STEP_TITLES = {TEAM_FORM_STEP: "组队", TEAM_DISBAND_STEP: "解散队伍"}
+
+# 「整理背包」也是 steps 里的一个可拖拽、可重复的伪步骤（user 2026-11-01 拍板）：
+# 引擎走到该步才在【每个号】上就地整理一次（不汇合、不做集体屏障）；整条流程里可放多个。
+# 与自动整理旧开关 tasks.organize_bag.auto_organize 的关系：steps 里出现本步=「按位置执行」，
+# 不再在任务交接点自动触发；旧 config（steps 里没有本步）仍由交接点自动整理，行为零回归。
+ORGANIZE_STEP = "organize"
+ORGANIZE_STEP_TITLE = "自动整理背包"
+# 整条链里允许重复出现的伪步骤（组队/解散/整理）：去重、缺行补齐都不作用于它们。
+REPEATABLE_STEPS = TEAM_STEPS + [ORGANIZE_STEP]
+# 任何一个这类伪步骤出现，就视为「新结构链」：严格按存储绝对顺序执行、不按区重排。
+STRUCTURE_STEPS = TEAM_STEPS + [ORGANIZE_STEP]
+
+# 「日常流程控制」弹窗保存链时打的显式标记（tasks.daily.flow_ordered=True，user 2026-11-01）：
+# 用户的诉求是「引擎严格按 UI 上设置的流程顺序执行」，故只要这条链是弹窗存过的，**哪怕里面
+# 一个伪步骤都没有（纯普通任务）**，引擎也按 steps 存储绝对顺序跑，绝不再按多人/单人分区重排。
+# 没经弹窗保存过的旧 config 没有此标记，维持「多人组在前」的按区拼段（行为零回归）。
+FLOW_ORDERED_KEY = "flow_ordered"
+
+COLLECTIVE_BARRIER = MULTI_BARRIER + TEAM_STEPS
 CHAINABLE = CHAINABLE_SINGLE + MULTI_BARRIER
 GROUP_OF = {n: "single" for n in CHAINABLE_SINGLE}
 GROUP_OF.update({n: "multi" for n in MULTI_BARRIER})
@@ -146,10 +172,10 @@ class DailyTask(Task):
         titles = " → ".join(self._title_of(n, ctx) for n in steps)
         mode = f"多开 {len(wctxs)} 个号·每窗口独立任务链轮转" if multi else "单号"
         ctx.log(f"★ 日常启动（{mode}）：{titles} ★", level="warn")
-        barriers = [n for n in steps if n in MULTI_BARRIER]
+        barriers = [n for n in steps if n in COLLECTIVE_BARRIER]
         if barriers:
-            ctx.log("多人步=集体屏障：" + "、".join(self._title_of(n, ctx) for n in barriers)
-                    + " —— 各号走到它就汇合等待，组队后由队长统一跑，跑完一起放行。")
+            ctx.log("集体步=汇合屏障：" + "、".join(self._title_of(n, ctx) for n in barriers)
+                    + " —— 各号走到它就汇合等待，组队/多人任务/解散由主流程集体执行后一起放行。")
         if multi:
             ctx.log("各号独立推进单人任务链，谁先跑完谁先进下一个，互不等待。")
         seq_steps = [n for n in steps if getattr(get_task(n), "CHAIN_SEQUENTIAL", False)]
@@ -172,16 +198,24 @@ class DailyTask(Task):
             # —— 集体屏障：未完成的号是否都停靠在同一个多人步？都到齐就集体跑一次、放行 ——
             parked = [c for c in alive if self._at_barrier(c, steps)]
             if parked and len(parked) == len(alive):
-                self._run_collective(ctx, steps[parked[0]["idx"]])
-                # —— 多人组最后一个多人步跑完 → 其后若接单人任务：必须先解散（单人步=每窗口独立链，
-                # 残留队伍会干扰视角/点名，强制解散、无视开关）；整条链到此为止（无后续步骤）时，
-                # 才按「跑完多人任务后解散队伍」开关决定是否收尾解散。
-                rest = steps[parked[0]["idx"] + 1:]
-                if rest:
-                    if not any(s in MULTI_BARRIER for s in rest):
-                        self._disband_after_multi(ctx, wctxs, has_single=True)
-                elif bool(ctx.task_cfg("teaming").get("auto_disband", False)):
-                    self._disband_after_multi(ctx, wctxs, has_single=False)
+                cur = steps[parked[0]["idx"]]
+                if cur in TEAM_STEPS:
+                    self._run_team_step(ctx, cur)
+                else:
+                    self._run_collective(ctx, cur)
+                    # —— 多人组最后一个多人步跑完 → 其后若接单人任务：必须先解散（单人步=每窗口
+                    # 独立链，残留队伍会干扰视角/点名，强制解散、无视开关）；但链中若已显式放了
+                    # 「解散队伍」步骤（在单人步之前），就交给该步骤、这里不再自动解散，避免重复。
+                    # 整条链到此为止（无后续步骤）时，才按旧 auto_disband 开关决定是否收尾解散
+                    # （兼容旧日常页；同样尊重显式解散步骤，避免解散两次）。
+                    rest = steps[parked[0]["idx"] + 1:]
+                    explicit_disband = TEAM_DISBAND_STEP in rest
+                    if rest:
+                        if (not any(s in MULTI_BARRIER for s in rest)
+                                and not explicit_disband):
+                            self._disband_after_multi(ctx, wctxs, has_single=True)
+                    elif bool(ctx.task_cfg("teaming").get("auto_disband", False))                             and not explicit_disband:
+                        self._disband_after_multi(ctx, wctxs, has_single=False)
                 for c in parked:
                     self._advance(c, steps)
                 continue
@@ -262,7 +296,7 @@ class DailyTask(Task):
     def _at_barrier(c, steps):
         """该窗口当前停靠在「多人步」集体屏障上（未完成、未在跑子任务、当前步是多人组任务）。"""
         return (not c["done"] and c["sub_step"] is None
-                and c["idx"] < len(steps) and steps[c["idx"]] in MULTI_BARRIER)
+                and c["idx"] < len(steps) and steps[c["idx"]] in COLLECTIVE_BARRIER)
 
     def _current_seq_chain(self, ctx, c, steps):
         """该窗口「当前所在步」是否是顺序执行任务（CHAIN_SEQUENTIAL，三界奇缘/趣味鉴赏）。
@@ -287,6 +321,9 @@ class DailyTask(Task):
         """任务间清扫（user 2026-10-08 拍板：自动整理背包只在「各任务之间」触发，单个任务
         执行中绝不触发）：上一个任务刚完成/被跳过、马上要开下一个任务时，自动整理一次背包。
 
+        仅旧结构链（steps 里没有显式「整理背包」步）走这里；新结构链改为在链中走到
+        ORGANIZE_STEP 时按位置执行（见 _run_organize_step）。
+
         新（user 2026-10-29 拍板）：先把画面带回主界面，再检测「背包满」——否则上一个任务
         没能回到主界面（如还停在活动列表/鉴赏界面），可能在错误界面下误检背包满，诊断截图
         也会截到活动界面而不是真正的背包画面。
@@ -300,6 +337,23 @@ class DailyTask(Task):
             wctx.maybe_auto_organize()
         except Exception as e:
             wctx.log(f"自动整理背包检测异常（已忽略，继续）：{e}", level="warn")
+
+    @staticmethod
+    def _run_organize_step(ctx, c):
+        """链中显式「自动整理背包」步（user 2026-11-01 拍板）：每个号走到该步就在【本号】
+        上整理一次（不汇合、不是集体屏障，多开时各号随各自进度独立整理）；整条流程可放多个。
+
+        与交接点自动整理不同：这是用户显式排进流程的动作，故无视 auto_organize 旧开关强制执行
+        （force=True），但仍需标定「背包满图标」、背包没满则静默跳过（没东西可整理）。"""
+        wctx = c["wctx"]
+        try:
+            if not ui_state.is_main_screen(wctx.cfg, wctx.window):
+                wctx.log("整理背包前未在主界面，先按 Esc/右键逐层退回主界面…", level="info")
+                ui_state.back_to_main_screen(wctx.cfg, wctx.window)
+            wctx.log("───── 流程步骤「自动整理背包」：整理本号背包 ─────", level="hit")
+            wctx.maybe_auto_organize(force=True)
+        except Exception as e:
+            wctx.log(f"「自动整理背包」步骤异常（已忽略，继续）：{e}", level="warn")
 
     @staticmethod
     def _end_step(c):
@@ -318,18 +372,30 @@ class DailyTask(Task):
         把一个号从头到尾做完整（step 内部自带拟人 sleep 与各自的超时兜底，不会死循环）；
         做完整后：后续步骤仍是顺序型 → 继续持有连推；是普通任务/撞障碍/整条链跑完 → 让出交还轮转。"""
         cap, t0 = 0, time.time()
+        # steps 里含「整理背包」伪步骤 = 新结构链：整理只在走到该步时按位置执行，
+        # 不再在任务交接点自动触发（user 2026-11-01 拍板）；旧 config（无该步）维持交接点自动整理。
+        auto_between = ORGANIZE_STEP not in steps
         while not ctx.should_stop():
             if c["sub_step"] is None:
                 if c["idx"] >= len(steps):
                     c["done"] = True
                     return
-                if steps[c["idx"]] in MULTI_BARRIER:
+                cur = steps[c["idx"]]
+                if cur in COLLECTIVE_BARRIER:
                     return                              # 停靠集体屏障，交回主循环
-                # 任务交接点（上一个任务完成/被跳过 → 开下一个）：此时才允许自动整理背包。
+                if cur == ORGANIZE_STEP:
+                    # 走到「整理背包」步：在当前这个号上就地整理一遍（每号各自执行，不汇合），
+                    # 随后推进到下一步。异常已在内部吞掉，绝不阻断整条链。
+                    self.current_log_source = ORGANIZE_STEP
+                    self._run_organize_step(ctx, c)
+                    self._advance(c, steps)
+                    continue
+                # 任务交接点（上一个任务完成/被跳过 → 开下一个）：仅旧结构链在此自动整理背包。
                 # 单个任务执行过程中绝不触发（user 2026-10-08 拍板）。
-                self.current_log_source = steps[c["idx"]]   # 交接/整理日志按「即将开跑的任务」打标签
-                self._organize_between(c)
-                if self._begin_step(ctx, c, steps[c["idx"]]) != "ready":
+                self.current_log_source = cur   # 交接/整理日志按「即将开跑的任务」打标签
+                if auto_between:
+                    self._organize_between(c)
+                if self._begin_step(ctx, c, cur) != "ready":
                     c["idx"] += 1                       # 跳过该步（未就绪/演练/不支持），接着下一步
                     continue
                 if blocking and not c["sub_seq"]:
@@ -413,6 +479,38 @@ class DailyTask(Task):
         if getattr(task, "_team_formed", False):
             self._team_ready = True
 
+    def _run_team_step(self, ctx, step_name):
+        """集体动作伪步骤：team_form=一键组队，team_disband=一键解散。
+        各号在屏障汇合后由主 ctx 执行一次（任务壳自己 select_windows+make_child），
+        复用 tasks.dungeon 的 DungeonTask（title=组队）/ tasks.disband 的 DisbandTask。"""
+        if ctx.should_stop():
+            return
+        title = TEAM_STEP_TITLES.get(step_name, step_name)
+        task_name = "dungeon" if step_name == TEAM_FORM_STEP else "disband"
+        task_cls = get_task(task_name)
+        if task_cls is None:
+            ctx.log(f"「{title}」任务未收录，跳过该步。", level="warn")
+            return
+        self.current_log_source = task_name
+        task = task_cls()
+        ok, probs = task.preflight(ctx)
+        if not ok:
+            ctx.log(f"跳过「{title}」（未就绪）：" + "；".join(probs), level="warn")
+            return
+        ctx.log(f"───── 所有号已汇合，开始集体动作「{title}」 ─────", level="hit")
+        try:
+            self._any_real_run = True
+            task.run(ctx)
+            if step_name == TEAM_FORM_STEP:
+                # 只有任务壳确认队伍真的组好才置位（失败/超时只告警不抛异常，不能误标，
+                # 否则后续多人步会跳过握手）。契约同副本/抓鬼的 _team_formed。
+                if getattr(task, "_team_formed", False):
+                    self._team_ready = True
+            else:
+                self._team_ready = False
+        except Exception as e:
+            ctx.log(f"「{title}」执行异常：{e}，继续后续任务。", level="error")
+
     def _run_collective(self, ctx, step_name):
         """集体跑一次「多人步」：组队 → 队长线性跑完（→可选解散）。用主 ctx（任务自带 select+组队）。
         阻塞执行，期间各队员号在屏障上待命（本就在队伍里被传送/自动战斗）。
@@ -448,7 +546,7 @@ class DailyTask(Task):
             ctx.log(f"───── 「{title}」完成 ─────", level="hit")
 
     def _run_collective_single_dungeon(self, ctx, dname):
-        """集体跑单个副本子任务（如 60侠士/70侠士/60普通1/60普通2/710普通）。
+        """集体跑单个副本子任务（如 60侠士/70侠士/60普通1/60普通2/70普通）。
         只刷该本，进本「进入」序号按该副本在标签区展示顺序里的位置点。
         是否组队由流程中「已组队」开关决定（见 _collective_run / skip_team）。"""
         self.current_log_source = dname
@@ -607,6 +705,10 @@ class DailyTask(Task):
         if name == "dungeon":
             # 具体刷哪些副本在「刷副本」页勾选，日志里只显示一步「刷副本」，不挂具体副本名。
             return "刷副本"
+        if name == ORGANIZE_STEP:
+            return ORGANIZE_STEP_TITLE
+        if name in TEAM_STEP_TITLES:
+            return TEAM_STEP_TITLES[name]
         c = get_task(name)
         return c.title if c else name
 
@@ -648,12 +750,13 @@ class DailyTask(Task):
         return sel, (get_task(sel) if sel else None)
 
     def _enabled_steps(self, ctx):
-        """返回本趟真正会跑的任务名列表，顺序=执行顺序，**与界面完全同源**
-        （daily_card.enabled_names / 日常页 _refresh_exec_order 的 _normalize 同口径）：
+        """返回本趟真正会跑的任务名列表，顺序=执行顺序，**严格按界面流程控制弹窗里设置的顺序**：
         ① 行级已勾选；② 组级开关（tasks.daily.group_enabled，{single,multi}，缺省 True）开启——
         整组关掉时该组全部任务不进日常（组内行级 enabled 独立保留，重开整组即恢复）；
         ③ 存储 steps 里没有的新任务补到末尾（默认启用，见下）；
-        ④ 按 GROUPS 拼段（多人组在前、区内保持存储相对顺序）。
+        ④ 顺序：弹窗存过的链（flow_ordered=True）或含组队/解散/整理伪步骤时，严格按 steps
+           存储绝对顺序（用户拖成啥就跑成啥，单人/多人可任意穿插）；没经弹窗保存的旧 config
+           才按 GROUPS 拼段（多人组在前、区内保持存储相对顺序），行为零回归。
 
         「刷副本」步额外看有没有勾副本：**开着但一个都没勾 = 这步不存在**（用户拍板，与整行
         关掉完全等效——否则会白设一道没人跑的集体屏障、还可能误触发收尾/强制解散）。
@@ -673,27 +776,67 @@ class DailyTask(Task):
         # 「移除任务」标记：日常流程控制页明确移出的任务，存了也不跑、也不再当缺行补回
         # （空白占位 task="" 本就不在 CHAINABLE，天然跳过）。
         removed = set(tc.get("removed_tasks") or ())
-        out, seen = [], set()
+        stored, seen = [], set()
+        has_structure_step = False
         for step in tc.get("steps", []):
             if not isinstance(step, dict):
                 continue
             name = step.get("task")
+            if name in TEAM_STEPS:
+                # 流程控制的集体动作：没有组/勾选门控，放在链里就执行；位置=存储绝对顺序。
+                # 可在整条流程里出现多次（重复组队/解散），不做去重。
+                stored.append(name)
+                has_structure_step = True
+                continue
+            if name == ORGANIZE_STEP:
+                # 整理背包：可重复出现的「每号独立」步骤，走到才整理（不是集体屏障）。
+                # 停用的行跳过但仍计入结构标记，且绝不补回/去重。
+                has_structure_step = True
+                if step.get("enabled", True):
+                    stored.append(name)
+                continue
             if name not in CHAINABLE or name in removed:
                 continue
             seen.add(name)          # 存在即可（禁用的行也算「存过」，见下：不能被当成缺行补回来）
             if not dungeon_ok(name):
                 continue
-            if step.get("enabled") and group_on(name) and name not in out:
-                out.append(name)
+            if step.get("enabled") and group_on(name):
+                stored.append(name)
         # 存储 steps 里没有、CHAINABLE 里有 = 新任务上线、老 config 还没存这行：
         # 与界面「缺的补到末尾（默认启用）」同口径补进来，否则「界面显示这行、引擎却跳过」。
         # 用户在界面关掉的行是带 enabled=False 存着的（已在 seen 里），绝不会被这里补回来。
         # 单跑（explicit_steps）时跳过补齐，保持「只跑指定的那一个」。
+        #
+        # 聚合「刷副本」步 "dungeon" 不在补齐之列（user 2026-11-01 拍板）：流程控制弹窗早已把
+        # 副本拆成 5 个独立子任务行（dt_*，勾选哪几个跑哪几个），存链时不再写聚合行；若这里还
+        # 把它当缺行补到链尾，就会在「所有拆分子本刷完」之后、链的末尾又把勾选的全部副本集体
+        # 重刷一遍（实测：活跃度奖励是最后一步，领完竟又跑「集体刷副本 1/2」）。显式存了聚合行
+        # 的旧 config 仍照常执行（上面 stored 收集没过滤它），只修「没存却被误补」这一种。
+        # UI 侧同口径隐藏集见 ui/pages/daily._HIDDEN_TASKS / daily_card / daily_flow（都排除 "dungeon"）。
         if not explicit_only:
             for name in CHAINABLE:
+                if name == "dungeon":
+                    continue
                 if name not in seen and name not in removed \
                         and group_on(name) and dungeon_ok(name):
+                    stored.append(name)
+        # 严格按存储绝对顺序执行（=UI 流程控制弹窗里设置/拖拽的顺序）的两种情形：
+        #   ① 含组队/解散/整理伪步骤（旧判定，自然是弹窗排过的新结构链）；
+        #   ② tasks.daily.flow_ordered=True：弹窗保存纯普通任务链时也会打这个标记——
+        #      用户要求「引擎按 UI 上的流程顺序跑」，即便没有伪步骤也不能再按多人/单人分区重排。
+        # 两种情形都只对 CHAINABLE 普通任务去重（team/organize 允许重复，不能被 dedup 合并）。
+        # 都不满足（没经弹窗保存过的旧日常页/旧 config）：维持「多人组在前」的按区拼段，零回归。
+        absolute_order = has_structure_step or bool(tc.get(FLOW_ORDERED_KEY))
+        if absolute_order:
+            out, dedup = [], set()
+            for name in stored:
+                if name in REPEATABLE_STEPS:
                     out.append(name)
+                elif name not in dedup:
+                    out.append(name)
+                    dedup.add(name)
+            return out
+        out = stored
         # 按区拼段（分段顺序与界面共用 tasks.daily.GROUPS），否则会「界面显示这步先跑、
         # 引擎却先跑另一步」——尤其是还没被界面保存过的旧 config（存的原序不一定是区序）。
         seg = {g: [n for n in out if GROUP_OF.get(n) == g] for g in GROUPS}

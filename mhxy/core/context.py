@@ -201,25 +201,29 @@ class TaskContext:
     def task_cfg(self, task_name):
         return cfg_mod.task_config(self.cfg, task_name)
 
-    # ---- 自动整理背包：只在任务交接时由 daily._organize_between 调用，检测到背包满则就地整理一遍 ----
-    def maybe_auto_organize(self):
-        """若开了 tasks.organize_bag.auto_organize，按节流间隔检测一次「背包满图标」，
-        命中就在【当前前台号】上整理背包一遍。
-        user 2026-10-08 拍板：只在「各任务之间」触发——日常串跑的任务交接处由
-        daily._organize_between 调用（上一个任务完/被跳过、开下一个任务之前）；单个任务执行过程中
-        绝不触发（曾每 tick / 每次切前台都检测，反复开包整理会打断任务的静止/战斗判定）。
-        未开开关 / 未标定满图标 / 没满 → 静默返回，不打扰任务流程。"""
+    # ---- 自动整理背包 ----
+    # · 旧结构链：日常任务交接点由 daily._organize_between 调用（受 auto_organize 开关 + 节流门控）；
+    # · 新结构链：链中显式「自动整理背包」步骤由 daily._run_organize_step 调用（force=True，
+    #   无视开关、不走节流——用户把该步排到哪就在哪整理一次；但仍需标定满图标、背包没满则跳过）。
+    def maybe_auto_organize(self, force=False):
+        """检测一次「背包满图标」，命中就在【当前前台号】上整理背包一遍。
+
+        force=False（旧交接点自动整理，user 2026-10-08 拍板）：要开 tasks.organize_bag.auto_organize，
+        且按节流间隔触发；只在「各任务之间」调用，单个任务执行过程中绝不触发。
+        force=True（新流程显式步骤，user 2026-11-01 拍板）：无视开关与节流，走到该步即检测整理；
+        但未标定满图标 / 窗口丢失 / 抓屏失败 / 背包没满 → 仍然静默返回（没东西可整理）。"""
         ob = self.task_cfg("organize_bag")
-        if not ob.get("auto_organize"):
+        if not force and not ob.get("auto_organize"):
             self.log("自动整理·跳过：开关未开", level="debug")
             return
         loop = ob.get("loop", {}) or {}
         interval = loop.get("auto_check_interval_sec", 20)
         now = time.time()
-        if now - self._last_bag_check < interval:
-            self.log(f"自动整理·节流：距上次 {now - self._last_bag_check:.0f}s < {interval}s", level="debug")
-            return
-        self._last_bag_check = now
+        if not force:
+            if now - self._last_bag_check < interval:
+                self.log(f"自动整理·节流：距上次 {now - self._last_bag_check:.0f}s < {interval}s", level="debug")
+                return
+            self._last_bag_check = now
         tpl_path = (ob.get("templates", {}) or {}).get("bag_full_icon")
         tpl = vision.load_template(tpl_path) if tpl_path else None
         if tpl is None:

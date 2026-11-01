@@ -166,21 +166,29 @@ class LeaderIdGallery(ctk.CTkToplevel):
     # ------------------------------------------------------------------
     def _recalibrate(self):
         from .calibrate_dialog import calibrate_template_direct
-        self.withdraw()                   # 框选期间整窗隐身，确保截图里只有游戏画面
+        # 框选期间本窗与主窗口一起设**透明度 0**（alpha_windows=(app, self) 全量隐身），
+        # 保证冻结截图里只剩游戏画面；**不 withdraw**——CTk 弹窗 withdraw 在某些环境下不彻底，
+        # 窗口仍会被框选的冻结截图收进去（队长ID库实测中招，与账号库同款问题）。
         ok = False
+        err = None
         try:
-            ok = calibrate_template_direct(self.app, "teaming", "leader_id", "队长ID", toast=self._toast)
-        finally:
-            try:
-                self.deiconify()
-                self.lift()
-                self.focus_force()
-            except Exception:
-                pass
-        if ok:
-            self.app.cfg = cfg_mod.load_config()      # calibrate 自己写过盘，必须 reload 再 push
-            lh.push_after_calibrate(self.app.cfg)
-            self._after_change("已标定新的队长ID并设为当前。", T.SUCCESS)
+            ok = calibrate_template_direct(self.app, "teaming", "leader_id", "队长ID",
+                                           toast=self._toast,
+                                           alpha_windows=(self.app, self))
+        except Exception as e:
+            err = f"框选失败：{e}"
+        try:
+            self.lift()
+            self.focus_force()
+        except Exception:
+            pass
+        if not ok:
+            if err:
+                self._toast(err, T.WARN)
+            return
+        self.app.cfg = cfg_mod.load_config()      # calibrate 自己写过盘，必须 reload 再 push
+        lh.push_after_calibrate(self.app.cfg)
+        self._after_change("已标定新的队长ID并设为当前。", T.SUCCESS)
 
     def _activate(self, idx):
         lh.activate(self.app.cfg, idx)

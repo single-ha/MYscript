@@ -1,8 +1,32 @@
 # -*- coding: utf-8 -*-
-"""日常页：只做「勾选 + 排序 + 副本勾选」——任务配置与标定全在「任务配置」页。任务按区展示，
-每区可折叠，区内左键拖动手柄排序。两区分组固定：多人任务组在前、单人任务组在后（不支持两区互换）。
-每个【任务名】本身即「单跑」按钮：点它=只跑那一个任务（daily 引擎 + 内存覆盖 steps，配置不落盘）；
-刷副本勾选区里每个【副本名】同样是按钮：点它=只刷那一本。独立页面类，由 App 统一导入（App.PAGE_CLASSES）。"""
+"""日常页：纯只读的「日常任务清单」。
+
+定位（用户拍板）：本页**不再管理日常流程**——没有开始/停止按钮、没有时间上限/关机/定时/
+自动整理/已组队等设置开关、没有勾选、整组开关、拖拽排序、执行序号与执行链摘要。
+这些分别在：
+  · 整条龙怎么跑（开始日常、时间上限、跑完关机、定时、自动整理、已组队、跑完解散…）
+        → 起始页「🐉 日常任务」卡（ui/daily_card.py 的 DailyRunCard）；
+  · 流程怎么编排（哪些任务进流程、组队/解散、定时/整理/关机伪步骤、拖拽排序、增删改）
+        → 起始页「🐉 日常任务」卡右上角「修改」打开的「日常流程控制」二级弹窗
+        （pages/daily_flow.py 的 DailyFlowPage，CTkToplevel）。
+
+本页只做两件事：
+  · 按 多人任务 / 单人任务 分区，列出可串联的日常任务（多人组=5 个副本子任务
+    60侠士/70侠士/60普通1/60普通2/70普通 + 抓鬼；单人组=8 个单人任务），每行显示任务名 +
+    就绪状态（✓ 已就绪 / ⚠ 还需标定）+ 「⚙ 配置」入口（跳「任务配置」页标定/参数）。
+    例外：抓鬼行的「抓鬼轮数」可在本页行内直接改（小输入框，失焦/回车即存 tasks.zhuagui
+    .loop.max_rounds，与「⚙ 配置」里抓鬼卡同一写入路径/口径）；其它参数仍只读、去配置页改。
+  · 【任务名】本身即「单跑」按钮：点它=只跑那一个任务（daily 引擎 + 内存覆盖 steps，
+    配置不落盘）。单跑中再点=停止。
+
+聚合「刷副本」步（按勾选顺序一次刷完多本）与它内嵌的「要刷的副本」勾选区**不在本页**：
+本页只读清单只列 5 个副本子任务（点哪个刷哪个）；要编排「聚合刷副本」那一步去
+起始页「修改」打开的「日常流程控制」弹窗（引擎仍认 dungeon 聚合步，本页不展示、不提供勾选）。
+
+整条龙的 runner/定时等待/急停服务仍由本页单例在后台承载（起始页日常卡转调它），只是本页
+不再画出任何可见的运行控件；被起始页日常卡用来镜像按钮文字的 ``btn_run`` 换成一个无 UI 的
+``_RunButtonState``（``cget("text")`` / ``configure(...)`` 同形），daily_card 零改动。
+独立页面类，由 App 统一导入（App.PAGE_CLASSES）。"""
 
 import copy
 
@@ -14,25 +38,65 @@ from ...core import config as cfg_mod
 from ...core import window as win_mod
 from ...core.runner import TaskRunner
 from ...tasks import get_task
-from ...tasks.base import dungeon_tasks
 from ...tasks.daily import (CHAINABLE, GROUP_OF, GROUPS, GROUP_TITLES, MULTI_BARRIER,
-                            get_selected_dungeon_titles)
+                            DUNGEON_SUB_TASKS)
 from ...tasks.dungeon_base import DUNGEON_CALIBRATION
 from ...core.teaming import TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES
-from ..common import (Card, Tooltip, bind_wraplength, required_regions,
-                      required_templates, teaming_ns)
-from ..dungeon_picker import DungeonPicker
+from ..common import (Card, Tooltip, required_regions, required_templates)
+
+# 只读清单**不展示**聚合「刷副本」行（其勾选区已移除；要刷多本去流程控制弹窗），其余 CHAINABLE 全展示。
+_HIDDEN_TASKS = {"dungeon"}
+_LIST_TASKS = [t for t in CHAINABLE if t not in _HIDDEN_TASKS]
+
+# 多人组在只读清单里的**固定展示顺序**（用户拍板）：5 个副本子任务按 60侠士/70侠士/
+# 60普通1/60普通2/70普通 排列，抓鬼收尾；与「日常流程控制」弹窗的子任务顺序一致。
+# 多人组是集体组队跑、展示序不代表引擎执行序（执行序由弹窗里 steps 决定），故固定即可。
+_MULTI_ORDER = ["dt_60_xiashi", "dt_70_xiashi",
+                "dt_60_common1", "dt_60_common2", "dt_70_common", "zhuagui"]
 
 # 分区集合：与起始页日常卡/引擎同源（tasks.daily.GROUPS）。两区分组固定：多人组在前、
-# 个人组在后（不提供互换）；GROUP_OF 里出现过的区都保留（以后加新区自动跟上）。
+# 个人组在后；GROUP_OF 里出现过的区都保留（以后加新区自动跟上）。
 _GROUPS = GROUPS
 
 
+class _RunButtonState:
+    """无 UI 的运行按钮状态替身。
+
+    起始页「日常任务卡」（DailyRunCard）每 tick 读 ``page.btn_run.cget("text")`` 来镜像
+    开始/停止/定时等待按钮；本页已不再画该按钮，但整条链 runner 服务仍在，故用这个只存
+    「文字/配色」的轻对象顶替——接口与 CTkButton 的 ``cget``/``configure`` 同形，
+    DailyRunCard 与历史代码无需改动。"""
+
+    def __init__(self, text):
+        self._text = text
+        self._state = {"fg_color": T.ACCENT, "hover_color": T.ACCENT_HOVER,
+                       "state": "normal"}
+
+    def cget(self, key):
+        if key == "text":
+            return self._text
+        return self._state.get(key)
+
+    def configure(self, *args, **kw):
+        if "text" in kw:
+            self._text = kw.pop("text")
+        self._state.update(kw)
+
+    # 兼容个别历史位置的属性式读写
+    config = configure
+
+    def __setitem__(self, key, val):
+        self._state[key] = val
+
+    def __getitem__(self, key):
+        return self._state.get(key)
+
+
 class DailyPage(ctk.CTkFrame):
-    """日常：只做串联——勾选哪些任务、按什么顺序跑，存 tasks.daily.steps（全局有序=执行顺序）。
-    两区分组固定：多人组（集体组队跑）在前、个人组（每号独立跑）在后，不提供两区互换/挪动。
-    单人任务组在本趟流程中时，「跑完多人任务后解散队伍」开关会被强制打开并锁定（单人步在队伍外更干净）。
-    多开/单开与各任务的标定、参数全部在「任务配置」页设置，本页不另设这些开关（本页只多一处副本勾选）。"""
+    """日常：只读任务清单 + 点任务名单跑。整条龙 runner 服务由本页单例在后台承载（无可见控件）。
+
+    两区分组固定：多人组（集体组队跑）在前、个人组（每号独立跑）在后，区可折叠但不排序。
+    多开/单开与各任务的标定、参数全部在「任务配置」页设置，本页不另设任何流程/设置开关。"""
 
     TASK_NAME = "daily"
     LOG_SOURCE = "日常"
@@ -42,8 +106,11 @@ class DailyPage(ctk.CTkFrame):
     _SINGLE_SOURCE = {
         "treasure_map": "宝图", "secret_realm": "秘境", "appreciation": "趣味鉴赏",
         "sanjie": "奇缘", "escort": "运镖", "guild_checkin": "帮派签到",
-        "activity_reward": "活跃度", "dungeon": "刷副本", "zhuagui": "抓鬼",
-        "guaguale": "刮刮乐",
+        "activity_reward": "活跃度", "zhuagui": "抓鬼", "guaguale": "刮刮乐",
+        "dt_60_xiashi": "60侠士", "dt_70_xiashi": "70侠士",
+        "dt_60_common1": "60普通1", "dt_60_common2": "60普通2", "dt_70_common": "70普通",
+        # 流程伪步骤：链中走到「自动整理背包」步时引擎把来源置为 ORGANIZE_STEP
+        "organize": "整理",
     }
 
     # 各任务名的专用 Tooltip（各不相同；点任务名=单跑那一行在 Tooltip 里统一提示）
@@ -55,13 +122,9 @@ class DailyPage(ctk.CTkFrame):
         "escort": "运镖：押送普通镖银，循环押满设定次数。",
         "guild_checkin": "帮派签到：进帮派签到领奖励。",
         "activity_reward": "活跃度奖励：领取今日活跃度礼包。",
-        "guaguale": "刮刮乐：点福利打开刮刮乐，刮开奖区，有节日奖励就顺手领。",
-        "dungeon": "刷副本：集体组队，把勾选的副本按顺序刷完（勾选区点「副本名」可只刷那一本）。",
+        "guaguale": "刮刮乐：点福利打开刮刮乐，刮开奖区，有节日奖励就顺手领（领完点「使用」）。",
         "zhuagui": "抓鬼：集体组队，抓完一轮鬼。",
     }
-
-    # 各子任务「就绪」比对的必需键全部从各自 CALIBRATION spec 按「可选标记」自动取（见
-    # common.required_regions/required_templates），不再手写清单。
 
     _GROUP_DESC = {"single": "每号独立跑", "multi": "集体组队跑"}
     _GROUP_EMOJI = {"single": "👤", "multi": "👥"}
@@ -70,32 +133,26 @@ class DailyPage(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent")
         self.app = app
         self.fonts = app.fonts
+        # —— 整条龙 runner 服务（无可见控件；起始页日常卡转调）——
         self.runner = None
+        self.btn_run = _RunButtonState(self.RUN_LABEL)
+        self._wait_until = None      # 定时延迟执行：晚于该时刻才真正启动（None=不在等待）
+        # —— 单跑 ——
         self.single_runner = None     # 「单跑」专用 runner（与整条龙互斥，由全局唯一运行锁把关）
         self._single_name = None      # 正在单跑的任务名
         self._single_label = None     # 日志里的显示名（如「刷副本」「副本「xxx」」）
         self._single_tag = None       # 单跑日志来源短标签（None=回退 LOG_SOURCE）
         self._single_row = None       # 单跑中的行记录（用于复位就绪标签；行被重建后按 name 现找）
-        self._wait_until = None      # 定时延迟执行：晚于该时刻才真正启动（None=不在等待）
-        self._steps = []          # [{"task","enabled"}]，全局有序=执行顺序（按区顺序拼段）
-        self._group_order = list(_GROUPS)
-        self._rows = {g: [] for g in _GROUPS}   # 各区的行控件 [{"frame","name","badge","group","idx","step"}]
+        # —— 只读清单渲染 ——
+        self._steps = []          # [{"task","enabled"}]，按区顺序拼段（只用于稳定展示序）
+        self._rows = {g: [] for g in _GROUPS}   # 各区的行控件记录
         self._collapsed = {g: False for g in _GROUPS}   # 各区是否折叠
         self._flat = []           # 渲染顺序（区头/行交错），与 list_frame 的 grid 行对齐
-        self._dun_pick_open = True   # 「刷副本」卡内的副本勾选区是否展开（跨重建保留）
-        self._lbl_count = {}      # group -> 计数标签
-        self._lbl_title = {}      # group -> 区头标题标签（整组启停时只就地改颜色，不重建）
-        self._lbl_chevron = {}    # group -> 折叠箭头标签
-        self._drag = None         # 拖动中的状态 {"group": 区, "idx": 区内下标}
-        self._group_vars = {}     # group -> 整组启用开关 BooleanVar
-        self._group_on = {g: True for g in _GROUPS}   # group -> 整组启用（未存配置默认全开）
-        self.switch_auto_organize = None      # 「自动整理背包」开关（各任务交接时检测背包满自动整理）
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(4, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
         self._build_header()
-        self._build_control()
         self._build_body()
         self.refresh()
 
@@ -106,301 +163,85 @@ class DailyPage(ctk.CTkFrame):
         bar.grid_columnconfigure(0, weight=1)
         title = ctk.CTkLabel(bar, text="日常", font=self.fonts["title"], text_color=T.TEXT)
         title.grid(row=0, column=0, sticky="w")
-        Tooltip(title, "单人任务（每号独立跑）与多人任务（刷副本/抓鬼，集体组队跑）分区勾选调序；"
-                        "点区题可折叠/展开，区右上 ▲▼ 移动整区顺序。本页只有勾选、排序与副本勾选；"
-                        "各任务的标定、参数都请到「任务配置」页设置。点「任务名」=只跑那一个任务"
-                        "（一次性、不落盘）；副本勾选区点「副本名」=只刷那一本。", self.fonts)
+        Tooltip(title, "这里只【列出】日常任务并支持单跑：点「任务名」=只跑那一个任务"
+                       "（一次性、不落盘）；副本以 5 个子任务列出（60侠士/70侠士/60普通1/"
+                       "60普通2/70普通），点哪个刷哪个。\n"
+                       "要编排整条龙（哪些进流程/顺序/组队解散/定时/整理/关机，含聚合「刷副本」"
+                       "一次刷多本），去起始页「🐉 日常任务」卡右上角「修改」打开流程控制弹窗；\n"
+                       "一键开始整条日常与各设置开关在起始页「🐉 日常任务」卡。\n"
+                       "任务按多人组（集体组队跑）/ 单人组（每号独立跑）分区，点区题可折叠；"
+                       "各任务的标定、参数请到「任务配置」页（行右侧「⚙ 配置」）。", self.fonts)
 
-    # ------------------------------------------------------------------
-    # 登录游戏区（页面顶部、可折叠）：从「账号库」里挑最多 5 个号，逐号起客户端登录
-    # ------------------------------------------------------------------
-    # ---- 控制区：运行按钮 + 工具（选择窗口/刷新），无标定/无模式开关 ----
-    def _build_control(self):
-        card = Card(self)
-        card.grid(row=3, column=0, sticky="ew", padx=4, pady=(0, 14))
-        card.grid_columnconfigure(0, weight=1)
-
-        top = ctk.CTkFrame(card, fg_color="transparent")
-        top.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 10))
-        top.grid_columnconfigure(1, weight=1)
-        self.btn_run = ctk.CTkButton(top, text=self.RUN_LABEL, font=self.fonts["btn"],
-                                     height=46, width=200, corner_radius=T.RADIUS_SM,
-                                     fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, text_color=T.ON_ACCENT,
-                                     command=self._toggle_run)
-        self.btn_run.grid(row=0, column=0, sticky="w")
-        tools = ctk.CTkFrame(top, fg_color="transparent")
-        tools.grid(row=0, column=2, sticky="e")
-        ctk.CTkButton(tools, text="调整窗口", font=self.fonts["body"], height=36, width=104,
-                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
-                      border_width=1, border_color=T.BORDER,
-                      command=self._adjust_windows).pack(side="left")
-        ctk.CTkButton(tools, text="刷新配置", font=self.fonts["body"], height=36, width=104,
-                      corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
-                      border_width=1, border_color=T.BORDER,
-                      command=self.refresh).pack(side="left", padx=(8, 0))
-
-        ctk.CTkFrame(card, fg_color=T.BORDER, height=1).grid(
-            row=1, column=0, sticky="ew", padx=16, pady=(0, 4))
-
-        # 设置项两列排布：左列=时间上限 / 跑完关机 / 自动整理背包，右列=解散队伍 / 定时延后执行
-        opts = ctk.CTkFrame(card, fg_color="transparent")
-        opts.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 10))
-        opts.grid_columnconfigure(0, weight=1)
-        opts.grid_columnconfigure(1, weight=1)
-
-        def _opt_row(r, c):
-            f = ctk.CTkFrame(opts, fg_color="transparent")
-            f.grid(row=r, column=c, sticky="w", padx=(0, 26), pady=(10, 0))
-            return f
-
-        # 时间上限（整条龙的安全网）
-        lim = _opt_row(0, 0)
-        lim_lbl = ctk.CTkLabel(lim, text="整体时间上限(分钟，0=不限)", font=self.fonts["body"],
-                               text_color=T.TEXT)
-        lim_lbl.pack(side="left")
-        self.var_limit = ctk.StringVar(value="0")
-        self.lim_ent = ctk.CTkEntry(lim, textvariable=self.var_limit, width=70, font=self.fonts["body"],
-                                    fg_color=T.SURFACE_2, border_color=T.BORDER)
-        self.lim_ent.pack(side="left", padx=(8, 0))
-        for w in (lim_lbl, self.lim_ent):
-            Tooltip(w, "只是安全网：正常会按各子任务自身条件跑完。未就绪（缺标定/缺窗口）的任务会自动跳过。", self.fonts)
-
-        # 跑完多人任务后是否解散队伍（存共享 tasks.teaming.auto_disband，原在「多人任务」页组队设置里，
-        # 组队设置现与任务参数一起收在「任务配置」页顶部）
-        dis = _opt_row(0, 1)
-        dis_lbl = ctk.CTkLabel(dis, text="跑完多人任务后解散队伍", font=self.fonts["body"], text_color=T.TEXT)
-        dis_lbl.pack(side="left")
-        self.var_disband = ctk.BooleanVar(value=False)
-        self.sw_disband = ctk.CTkSwitch(dis, text="", variable=self.var_disband, width=44,
-                                        progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
-                                        command=self._on_disband_toggle)
-        self.sw_disband.pack(side="left", padx=(8, 0))
-        Tooltip(dis_lbl, "跑完「多人任务」整段后自动让所有号退队，再转后续任务。"
-                         "步骤里包含「单人任务」组时，此开关会被强制打开并锁定（单人步要在队伍外跑）；"
-                         "只有多人任务时可按需开关。", self.fonts)
-
-        # 跑完关机（谨慎）：整条龙全部跑完且有实跑任务才触发，延迟倒计时可 shutdown -a 取消
-        shut = _opt_row(1, 0)
-        shut_lbl = ctk.CTkLabel(shut, text="跑完关机", font=self.fonts["body"], text_color=T.TEXT)
-        shut_lbl.pack(side="left")
-        self.var_shutdown = ctk.BooleanVar(value=False)
-        ctk.CTkSwitch(shut, text="", variable=self.var_shutdown, width=44,
-                      progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
-                      command=self._on_shutdown_toggle).pack(side="left", padx=(8, 0))
-        Tooltip(shut_lbl, "整条龙跑完后自动关机（先进入关机倒计时，期间按「停止」或急停热键即可取消）", self.fonts)
-
-        # 定时延迟执行：点「开始日常」后先看有没有设置定时，有则等到该时刻才真正启动
-        sched = _opt_row(1, 1)
-        sched_lbl = ctk.CTkLabel(sched, text="定时延后执行", font=self.fonts["body"], text_color=T.TEXT)
-        sched_lbl.pack(side="left")
-        self.var_schedule_on = ctk.BooleanVar(value=False)
-        ctk.CTkSwitch(sched, text="", variable=self.var_schedule_on, width=44,
-                      progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
-                      command=self._on_schedule_toggle).pack(side="left", padx=(8, 0))
-        ctk.CTkLabel(sched, text="执行时刻(时:分)", font=self.fonts["body"], text_color=T.TEXT_DIM).pack(side="left", padx=(4, 0))
-        self.var_schedule_time = ctk.StringVar(value="10:00")
-        time_ent = ctk.CTkEntry(sched, textvariable=self.var_schedule_time, width=64,
-                                font=self.fonts["body"], fg_color=T.SURFACE_2, border_color=T.BORDER)
-        time_ent.pack(side="left", padx=(6, 0))
-        for w in (sched_lbl, time_ent):
-            Tooltip(w, "开启后，点「开始日常」不会立即执行，而是等到设定时刻才真正开始；"
-                       "若设定时刻已过（如定时 10:00、下午点开始）则立即执行。等待中再点一次按钮可取消。", self.fonts)
-
-        # «自动整理背包»（从「工具 › 整理背包」页移到这里的控制区，因为它影响日常串跑中任务交接时的
-        # 行为；配置仍存共享 tasks.organize_bag.auto_organize）。
-        auto = _opt_row(2, 0)
-        auto_lbl = ctk.CTkLabel(auto, text="自动整理背包", font=self.fonts["body"], text_color=T.TEXT)
-        auto_lbl.pack(side="left")
-        self.switch_auto_organize = ctk.CTkSwitch(
-            auto, text="", width=44, progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
-            command=self._toggle_auto_organize)
-        self.switch_auto_organize.pack(side="left", padx=(8, 0))
-        Tooltip(auto_lbl, "开启后，日常串跑会在「上一个任务刚结束、下一个任务即将开始」的交接处检测"
-                          "背包「满」图标，满了就自动整理一遍 —— 单个任务执行过程中不检测、不打断。"
-                          "需先在「工具 › 整理背包」页「标定」里框选『背包满图标』，否则无从判断、不会触发。", self.fonts)
-
-        # «自动拓印»（存 tasks.tuoying.enabled，全局开关）：关掉后整条链里遇到「拓印」临摹弹窗
-        # 都不再自动描摹，转手动——脚本等你手动描完点「上传」、界面消失后自动继续。刷副本/宝图
-        # 单跑也吃这份（全局生效，用户拍板）；工具页「拓印」单独跑不受影响。
-        tuo = _opt_row(3, 0)
-        tuo_lbl = ctk.CTkLabel(tuo, text="自动拓印（关闭后遇拓印弹窗转手动）", font=self.fonts["body"], text_color=T.TEXT)
-        tuo_lbl.pack(side="left")
-        self.switch_auto_tuoying = ctk.CTkSwitch(
-            tuo, text="", width=44, progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
-            command=self._toggle_auto_tuoying)
-        self.switch_auto_tuoying.pack(side="left", padx=(8, 0))
-        Tooltip(tuo_lbl, "开启后（默认）：日常链 / 刷副本 / 宝图遇到「拓印」临摹弹窗会自动描摹并点「上传」。"
-                         "关闭后：不自动描摹，改为等你手动描完点「上传」，脚本检测到界面消失后自动继续。"
-                         "需先在「工具 › 拓印」页标定标题/绘制区/上传按钮，否则本就无从自动描。存 tasks.tuoying.enabled。",
-                self.fonts)
-
-        # «已组队»（原在「任务配置」页顶部组队设置卡 / 周常页共用卡，随「跑完解散」一并迁到本页设置区；
-        # 存共享 tasks.teaming.skip_team）。勾上=号已在游戏里自行组好队：刷副本/抓鬼等多人步跳过自动组队、
-        # 直接由队长开跑，组件队标定与多开≥2 的 preflight 也随之放宽。
-        skip = _opt_row(2, 1)
-        skip_lbl = ctk.CTkLabel(skip, text="已组队（跳过自动组队）", font=self.fonts["body"], text_color=T.TEXT)
-        skip_lbl.pack(side="left")
-        self.var_skip_team = ctk.BooleanVar(value=False)
-        ctk.CTkSwitch(skip, text="", variable=self.var_skip_team, width=44,
-                      progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
-                      command=self._on_skip_team_toggle).pack(side="left", padx=(8, 0))
-        Tooltip(skip_lbl, "已在游戏里自己组好队就勾上：刷副本 / 抓鬼等多人步会跳过脚本自动组队，"
-                          "直接由队长的号开跑（此时只需队长那个号能定位即可，不要求多开≥2 和组队标定）。"
-                          "存共享 tasks.teaming.skip_team，各多人任务读到同一份。", self.fonts)
-
-    # ---- 主体：分区任务清单（日志已移到全局右栏）----
+    # ---- 主体：只读分区任务清单 ----
     def _build_body(self):
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.grid(row=4, column=0, sticky="nsew", padx=4)
+        body.grid(row=2, column=0, sticky="nsew", padx=4)
         body.grid_columnconfigure(0, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
         left = Card(body)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
-        left.grid_rowconfigure(1, weight=1)
+        left.grid_rowconfigure(0, weight=1)
         left.grid_columnconfigure(0, weight=1)
-        head = ctk.CTkFrame(left, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
-        head.grid_columnconfigure(0, weight=0)
-        head.grid_columnconfigure(1, weight=1)
-        head_title = ctk.CTkLabel(head, text="任务清单", font=self.fonts["h2"],
-                                  text_color=T.TEXT)
-        head_title.grid(row=0, column=0, sticky="w")
-        Tooltip(head_title, "点区题折叠/展开　·　每区左侧 ⠿ 上下拖动排序（区内）　·　右侧开关启用/停用　·　"
-                            "序号即全局执行先后　·　两区分组固定：多人任务组在前、单人任务组在后", self.fonts)
-        # 执行顺序摘要：并排放在标题右侧（非滚动、可折行），实时显示「勾选且启用」的任务按全局先后拼接的链。
-        self.lbl_exec_order = ctk.CTkLabel(head, text="", font=self.fonts["small"],
-                                           anchor="w", justify="left", text_color=T.ACCENT)
-        self.lbl_exec_order.grid(row=0, column=1, sticky="ew", padx=(10, 0))
-        bind_wraplength(self.lbl_exec_order)
-        Tooltip(self.lbl_exec_order, "当前勾选并启用的任务，按实际执行先后拼接（多人组在前、单人组在后，区内可拖排序）。"
-                                     "整组停用或单独停用的任务不显示；全部未勾选时「开始日常」只会空转。", self.fonts)
 
         self.list_frame = ctk.CTkScrollableFrame(left, fg_color="transparent")
-        self.list_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 12))
+        self.list_frame.grid(row=0, column=0, sticky="nsew", padx=8, pady=(12, 12))
         self.list_frame.grid_columnconfigure(0, weight=1)
         T.tune_scroll_speed(self.list_frame)
 
-        # 日志已统一到 App 右侧的全局日志面板，本页不再单独建日志框。
-
-    # ---- 工具按钮 ----
+    # ---- 工具（供起始页「日常任务」卡转调；本页不画按钮）----
     def _adjust_windows(self):
-        """「调整窗口」：把所选窗口（最多 5 个）调到基准尺寸并按 2列×2行 排布（该入口在日常页）。"""
+        """「调整窗口」：把所选窗口（最多 5 个）调到基准尺寸并按 2列×2行 排布。"""
         cfg = cfg_mod.load_config()
         self.app.cfg = cfg
         win_mod.arrange_windows(cfg, self.app)
         self.refresh()
 
     # ------------------------------------------------------------------
-    # 刷新 / 渲染
+    # 刷新 / 渲染（只读：不再读/写任何流程开关）
     # ------------------------------------------------------------------
     def refresh(self):
         self.app.cfg = cfg_mod.load_config()
-        tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
-        self._group_order = list(_GROUPS)      # 两区分组固定（多人在前、单人在后），不支持互换/挪动
-        self._group_on = {g: bool((tc.get("group_enabled") or {}).get(g, True)) for g in _GROUPS}
-        steps = self._normalize(tc.get("steps", []), self._group_order)
-        # 只有内容/就绪状态真变了才换 self._steps：签名没变时行里的 step dict 还指着旧列表，
-        # 若照常覆盖 self._steps，就地更新（_toggle_step 等）改的是新 dict、显示却是旧 dict —— 错位。
+        steps = self._normalize(cfg_mod.task_config(self.app.cfg, self.TASK_NAME).get("steps", []),
+                                list(_GROUPS))
+        # 内容/就绪签名没变就别重建（切页反复 refresh，整段重画是卡顿来源）。
         if self._steps_signature_of(steps) != getattr(self, "_steps_sig", None):
             self._steps = steps
-        self.var_limit.set(str(tc.get("loop", {}).get("time_limit_min", 0)))
-        self.var_shutdown.set(bool(tc.get("loop", {}).get("shutdown_after", False)))
-        sched = tc.get("loop", {}).get("schedule", "") or ""
-        self.var_schedule_on.set(bool(sched))
-        if sched and ":" in sched:
-            self.var_schedule_time.set(sched)
-        self.var_disband.set(bool(teaming_ns(self.app.cfg).get("auto_disband", False)))
-        self.var_skip_team.set(bool(teaming_ns(self.app.cfg).get("skip_team", False)))
-        ob = cfg_mod.task_config(self.app.cfg, "organize_bag")
-        if self.switch_auto_organize is not None:
-            if ob.get("auto_organize"):
-                self.switch_auto_organize.select()
-            else:
-                self.switch_auto_organize.deselect()
-        if getattr(self, "switch_auto_tuoying", None) is not None:
-            tuo_tc = cfg_mod.task_config(self.app.cfg, "tuoying")
-            if tuo_tc.get("enabled", True):
-                self.switch_auto_tuoying.select()
-            else:
-                self.switch_auto_tuoying.deselect()
-        self._render_steps()
-        self._refresh_step_hints()   # 参数提示（抓鬼轮数等）就地刷新，不触发重建
-        self._sync_disband_lock()
-
-    def _has_single_selected(self):
-        """是否把「单人任务」组选进了本趟流程：整组启用 且 至少勾了一个单人任务。"""
-        if not self._group_on.get("single", True):
-            return False
-        return any(s["enabled"] for s in self._steps if GROUP_OF[s["task"]] == "single")
-
-    def _sync_disband_lock(self):
-        """「跑完多人任务后解散队伍」开关联动：只要单人任务组在本趟流程中，就必须是开——
-        强制打开并锁定（置灰不可点），同时把共享配置 tasks.teaming.auto_disband 写死 True
-        （引擎据此解散）；没有单人任务时恢复用户自由开关，显示配置里的值。"""
-        locked = self._has_single_selected()
-        if locked:
-            self.var_disband.set(True)
-        self.sw_disband.configure(state="disabled" if locked else "normal")
-        if locked and not bool(teaming_ns(self.app.cfg).get("auto_disband", False)):
-            cfg = cfg_mod.load_config()
-            cfg["tasks"].setdefault("teaming", {})["auto_disband"] = True
-            cfg_mod.save_config(cfg)
-            self.app.cfg = cfg
+            self._render_steps()
+        self._refresh_step_hints()   # 参数提示（抓鬼轮数等）就地刷新
 
     @staticmethod
     def _normalize(stored, group_order):
-        """把存储的 steps 规整成「含全部可串联任务、保留已存顺序、缺的补到末尾」，再按当前区顺序拼段
-        （段内保持相对顺序=执行顺序）。"""
+        """把存储的 steps 规整成「含全部要展示的任务」，再按当前区顺序拼段。
+        单人组段内保留存储相对顺序；多人组用固定展示序（见 _MULTI_ORDER：5 副本子任务→抓鬼）。
+        聚合「刷副本」(dungeon) 不在只读清单展示（其勾选区已移除），故只取 _LIST_TASKS；
+        不关心 enabled/group_enabled。"""
         out, seen = [], []
         for s in stored or []:
-            if isinstance(s, dict) and s.get("task") in CHAINABLE and s["task"] not in seen:
+            if (isinstance(s, dict) and s.get("task") in _LIST_TASKS
+                    and s["task"] not in seen):
                 out.append({"task": s["task"], "enabled": bool(s.get("enabled", True))})
                 seen.append(s["task"])
-        for t in CHAINABLE:
+        for t in _LIST_TASKS:
             if t not in seen:
                 out.append({"task": t, "enabled": True})
                 seen.append(t)
         seg = {g: [s for s in out if GROUP_OF[s["task"]] == g] for g in _GROUPS}
+        # 多人组用固定展示顺序（5 副本子任务 → 抓鬼）；单人组保留存储相对顺序。
+        rank = {t: i for i, t in enumerate(_MULTI_ORDER)}
+        seg["multi"].sort(key=lambda s: rank.get(s["task"], len(rank)))
         return [s for g in group_order for s in seg.get(g, [])]
 
-    def _selected_dungeon(self):
-        """副本中枢勾选的首个有效副本名（tasks.dungeon.selected 是列表）；一个都没勾返 None。
-        判定为「不跑本步」的唯一口径——引擎 _enabled_steps / 日常页就绪态都以「有没有勾」为准。"""
-        names = [c.name for c in dungeon_tasks()]
-        if not names:
-            return None
-        sel = cfg_mod.task_config(self.app.cfg, "dungeon").get("selected")
-        if isinstance(sel, str):
-            sel = [sel]
-        if isinstance(sel, list):
-            for s in sel:
-                if s in names:
-                    return s
-        return None
-
     def _task_title(self, name):
-        """任务卡片/单跑提示用的显示名：刷副本只显示 '刷副本'，不展开具体副本。"""
-        if name == "dungeon":
-            return "刷副本"
-        cls = get_task(name)
-        return cls.title if cls else name
-
-    def _task_title_expanded(self, name):
-        """执行顺序摘要用的显示名：刷副本展开为当前勾选的副本列表。"""
-        if name == "dungeon":
-            titles = get_selected_dungeon_titles(self.app.cfg)
-            if titles:
-                return " -> ".join(titles)
-            return "刷副本（未勾选）"
+        """任务卡/单跑提示用的显示名：取任务类 title。"""
         cls = get_task(name)
         return cls.title if cls else name
 
     def _task_status(self, name):
-        """返回该步是否已就绪（必需区域+模板都已标定）。
-        多人步（刷副本/抓鬼）额外查（未勾「已组队」时的）组队标定。"""
-        if name == "dungeon":
-            return self._dungeon_step_status()
+        """返回该任务是否已就绪（必需区域+模板都已标定）。
+        多人步（5 个副本子任务/抓鬼）额外查（未勾「已组队」时的）组队标定。"""
+        if name in DUNGEON_SUB_TASKS:
+            return self._dungeon_calib_ok()
         if name in MULTI_BARRIER:
             return self._barrier_step_status(name)
         sub = cfg_mod.task_config(self.app.cfg, name)
@@ -427,17 +268,9 @@ class DailyPage(ctk.CTkFrame):
                    and all(ttpl.get(k) for k in TEAM_REQUIRED_TEMPLATES))
         return self_ok and team_ok
 
-    def _dungeon_step_status(self):
-        """「刷副本」步的就绪：先看有没有勾副本（没勾=整步不跑，见 _enabled_steps），再看标定。
-        多开≥2 是运行期条件，留给链内 preflight。"""
-        if not self._selected_dungeon():
-            return False
-        return self._dungeon_calib_ok()
-
     def _dungeon_calib_ok(self):
-        """刷副本的标定侧就绪（共享 tasks.dungeon 的区域/模板 + 未勾「已组队」时的组队标定）。
-        **不含**「有没有勾副本」那一层——点副本名单跑（_start_single_dungeon）自带 selected=[该本]，
-        拿 _task_status 去判会被空勾选误拦成「还需标定」。"""
+        """副本标定侧就绪（共享 tasks.dungeon 的区域/模板 + 未勾「已组队」时的组队标定）。
+        只读清单里的副本只有 5 个子任务行，各点各刷（不依赖聚合 selected），故只看标定。"""
         sub = cfg_mod.task_config(self.app.cfg, "dungeon")
         spec = DUNGEON_CALIBRATION
         need_r = required_regions(spec) + list(cfg_mod.TASK_SHARED_REQ.get("dungeon", ()))
@@ -456,19 +289,12 @@ class DailyPage(ctk.CTkFrame):
         return [s for s in self._steps if GROUP_OF[s["task"]] == g]
 
     def _render_steps(self):
-        # 内容/各任务就绪状态没变就别重建：切页时 refresh 反复调到这里，整段重画是「切页卡顿」来源之一。
-        # 区顺序变化、整组启用开关变化也纳入签名。
-        sig = self._steps_signature()
-        if sig == getattr(self, "_steps_sig", None):
-            return
-        self._steps_sig = sig
+        self._steps_sig = self._steps_signature()
         for w in self.list_frame.winfo_children():
             w.destroy()
         self._rows = {"single": [], "multi": []}
-        self._drag = None
         self._flat = []
-        self._lbl_title = {}
-        for g in self._group_order:
+        for g in list(_GROUPS):
             hdr = self._build_section_header(g)
             self._flat.append(("header", g, hdr))
             for step in self._steps_by_group(g):
@@ -477,24 +303,14 @@ class DailyPage(ctk.CTkFrame):
         self._grid_all()
 
     def _steps_signature(self):
-        """当前整表渲染签名：区顺序、整组开关、每步(任务,启用,就绪)。任一变化都等于「内容真变了」。"""
         return self._steps_signature_of(self._steps)
 
     def _steps_signature_of(self, steps):
-        """按给定 steps 列表算渲染签名（refresh 用它判断要不要换自持列表，避免新旧 dict 错位）。"""
-        return (tuple(self._group_order),
-                tuple((g, self._group_on.get(g, True)) for g in _GROUPS),
-                [(s["task"], s["enabled"], self._task_status(s["task"])) for s in steps])
+        """只读清单渲染签名：每步(任务,就绪)。就绪变化（如标定后切回本页）才重建。"""
+        return tuple((s["task"], self._task_status(s["task"])) for s in steps)
 
-    def _ready_meta(self, name, enabled):
-        """行就绪四态 → (文本, 颜色)。判定顺序（用户拍板 2026-09-23）：先看是否选中——未选中即「未选中」；
-        「刷副本」行开着但没勾任何副本=这步整步不跑（与关掉等效），单列一态「未勾选副本」，
-        免得被下面的标定判定误报成「还需标定」；再看标定——未标定=「还需标定」，标好了=「已就绪」。
-        各态均仅文字样式、不可点；跳「任务配置」页统一走行右侧「⚙ 配置」按钮。"""
-        if not enabled:
-            return "未选中", T.TEXT_DIM
-        if name == "dungeon" and self._selected_dungeon() is None:
-            return "未勾选副本", T.WARN
+    def _ready_meta(self, name):
+        """行就绪状态 → (文本, 颜色)：只看标定（5 个副本子任务各刷各的，不依赖聚合勾选）。"""
         if not self._task_status(name):
             return "⚠ 还需标定", T.WARN
         return "✓ 已就绪", T.SUCCESS
@@ -506,11 +322,15 @@ class DailyPage(ctk.CTkFrame):
                       border_color=T.WARN_ON, border_width=0,
                       cursor="arrow", command=None)
 
-    # 卡片里顺带显示的「当前关键参数」：任务名 → 显示文本。取值口径必须和任务实际跑的一致
-    # （与任务里的归一化同样处理），否则卡上写 1 轮、实际跑 2 轮就骗人了。
+    # 卡片里顺带显示的「当前关键参数」：任务名 → 参数描述。取值口径必须和实际生效处一致。
+    # 末位 editable=True 的参数在本页行内直接可改（失焦/回车即存）；False/缺省=只读提示。
     _HINT_FROM = {
-        # 抓鬼轮数 = tasks.zhuagui.loop.max_rounds，与 ZhuaguiTask 里 max(1, int(...)) 同口径
-        "zhuagui": ("loop", "max_rounds", 2, "轮", "抓鬼轮数（领任务次数，跑满即停）"),
+        # 抓鬼「单跑轮数」= tasks.zhuagui.loop.single_rounds（默认 2）：**只在本页点抓鬼名单独跑
+        # 时生效**（_single_build_cfg 用它在内存覆盖 max_rounds，不落盘到整链）；整条龙跑抓鬼仍读
+        # 任务配置页的 tasks.zhuagui.loop.max_rounds，两者是相互独立的两个参数（user 2026-11-01）。
+        "zhuagui": ("loop", "single_rounds", 2, "轮",
+                    "抓鬼单跑轮数（只在本页点「抓鬼」单独跑时生效，不影响整条龙；领任务次数，跑满即停）",
+                    True),
     }
 
     def _step_hint(self, name):
@@ -518,17 +338,21 @@ class DailyPage(ctk.CTkFrame):
         spec = self._HINT_FROM.get(name)
         if not spec:
             return None
-        loop_key, key, default, unit, tip = spec
+        loop_key, key, default, unit, tip = spec[:5]
         val = (cfg_mod.task_config(self.app.cfg, name).get(loop_key) or {}).get(key, default)
         try:
             n = max(1, int(val))          # 与任务侧同口径的下限保护
         except (TypeError, ValueError):
             n = int(default)
-        return f"{n} {unit}", f"当前设置：{tip} = {n} {unit}（去右侧「⚙ 配置」里改）"
+        editable = bool(spec[5]) if len(spec) > 5 else False
+        if editable:
+            detail = f"{tip}（失焦/回车即保存）"
+        else:
+            detail = f"当前设置：{tip} = {n} {unit}（去右侧「⚙ 配置」里改）"
+        return f"{n} {unit}", detail
 
     def _refresh_step_hints(self):
-        """就地刷新各行卡片上的参数提示（不重建行）。参数在「任务配置」页改动即保存，
-        但那不会改本卡的渲染签名，故须在这里单独刷一次——否则改了轮数回来看还是旧值。"""
+        """就地刷新各行卡片上的参数提示（不重建行）。"""
         for rows in self._rows.values():
             for r in rows:
                 lbl = r.get("hint")
@@ -538,13 +362,54 @@ class DailyPage(ctk.CTkFrame):
                 if got is None:
                     lbl.configure(text="")
                     continue
-                lbl.configure(text=got[0])
+                spec = self._HINT_FROM.get(r["name"])
+                editable = bool(spec and len(spec) > 5 and spec[5])
+                if editable:
+                    # 可编辑输入框：只在其值与配置里规整后的值不一致时才回填，且不抢正在编辑的焦点，
+                    # 避免把用户正在敲的内容/光标顶掉（正常路径 commit 后值已一致，这里通常不再 set）。
+                    ent = lbl
+                    try:
+                        focused = str(self.focus_get()) == str(ent)
+                    except Exception:
+                        focused = False
+                    want = got[0].split()[0]        # "N 轮" → "N"
+                    if not focused and ent.get() != want:
+                        ent.delete(0, "end")
+                        ent.insert(0, want)
+                else:
+                    lbl.configure(text=got[0])
                 tip = r.get("hint_tip")
                 if tip is not None:
                     tip.text = got[1]      # Tooltip 每次弹出才读 .text，改它即可换悬停说明
 
+    def _set_hint_param(self, name, raw):
+        """行内可编辑参数「改动即保存」：规整后写入对应任务配置（独立键，改动即落盘）。
+
+        目前只有抓鬼「单跑轮数」（tasks.zhuagui.loop.single_rounds，下限 1、非法回退已存值/默认 2）；
+        它与任务配置页的 max_rounds 是两个独立参数，互不影响。返回规整后的整数（供 Entry 回填）。"""
+        spec = self._HINT_FROM.get(name)
+        if not spec or not (len(spec) > 5 and spec[5]):
+            return None
+        loop_key, key, default = spec[0], spec[1], spec[2]
+        try:
+            val = max(1, int(float(raw)))
+        except (TypeError, ValueError):
+            val = None
+        cfg = cfg_mod.load_config()
+        tc = cfg_mod.task_config(cfg, name)
+        loopc = tc.setdefault(loop_key, {})
+        if val is None:
+            loopc.setdefault(key, default)
+            val = loopc[key]
+        else:
+            loopc[key] = val
+        cfg_mod.set_task_config(cfg, name, tc)
+        cfg_mod.save_config(cfg)
+        self.app.cfg = cfg
+        return val
+
     def _open_task_config(self, name):
-        """「⚠ 还需标定」按钮点击：打开「任务配置」页并滚动定位到该任务的配置卡。"""
+        """「⚙ 配置」：打开「任务配置」页并滚动定位到该任务的配置卡。"""
         self.app._show("config")
         cp = self.app.pages.get("config")
         if cp is not None and hasattr(cp, "reveal_card"):
@@ -553,97 +418,52 @@ class DailyPage(ctk.CTkFrame):
             except Exception:
                 pass
 
-    def _set_row_status(self, rec):
-        """就地刷新某行「就绪/未选中/还需标定」按钮与记录（不重建整表）。"""
-        name = rec["name"]
-        st_text, st_color = self._ready_meta(name, rec["step"]["enabled"])
-        rec["ready_text"], rec["ready_color"] = st_text, st_color
-        self._style_ready(rec["ready"], st_text, st_color)
-
-    def _find_row(self, name):
-        """按任务名找行记录（拖动后下标会变，统一用 name 定位）。"""
-        for g in self._rows:
-            for r in self._rows[g]:
-                if r["name"] == name:
-                    return r
-        return None
-
     def _build_section_header(self, g):
-        """区头：标题（点它折叠/展开）+ 整组启用开关 + 计数。折叠是按 group 记状态、
-        仅隐藏该区行；整组开关=整区停用/启用（行级开关独立保留，组关了再开回来行勾选仍在）。
-        两区分组固定（多人在前、单人在后），无 ▲▼ 挪动按钮。"""
+        """区头：折叠箭头 + 标题（点它折叠/展开）。纯只读：无整组开关、无勾选计数。"""
         bar = ctk.CTkFrame(self.list_frame, fg_color="transparent")
-        bar.grid_columnconfigure(2, weight=1)
+        bar.grid_columnconfigure(1, weight=1)
         collapsed = self._collapsed.get(g, False)
-        group_on = self._group_on.get(g, True)
         chev = ctk.CTkLabel(bar, text="▸" if collapsed else "▾", font=self.fonts["body_b"],
                             text_color=T.TEXT_DIM, width=22, anchor="w")
         chev.grid(row=0, column=0, sticky="w")
-        self._lbl_chevron[g] = chev
         title = ctk.CTkLabel(
             bar,
             text=f"{self._GROUP_EMOJI.get(g, '▪')} {GROUP_TITLES.get(g, g)}"
                  + (f" · {self._GROUP_DESC[g]}" if g in self._GROUP_DESC else ""),
-            font=self.fonts["h2"], text_color=(T.TEXT if group_on else T.TEXT_DIM), anchor="w")
+            font=self.fonts["h2"], text_color=T.TEXT, anchor="w")
         title.grid(row=0, column=1, sticky="w", padx=(2, 0))
-        self._lbl_title[g] = title
         for w in (chev, title):
             try:
                 w.configure(cursor="hand2")
             except Exception:
                 pass
             w.bind("<Button-1>", lambda e, gg=g: self._toggle_collapse(gg))
-        # 布局：标题右侧紧跟「已勾选 x/n」计数，整组启用开关放最右侧（重量列 2 把开关顶到右缘）。
-        var = ctk.BooleanVar(value=group_on)
-        self._group_vars[g] = var
-        sw = ctk.CTkSwitch(bar, text="", variable=var, width=44,
-                           progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
-                           command=lambda gg=g, v=var: self._toggle_group(gg, v))
-        sw.grid(row=0, column=3, sticky="e", padx=(0, 6))
-        lbl = ctk.CTkLabel(bar, text="", font=self.fonts["small"], text_color=T.TEXT_DIM)
-        lbl.grid(row=0, column=2, sticky="w", padx=(10, 0))
-        self._lbl_count[g] = lbl
+        Tooltip(title, "点标题折叠/展开本组。本组为只读清单，不能在这里勾选/排序；"
+                       "流程编排去起始页「🐉 日常任务」卡右上角「修改」。", self.fonts)
         return bar
 
     def _build_row(self, g, step):
-        """一张任务卡：左=拖动手柄，左二=执行序号徽标，中=标题+状态，右=启用开关。
-        标题（任务名）本身即「单跑」按钮：点它=只跑这一个任务，不落盘、不动勾选；
-        单跑中再点=停止。左键按住手柄上下拖动即可排序（仅本区内，见 _drag_*）。"""
+        """一张只读任务卡：左=占位（与旧版徽标等宽，对齐缩进），中=任务名(可点=单跑)+参数+就绪，
+        右=「⚙ 配置」。无手柄、无序号、无启用开关；聚合「刷副本」不在本清单展示（故无副本勾选区）。"""
         name = step["task"]
         row = ctk.CTkFrame(self.list_frame, fg_color=T.SURFACE_2, corner_radius=T.RADIUS_SM)
         row.grid_columnconfigure(2, weight=1)
 
-        # 左：拖动手柄（按住左键上下拖动整行排序）。光标设成移动样式（失败不致命）。
-        grip = ctk.CTkLabel(row, text="⠿", font=self.fonts["h2"], text_color=T.TEXT_DIM, width=22)
-        grip.grid(row=0, column=0, rowspan=2, sticky="ns", padx=(10, 2), pady=5)
-        try:
-            grip.configure(cursor="fleur")
-        except Exception:
-            pass
-        grip.bind("<Button-1>", lambda e, r=row: self._drag_start(e, r))
-        grip.bind("<B1-Motion>", self._drag_motion)
-        grip.bind("<ButtonRelease-1>", self._drag_end)
+        # 左：与旧版圆形徽标等宽的占位条，纯缩进对齐（只读清单不编号）。
+        spacer = ctk.CTkLabel(row, text="", width=26, height=26)
+        spacer.grid(row=0, column=0, rowspan=2, padx=(14, 12), pady=5)
 
-        # 左二：执行序号圆形徽标（启用=蓝底数字按全局先后编号；停用=灰底圆点，_renumber 里填）
-        badge = ctk.CTkLabel(row, text="", font=self.fonts["body_b"], width=26, height=26,
-                             corner_radius=13, text_color=T.ON_ACCENT, fg_color=T.ACCENT)
-        badge.grid(row=0, column=1, rowspan=2, padx=(2, 12), pady=5)
-
-        # 中：标题做成「按钮胶囊」（任务名=单跑入口），与就绪提示同排一行（卡片更矮）。
-        # 绿/蓝药丸质感：浅灰底圆角框，悬停/单跑中变主题蓝，一眼可点。
+        # 中：标题做成「按钮胶囊」（任务名=单跑入口），就绪提示同排。
         mid = ctk.CTkFrame(row, fg_color="transparent")
         mid.grid(row=0, column=2, rowspan=2, sticky="ew", pady=5)
         mid.grid_columnconfigure(0, weight=0)
         mid.grid_columnconfigure(1, weight=0)   # 参数提示（抓鬼轮数等），按内容自适应
         mid.grid_columnconfigure(2, weight=1)
-        base_on = self._group_on.get(g, True)
-        chip_fg = T.BTN if base_on else T.SURFACE
-        base_txt = T.TEXT if base_on else T.TEXT_DIM
-        chip = ctk.CTkFrame(mid, fg_color=chip_fg, corner_radius=T.RADIUS_SM)
+        chip = ctk.CTkFrame(mid, fg_color=T.BTN, corner_radius=T.RADIUS_SM)
         title = ctk.CTkLabel(chip, text=self._task_title(name), font=self.fonts["body_b"],
-                             text_color=base_txt, cursor="hand2", anchor="w")
-        title._chip_base = chip_fg          # 悬停还原基准色（整组启停/单跑高亮会就地更新它）
-        title._txt_base = base_txt
+                             text_color=T.TEXT, cursor="hand2", anchor="w")
+        title._chip_base = T.BTN          # 悬停还原基准色（单跑高亮会就地更新它）
+        title._txt_base = T.TEXT
         title.grid(row=0, column=0, padx=12, pady=4)
         chip.grid(row=0, column=0, sticky="w")
         title.bind("<Button-1>", lambda e, nm=name: self._start_single(nm))
@@ -656,95 +476,68 @@ class DailyPage(ctk.CTkFrame):
                     tl.configure(text_color=getattr(tl, "_txt_base", T.TEXT))))
         desc = self._TITLE_TOOLTIPS.get(name)
         Tooltip(title, (f"{desc}\n" if desc else "") +
-                "点任务名 = 单独跑这一个任务（一次性：不改动勾选/顺序、配置不落盘）；"
-                "单跑中再点这里=停止。整条龙一起跑用上方「开始日常」。", self.fonts)
+                "点任务名 = 单独跑这一个任务（一次性：不改流程、配置不落盘）；单跑中再点这里=停止。",
+                self.fonts)
 
-        # 关键参数提示（如抓鬼的「N 轮」）：夹在任务名与就绪标签之间，让人一眼看到「这趟会跑几轮」。
-        # 不用 Tooltip 自带的悬停延迟，直接跟任务名那颗 Tooltip 走同一套说明。
+        # 关键参数（如抓鬼轮数）：可编辑参数渲染成「输入框+单位」就地改（失焦/回车即存）；
+        # 其余仍是只读文本提示。
         hint_lbl = hint_tip = None
         got = self._step_hint(name)
         if got is not None:
-            hint_lbl = ctk.CTkLabel(mid, text=got[0], font=self.fonts["small"],
-                                    text_color=T.TEXT_DIM, anchor="w")
-            hint_lbl.grid(row=0, column=1, sticky="w", padx=(8, 0))
-            hint_tip = Tooltip(hint_lbl, got[1], self.fonts)
+            spec = self._HINT_FROM.get(name)
+            editable = bool(spec and len(spec) > 5 and spec[5])
+            unit = spec[3] if spec else ""
+            if editable:
+                box = ctk.CTkFrame(mid, fg_color="transparent")
+                box.grid(row=0, column=1, sticky="w", padx=(8, 0))
+                hint_lbl = ctk.CTkEntry(box, width=46, font=self.fonts["small"],
+                                        justify="center", fg_color=T.SURFACE_2,
+                                        border_color=T.BORDER)
+                hint_lbl.insert(0, got[0].split()[0])     # "N 轮" → "N"
+                hint_lbl.pack(side="left")
+                if unit:
+                    ctk.CTkLabel(box, text=unit, font=self.fonts["small"],
+                                 text_color=T.TEXT_DIM).pack(side="left", padx=(4, 0))
+                def _commit(_e=None, nm=name, ent=hint_lbl):
+                    val = self._set_hint_param(nm, ent.get())
+                    if val is not None:
+                        ent.delete(0, "end")
+                        ent.insert(0, str(val))
+                hint_lbl.bind("<FocusOut>", _commit)
+                hint_lbl.bind("<Return>", _commit)
+                hint_tip = Tooltip(hint_lbl, got[1], self.fonts)
+            else:
+                hint_lbl = ctk.CTkLabel(mid, text=got[0], font=self.fonts["small"],
+                                        text_color=T.TEXT_DIM, anchor="w")
+                hint_lbl.grid(row=0, column=1, sticky="w", padx=(8, 0))
+                hint_tip = Tooltip(hint_lbl, got[1], self.fonts)
 
-        # 状态三态（用户拍板 2026-09-23 调整顺序）：先看是否选中——未勾选=「未选中」；
-        # 选中了再看标定——未标定=「⚠ 还需标定」（可点跳任务配置页），标好了=「✓ 已就绪」。
-        st_text, st_color = self._ready_meta(name, step["enabled"])
+        # 就绪状态：✓ 已就绪 / ⚠ 还需标定（纯文字，不可点；标定走右侧⚙）。
+        st_text, st_color = self._ready_meta(name)
         ready_lbl = ctk.CTkButton(mid, text="", font=self.fonts["small"], height=24,
                                   corner_radius=T.RADIUS_SM, border_width=0)
         self._style_ready(ready_lbl, st_text, st_color)
         ready_lbl.grid(row=0, column=2, sticky="e", padx=(10, 0))
 
-        # 右一：任务配置按钮——点它跳「任务配置」页并定位到该任务的配置卡（标定/参数，改动即保存）。
+        # 右：任务配置按钮——跳「任务配置」页定位到该任务配置卡（标定/参数，改动即保存）。
         cfg_btn = ctk.CTkButton(row, text="⚙ 配置", font=self.fonts["small"], height=24,
                                 corner_radius=T.RADIUS_SM, border_width=0,
                                 fg_color=T.BTN, text_color=T.TEXT, cursor="hand2",
                                 command=lambda nm=name: self._open_task_config(nm))
-        cfg_btn.grid(row=0, column=3, rowspan=2, padx=(4, 6), pady=5)
+        cfg_btn.grid(row=0, column=3, rowspan=2, padx=(4, 14), pady=5)
         cfg_btn.bind("<Enter>",
                      lambda e, b=cfg_btn: b.configure(fg_color=T.ACCENT, text_color=T.ON_ACCENT))
         cfg_btn.bind("<Leave>",
                      lambda e, b=cfg_btn: b.configure(fg_color=T.BTN, text_color=T.TEXT))
         Tooltip(cfg_btn, "打开该任务在「任务配置」页的配置卡（标定 / 参数），改动即保存。", self.fonts)
 
-        # 右二：启用 / 停用开关（按任务名定位，拖动后下标会变，故 _toggle_step 用 name 不用 idx）。
-        # 整组停用时行级开关仍保留（组重开后行勾选恢复），仅视觉置灰。
-        var = ctk.BooleanVar(value=step["enabled"])
-        sw = ctk.CTkSwitch(row, text="", variable=var, width=44,
-                           progress_color=T.ACCENT, fg_color=T.BTN, button_color=T.ON_ACCENT,
-                           command=lambda nm=name, v=var: self._toggle_step(nm, v))
-        sw.grid(row=0, column=4, rowspan=2, padx=(8, 14), pady=5)
-        # 「刷副本」步：卡片下内嵌副本勾选（唯一入口在本页，任务配置页只做标定；存 tasks.dungeon.selected）。
-        if name == "dungeon":
-            self._build_dungeon_picker(row)
-        if not self._group_on.get(g, True):
-            sw.configure(state="disabled")
-            title.configure(text_color=T.TEXT_DIM)
-            self._style_ready(ready_lbl, st_text, T.TEXT_DIM)
-            for lbl in mid.winfo_children():
-                if isinstance(lbl, ctk.CTkLabel):
-                    lbl.configure(text_color=T.TEXT_DIM)
-
-        return {"frame": row, "name": name, "badge": badge, "ready": ready_lbl,
+        return {"frame": row, "name": name, "ready": ready_lbl,
                 "ready_text": st_text, "ready_color": st_color,
-                "title": title, "chip": chip, "chip_fg": chip_fg, "title_fg": base_txt,
-                "hint": hint_lbl, "hint_tip": hint_tip,
-                "sw": sw, "group": g, "idx": len(self._rows[g]), "step": step}
-
-    def _build_dungeon_picker(self, row):
-        """「刷副本」行卡片下方内嵌副本勾选：唯一入口在本页（任务配置页只做副本共用标定，不含勾选）。
-        读写共享 tasks.dungeon.selected；标题可点击折叠勾选区，折叠状态存 self._dun_pick_open，重建后保持。
-        每个【副本名】即是「单跑」按钮（on_run）——点它只刷那一个副本。"""
-        sep = ctk.CTkFrame(row, fg_color=T.BORDER, height=1)
-        sep.grid(row=2, column=0, columnspan=5, sticky="ew", padx=(14, 14), pady=(4, 6))
-        pick = DungeonPicker(row, app=self.app, fonts=self.fonts, on_change=self._on_dungeon_pick,
-                             caption="要刷的副本（按勾选顺序刷完 · 点副本名=只刷那一个）",
-                             collapsible=True,
-                             default_open=self._dun_pick_open, on_open_change=self._on_dun_pick_open,
-                             on_run=self._start_single_dungeon)
-        pick.grid(row=3, column=0, columnspan=5, sticky="ew", padx=(18, 16), pady=(0, 10))
-        pick.sync()          # 从配置回填当前勾选；配置里一个都没有就是全未勾（=这步不跑，别兜底勾第一个）
-        self._dungeon_picker = pick
-
-    def _on_dun_pick_open(self, open):
-        """副本勾选区折叠/展开状态（组件里点了标题）：存下，下次重建照着展开/收起。"""
-        self._dun_pick_open = bool(open)
-
-    def _on_dungeon_pick(self, name, checked, sel):
-        """副本勾选变化：config 已由组件写入；就地刷新「刷副本」行就绪 + 序号徽标/计数/执行顺序
-        （勾/取消最后一个副本会让这一步从「不跑」翻到「跑」或反之，序号与摘要必须跟着变）。
-        不重建整表——本来就是重建导致整表闪烁/丢滚动位置。"""
-        rec = self._find_row("dungeon")
-        if rec is not None:
-            self._set_row_status(rec)
-        self._steps_sig = self._steps_signature()
-        self._renumber()      # 末尾自带 _refresh_exec_order()
+                "title": title, "chip": chip, "chip_fg": T.BTN, "title_fg": T.TEXT,
+                "hint": hint_lbl, "hint_tip": hint_tip, "group": g, "step": step}
 
     def _grid_all(self):
-        """按 _flat 顺序把区头与行落回 list_frame 的 grid 行位（不销毁控件），再刷新序号/计数。
-        折叠区的行不占位（grid_forget），区头保留可随时再展开。"""
+        """按 _flat 顺序把区头与行落回 list_frame 的 grid 行位；折叠区的行 grid_forget 不占位。"""
         for pos, entry in enumerate(self._flat):
             if entry[0] == "header":
                 entry[2].grid(row=pos, column=0, sticky="ew", padx=4, pady=(12, 2))
@@ -755,317 +548,19 @@ class DailyPage(ctk.CTkFrame):
                     f.grid_forget()
                 else:
                     f.grid(row=pos, column=0, sticky="ew", pady=3, padx=4)
-        self._renumber()
-
-    def _runs_now(self, step):
-        """该行在本趟日常里【真会跑】吗：行级启用 且（非刷副本步 或 副本有勾选）。
-        与 tasks.daily._enabled_steps 同语义（整组开关由调用方另判）——「刷副本」开着但
-        一个都没勾 = 整步不跑，序号徽标/计数/执行顺序摘要都要按它算，否则界面会显示一步
-        引擎根本不执行的步。"""
-        if not step.get("enabled"):
-            return False
-        if step.get("task") == "dungeon" and self._selected_dungeon() is None:
-            return False
-        return True
-
-    def _renumber(self):
-        """按全局执行顺序刷新各行序号徽标 + 各区「已勾选 x/y」计数。折叠区行也参与编号（仍会执行）。
-        「真会跑」= _runs_now（含刷副本空选判定），与引擎 steps 口径一致。"""
-        order = 0
-        for entry in self._flat:
-            if entry[0] != "row":
-                continue
-            g, idx = entry[1], entry[2]
-            r = self._rows[g][idx]
-            if not self._group_on.get(g, True):
-                r["badge"].configure(text="·", fg_color=T.SURFACE, text_color=T.TEXT_DIM)
-            elif self._runs_now(r["step"]):
-                order += 1
-                r["badge"].configure(text=str(order), fg_color=T.ACCENT, text_color=T.ON_ACCENT)
-            else:
-                r["badge"].configure(text="·", fg_color=T.SURFACE, text_color=T.TEXT_DIM)
-        for g in self._group_order:
-            gsteps = self._steps_by_group(g)
-            n_on = sum(1 for s in gsteps if self._runs_now(s))
-            if g in self._lbl_count:
-                if not self._group_on.get(g, True):
-                    self._lbl_count[g].configure(text="整组停用 · 已勾选 %d/%d" % (n_on, len(gsteps)),
-                                                 text_color=T.WARN)
-                else:
-                    self._lbl_count[g].configure(text="已勾选 %d/%d" % (n_on, len(gsteps)),
-                                                 text_color=T.TEXT_DIM)
-        self._refresh_exec_order()
-
-    def _refresh_exec_order(self):
-        """刷新卡片底部「执行顺序」摘要：与引擎 _enabled_steps 同语义——只算「行级启用 + 整组启用 +
-        刷副本有勾选」的步，按 _steps 全局先后拼接任务名（多人组在前、单人组在后）。"""
-        lbl = getattr(self, "lbl_exec_order", None)
-        if lbl is None:
-            return
-
-        def runs(s):
-            return self._runs_now(s) and self._group_on.get(GROUP_OF[s["task"]], True)
-
-        names = [self._task_title_expanded(s["task"]) for s in self._steps if runs(s)]
-        if names:
-            # 计数时 dungeon 展开为勾选的副本数量（没勾的刷副本步本来就不会进 names）
-            count = 0
-            for s in self._steps:
-                if not runs(s):
-                    continue
-                if s["task"] == "dungeon":
-                    count += len(get_selected_dungeon_titles(self.app.cfg))
-                else:
-                    count += 1
-            lbl.configure(text=" -> ".join(names) + f" (共{count}项)", text_color=T.ACCENT)
-        else:
-            lbl.configure(text="（无，开始日常只会空转）", text_color=T.TEXT_DIM)
-
-    # ------------------------------------------------------------------
-    # 启用切换 / 左键拖动排序（区内）/ 两区互换 / 保存
-    # ------------------------------------------------------------------
-    def _toggle_step(self, name, var):
-        """行级启用/停用：只就地刷新该行状态 + 重排序号，不重建整表（重建会整表闪烁/丢滚动位置）。"""
-        for s in self._steps:
-            if s["task"] == name:
-                s["enabled"] = bool(var.get())
-                break
-        self._save()
-        self._sync_disband_lock()   # 单人任务勾选变化 → 解散开关联动（含单人任务时必须开）
-        rec = self._find_row(name)
-        if rec is not None:
-            self._set_row_status(rec)
-            self._renumber()
-        self._steps_sig = self._steps_signature()
-
-    def _toggle_group(self, g, var):
-        """整组启用开关：只改组级开关/区头/各行样式并重排（行级 enabled 独立保留，
-        组关了再开回来行勾选仍在）。就地更新，不重建整表。"""
-        on = bool(var.get())
-        self._group_on[g] = on
-        self._group_vars[g] = var
-        self._save()
-        self._sync_disband_lock()   # 单人整组停用/启用 → 解散开关联动
-        self._apply_group_appearance(g)
-        self._renumber()
-        if g in self._lbl_title:
-            self._lbl_title[g].configure(text_color=T.TEXT if on else T.TEXT_DIM)
-        self._steps_sig = self._steps_signature()
-        n = len(self._steps_by_group(g))
-        if on:
-            self._log_line(f"已启用「{GROUP_TITLES.get(g, g)}」整组（{n} 个任务回归日常流程）。", "info")
-        else:
-            self._log_line(f"已停用「{GROUP_TITLES.get(g, g)}」整组：日常跳过这 {n} 个任务"
-                           "（行级勾选保留，重新启用整组即恢复）。", "warn")
-
-    def _style_title(self, rec, chip_fg, txt):
-        """就地换某行标题胶囊配色，并同步「悬停还原基准色」（避免悬停后变回旧色）。"""
-        rec["chip"].configure(fg_color=chip_fg)
-        rec["title"].configure(text_color=txt)
-        rec["title"]._chip_base = chip_fg
-        rec["title"]._txt_base = txt
-
-    def _apply_group_appearance(self, g):
-        """整组启/停用后，就地刷该区所有行的置灰/恢复（开关禁用、胶囊配色、状态文字）。
-        单跑高亮的行保持高亮（不被打回普通灰）。"""
-        on = self._group_on.get(g, True)
-        for r in self._rows[g]:
-            if r is self._single_row:      # 单跑中：保持主题蓝高亮不动
-                r["sw"].configure(state="disabled" if not on else "normal")
-                continue
-            r["sw"].configure(state="disabled" if not on else "normal")
-            if on:
-                self._style_title(r, T.BTN, T.TEXT)
-            else:
-                self._style_title(r, T.SURFACE, T.TEXT_DIM)
-            self._set_row_status(r)
-            if not on:
-                self._style_ready(r["ready"], r["ready_text"], T.TEXT_DIM)
-
-    def _drag_start(self, event, frame):
-        """按按住的手柄定位其所在区与该区下标，进入拖动。"""
-        for g, rows in self._rows.items():
-            for k, r in enumerate(rows):
-                if r["frame"] is frame:
-                    self._drag = {"group": g, "idx": k}
-                    frame.configure(fg_color=T.BTN)   # 提起高亮
-                    frame.tkraise()
-                    return
-
-    def _drag_motion(self, event):
-        if not self._drag:
-            return
-        tgt = self._target_at_pointer()
-        if tgt is None:
-            return
-        g, idx = tgt
-        if g != self._drag["group"]:
-            return                                    # 只能区内排序，禁止跨区
-        if idx != self._drag["idx"]:
-            self._reorder(g, self._drag["idx"], idx)
-            self._drag["idx"] = idx
-
-    def _drag_end(self, event):
-        if not self._drag:
-            return
-        g, idx = self._drag["group"], self._drag["idx"]
-        self._drag = None
-        if 0 <= idx < len(self._rows[g]):
-            self._rows[g][idx]["frame"].configure(fg_color=T.SURFACE_2)
-        self._save()
-        self._steps_sig = None      # 顺序已变，强制下次干净重建
-        self._render_steps()
-
-    def _target_at_pointer(self):
-        """指针当前落在哪一行的行内位置（按行竖直中线判定）；命中返回 (区, 区内下标)，区头/越界/折叠区返回 None。
-        不销毁控件，故拖动中 winfo 几何有效。"""
-        py = self.list_frame.winfo_pointery()
-        for entry in self._flat:
-            if entry[0] != "row":
-                continue
-            g, idx = entry[1], entry[2]
-            f = self._rows[g][idx]["frame"]
-            if not f.winfo_ismapped():
-                continue
-            if py < f.winfo_rooty() + f.winfo_height() / 2:
-                return (g, idx)
-        return None
-
-    def _reorder(self, g, frm, to):
-        """把某区第 frm 行移到该区第 to 位：_steps（区内整段）/ _rows 同步搬动，再按 _flat 重排 grid 与序号。
-        全程不销毁控件——被按住的手柄控件存活，隐式 grab 不丢，B1-Motion 才能持续触发。"""
-        base = self._group_base(g)
-        self._steps.insert(base + to, self._steps.pop(base + frm))
-        self._rows[g].insert(to, self._rows[g].pop(frm))
-        for i, r in enumerate(self._rows[g]):
-            r["idx"] = i
-        self._grid_all()
-
-    def _group_base(self, g):
-        """该区任务在 _steps 里的段起点（段内连续、由 _normalize 保证）。"""
-        for i, s in enumerate(self._steps):
-            if GROUP_OF[s["task"]] == g:
-                return i
-        return 0
 
     def _toggle_collapse(self, g):
         """折叠/展开分区：只改 group 级折叠状态 + 重排可见行（不销毁控件、不重建整页）。"""
         self._collapsed[g] = not self._collapsed.get(g, False)
-        self._lbl_chevron[g].configure(text="▸" if self._collapsed[g] else "▾")
         self._grid_all()
 
-    def _save(self):
-        """把当前勾选/顺序/区顺序/时间上限/跑完关机写回配置（读盘再改，避免覆盖别处刚写入的配置）。"""
-        cfg = cfg_mod.load_config()
-        tc = cfg_mod.task_config(cfg, self.TASK_NAME)
-        tc["steps"] = [{"task": s["task"], "enabled": bool(s["enabled"])} for s in self._steps]
-        tc["group_enabled"] = {g: bool(self._group_on.get(g, True)) for g in _GROUPS}
-        loopc = tc.setdefault("loop", {})
-        try:
-            loopc["time_limit_min"] = max(0.0, round(float(self.var_limit.get()), 1))
-        except (TypeError, ValueError):
-            pass
-        loopc["shutdown_after"] = bool(self.var_shutdown.get())
-        sched = ""
-        if self.var_schedule_on.get():
-            raw = self.var_schedule_time.get().strip().replace("：", ":")
-            try:
-                hh, mm = raw.split(":")
-                hh, mm = max(0, min(23, int(hh))), max(0, min(59, int(mm)))
-                sched = f"{hh:02d}:{mm:02d}"
-            except (ValueError, TypeError):
-                sched = ""
-        loopc["schedule"] = sched
-        cfg_mod.set_task_config(cfg, self.TASK_NAME, tc)
-        cfg_mod.save_config(cfg)
-        self.app.cfg = cfg
-
-    def _on_shutdown_toggle(self):
-        self._save()
-        if self.var_shutdown.get():
-            self._log_line("已勾选「跑完关机」：整条龙全部跑完后进入关机倒计时，倒计时内可按「停止」/急停热键取消。",
-                           "warn")
-        else:
-            self._log_line("已取消「跑完关机」。", "info")
-
-    def _on_schedule_toggle(self):
-        self._save()
-        if self.var_schedule_on.get():
-            self._log_line(f"已开启定时延后执行：点「开始日常」会等到 {self.var_schedule_time.get()} 才真正执行（若该时刻已过则立即执行）。",
-                           "warn")
-        else:
-            self._log_line("已关闭定时延后执行：点「开始日常」立即执行。", "info")
-
-    def _on_disband_toggle(self):
-        """「跑完多人任务后解散队伍」开关：存共享 tasks.teaming.auto_disband（原在「多人任务」页组队设置卡，
-        组队设置现收在「任务配置」页顶部，此开关因影响日常运行仍留在本页）。
-        日常引擎跑完多人组后是否强制解散 = 该值；共享命名空间，副本页等别处也读到同一份。"""
-        on = bool(self.var_disband.get())
-        if self._has_single_selected():     # 单人任务组在本趟流程中：强制开（开关本已锁定，防逻辑缺口）
-            on = True
-            self.var_disband.set(True)
-        cfg = cfg_mod.load_config()
-        tc = cfg["tasks"].setdefault("teaming", {})
-        tc["auto_disband"] = on
-        cfg_mod.save_config(cfg)
-        self.app.cfg = cfg
-        self._log_line(("已开启：跑完多人任务后自动解散队伍。" if on
-                        else "已关闭：跑完多人任务后保留队伍（不主动解散）。"), "info")
-
-    def _on_skip_team_toggle(self):
-        """「已组队」开关：存共享 tasks.teaming.skip_team。多人步（刷副本/抓鬼）的就绪状态随它松紧
-        （勾上=不再要求组队标定），就地刷新那两行、不重建整表。"""
-        on = bool(self.var_skip_team.get())
-        cfg = cfg_mod.load_config()
-        tc = cfg["tasks"].setdefault("teaming", {})
-        tc["skip_team"] = on
-        cfg_mod.save_config(cfg)
-        self.app.cfg = cfg
-        for nm in ("dungeon", "zhuagui"):
-            rec = self._find_row(nm)
-            if rec is not None:
-                self._set_row_status(rec)
-        self._steps_sig = self._steps_signature()
-        self._log_line(("已开启：副本 / 抓鬼 视为已组好队，跳过自动组队、直接由队长跑。"
-                        if on else "已关闭：多人任务运行前会先自动组队。"), "info")
-
-    def _toggle_auto_organize(self):
-        """「自动整理背包」开关：存共享 tasks.organize_bag.auto_organize（在各任务交接处检测背包满自动整理）。"""
-        on = bool(self.switch_auto_organize.get())
-        cfg = cfg_mod.load_config()
-        ob_tc = cfg_mod.task_config(cfg, "organize_bag")
-        ob_tc["auto_organize"] = on
-        cfg_mod.set_task_config(cfg, "organize_bag", ob_tc)
-        cfg_mod.save_config(cfg)
-        self.app.cfg = cfg
-        if on:
-            tpl_ok = bool((ob_tc.get("templates", {}) or {}).get("bag_full_icon"))
-            self._log_line("已开启「自动整理背包」：日常串跑在任务交接时会检测背包满、满则自动整理。"
-                           + ("" if tpl_ok else " ⚠ 但还没标定『背包满图标』，请先去「工具 › 整理背包」页「标定」框选，否则不会触发。"),
-                           "warn" if not tpl_ok else "info")
-        else:
-            self._log_line("已关闭「自动整理背包」。", "info")
-
-    def _toggle_auto_tuoying(self):
-        """「自动拓印」开关：存 tasks.tuoying.enabled（全局）——关掉后整条链里遇到拓印弹窗都不自动描摹、
-        转手动（等人描完点「上传」，界面消失后自动续跑）。刷副本/宝图单跑也吃这份。"""
-        on = bool(self.switch_auto_tuoying.get())
-        cfg = cfg_mod.load_config()
-        tuo_tc = cfg["tasks"].setdefault("tuoying", {})
-        tuo_tc["enabled"] = on
-        cfg_mod.save_config(cfg)
-        self.app.cfg = cfg
-        self._log_line(("已开启「自动拓印」：遇拓印弹窗会自动描摹并点「上传」。" if on
-                        else "已关闭「自动拓印」：遇拓印弹窗不再自动描摹，请手动描完点「上传」，脚本会自动续跑。"),
-                       "warn" if not on else "info")
-
     # ------------------------------------------------------------------
-    # 定时延迟执行：点「开始」时若设了时刻则先生成等待截止点；到点/已过再真启动
+    # 定时延迟（整条龙 runner 服务；本页无可见控件，起始页日常卡转调）
     # ------------------------------------------------------------------
     @staticmethod
     def _sched_wait_target(sched, now):
-        """把定时串 "HH:MM" 换算成「下一次该时刻 datetime」：今天的该时刻还没到就用今天的；
-        已过（含恰好到点）则顺延到**明天**该时刻。非法/空=不等待(None)。"""
+        """把定时串 "HH:MM" 换算成「下一次该时刻 datetime」：今天该时刻还没到就用今天的；
+        已过（含恰好到点）顺延到明天该时刻。非法/空=不等待(None)。"""
         if not sched or ":" not in sched:
             return None
         try:
@@ -1081,11 +576,11 @@ class DailyPage(ctk.CTkFrame):
         return target
 
     # ------------------------------------------------------------------
-    # 运行控制
+    # 整条龙运行控制（runner 服务；UI 在起始页日常卡，save=False 由该卡先自行落盘设置）
     # ------------------------------------------------------------------
     def _toggle_run(self, save=True):
-        """开始/停止日常。save=False：调用方（起始页的日常卡）已在点击瞬间自行落盘设置，
-        这里就不再 _save()，免得用本页内存里可能过期的开关值（如时间上限）回写覆盖。"""
+        """开始/停止整条日常。save=False：调用方（起始页日常卡）已在点击瞬间自行落盘设置，
+        这里不再落盘，避免用过期值回写覆盖。"""
         if self.runner and self.runner.is_running():
             self.runner.stop()
             self._log_line("正在停止…", "warn")
@@ -1098,15 +593,12 @@ class DailyPage(ctk.CTkFrame):
                                    hover_color=T.ACCENT_HOVER, state="normal")
             self._log_line("已取消定时等待，本次不执行。", "warn")
             return
-        # 正常启动路径：先看有没有设置定时延迟执行
-        if save:
-            self._save()
+        # 正常启动路径：先看有没有设置定时延迟执行（设置只由起始页日常卡落盘，本页不写）
         self.app.cfg = cfg_mod.load_config()
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         sched = (tc.get("loop", {}) or {}).get("schedule", "") or ""
         target = self._sched_wait_target(sched, datetime.now())
         if target is not None:
-            # 设了定时 → 进入等待（已过则 _sched_wait_target 自动顺延到明天）
             self._wait_until = target
             self.btn_run.configure(text=f"等待到 {target:%m-%d %H:%M}…（再点取消）",
                                    fg_color=T.WARN, hover_color=T.WARN_HOVER, state="normal")
@@ -1126,7 +618,8 @@ class DailyPage(ctk.CTkFrame):
             self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
                                    hover_color=T.ACCENT_HOVER, state="normal")
             return
-        self.btn_run.configure(text="■  停止", fg_color=T.DANGER, hover_color=T.DANGER_HOVER, state="normal")
+        self.btn_run.configure(text="■  停止", fg_color=T.DANGER,
+                               hover_color=T.DANGER_HOVER, state="normal")
 
     def _on_runner_finished(self):
         self.runner = None
@@ -1134,12 +627,12 @@ class DailyPage(ctk.CTkFrame):
                                hover_color=T.ACCENT_HOVER, state="normal")
 
     # ------------------------------------------------------------------
-    # 单跑单个任务：daily 引擎 + 内存覆盖 steps（不落盘、不动勾选/顺序）
+    # 单跑单个任务：daily 引擎 + 内存覆盖 steps（不落盘、不动流程）
     # ------------------------------------------------------------------
     def _single_blocked(self):
         """整条龙在跑 / 定时等待中 → 单跑不可启动。返回 True=被挡（并已提示）。"""
         if self.runner and self.runner.is_running():
-            self._log_line("整条日常正在跑，请先「停止」停掉再「单跑」单独任务。", "warn")
+            self._log_line("整条日常正在跑，请先在起始页「日常任务」卡「停止」后再「单跑」单独任务。", "warn")
             return True
         if self._wait_until is not None:
             self._log_line("定时延后执行等待中，请先取消定时再「单跑」。", "warn")
@@ -1152,18 +645,18 @@ class DailyPage(ctk.CTkFrame):
             self._log_line("正在停止单跑…（线程收尾后自动复位）", "warn")
 
     @staticmethod
-    def _single_build_cfg(cfg, name, dungeon_only=None):
+    def _single_build_cfg(cfg, name):
         """单跑用运行配置：只改内存深拷贝，绝不触盘。steps=只含这一个任务（整步语义；
-        刷副本=当前勾选全部副本）；group_enabled 全开（绕过组级停用）；
-        副本级单跑额外把 tasks.dungeon.selected 覆盖成 [那一个]。
-        同时忽略「日常」页的整链设置（用户拍板）：单跑只按这个任务自己的流程走——
-        不套整体时间上限、绝不跑完关机、不做定时等待、不按「跑完解散」收尾解散、
-        不触发「自动整理背包」；「已组队」是当前会话的组队条件、属于共享组队设置，不动。"""
+        5 个副本子任务=只含该子任务名，引擎据此只集体刷那一本）；group_enabled 全开。
+        同时忽略整链设置：单跑只按这个任务自己的流程走——不套整体时间上限、绝不跑完关机、
+        不做定时等待、不按「跑完解散」收尾解散、不触发「自动整理背包」；「已组队」是当前会话的
+        组队条件、属于共享组队设置，不动。抓鬼单跑额外用日常页的「单跑轮数」single_rounds 在内存
+        顶替 max_rounds（只影响这一趟单跑，不改整链抓鬼轮数）。"""
         run_cfg = copy.deepcopy(cfg)
         daily = run_cfg.setdefault("tasks", {}).setdefault("daily", {})
         daily["steps"] = [{"task": name, "enabled": True}]
-        # 标记「steps 就是全部、别再补缺行」——否则引擎的「新任务补到末尾」会把其它
-        # CHAINABLE 任务全补回来，单跑就会跑成整条日常链（只影响本内存覆盖，不落盘）。
+        # 标记「steps 就是全部、别再补缺行」——否则引擎的缺行补齐会把其它 CHAINABLE 补回来，
+        # 单跑会跑成整条日常链（只影响本内存覆盖，不落盘）。
         daily["explicit_steps"] = True
         daily["group_enabled"] = {"single": True, "multi": True}
         loop = daily.setdefault("loop", {})
@@ -1172,48 +665,30 @@ class DailyPage(ctk.CTkFrame):
         loop.pop("schedule", None)          # 不做定时等待
         run_cfg.setdefault("tasks", {}).setdefault("teaming", {})["auto_disband"] = False
         run_cfg.setdefault("tasks", {}).setdefault("organize_bag", {})["auto_organize"] = False
-        if dungeon_only:
-            run_cfg.setdefault("tasks", {}).setdefault("dungeon", {})["selected"] = [dungeon_only]
+        if name == "zhuagui":
+            # 抓鬼单跑用「日常页单跑轮数」single_rounds（独立于整链的 max_rounds）：只在这份内存
+            # 覆盖里把 ZhuaguiTask 读的 max_rounds 顶替掉，不落盘、不影响整条龙跑抓鬼（user 2026-11-01）。
+            zg = run_cfg.setdefault("tasks", {}).setdefault("zhuagui", {})
+            zloop = zg.setdefault("loop", {})
+            try:
+                zloop["max_rounds"] = max(1, int(zloop.get("single_rounds", 2)))
+            except (TypeError, ValueError):
+                zloop["max_rounds"] = max(1, int(2))
         return run_cfg
 
     def _start_single(self, name):
-        """行级单跑：只跑这一个任务（与链内该步语义完全一致；刷副本=当前勾选全部副本）。
-        单跑进行中再点任意「单跑」= 停止当前单跑。"""
+        """行级单跑：只跑这一个任务。单跑进行中再点任意「单跑」=停止当前单跑。"""
         if self._single_blocked():
             return
         if self.single_runner and self.single_runner.is_running():
             self._stop_single()
             return
         title = self._task_title(name)
-        if name == "dungeon" and self._selected_dungeon() is None:
-            # 空勾选=这一步引擎根本不跑（与整行关掉等效），没有可单跑的东西；必须排在
-            # _task_status 之前，否则会被它判成 False 而误报「还需标定」。
-            self.app.toast("「刷副本」未勾选任何副本，单跑未启动（在下方勾选要刷的副本）。", T.WARN)
-            self._log_line("「刷副本」未勾选任何副本，单跑未启动。", "warn")
-            return
         if not self._task_status(name):
             self.app.toast(f"「{title}」还需标定，单跑未启动（去「任务配置」页标定后再试）。", T.WARN)
             self._log_line(f"「{title}」还需标定，单跑未启动。", "warn")
             return
         self._fire_single(name, self._single_build_cfg(self.app.cfg, name), title)
-
-    def _start_single_dungeon(self, dname):
-        """副本级单跑：只刷这一个副本（同一 daily 引擎，覆盖 tasks.dungeon.selected=[dname]）。"""
-        if self._single_blocked():
-            return
-        if self.single_runner and self.single_runner.is_running():
-            self._stop_single()
-            return
-        cls = get_task(dname)
-        title = cls.title if cls else dname
-        if not self._dungeon_calib_ok():
-            # 只查标定：本单跑自带 selected=[dname]，用 _task_status 会被「整体没勾副本」误拦
-            self.app.toast(f"「{title}」还需标定，单跑未启动（副本共用标定在「任务配置 › 刷副本」完成）。",
-                           T.WARN)
-            self._log_line(f"「{title}」还需标定，单跑未启动。", "warn")
-            return
-        self._fire_single("dungeon", self._single_build_cfg(self.app.cfg, "dungeon", dname),
-                          f"副本「{title}」", tag=title)
 
     def _fire_single(self, name, run_cfg, label, tag=None):
         """共用启动：DailyTask + 单跑覆盖配置塞进专用 runner。start 失败（preflight/全局锁/无窗口）
@@ -1229,10 +704,10 @@ class DailyPage(ctk.CTkFrame):
         self._single_label = label
         self._single_tag = tag or self._SINGLE_SOURCE.get(name)
         self._mark_single_row(name)
-        self._log_line(f"★ 单跑「{label}」：只跑这一个，其余不动（不改勾选/顺序、配置不落盘）★", "warn")
+        self._log_line(f"★ 单跑「{label}」：只跑这一个，其余不动（不改流程、配置不落盘）★", "warn")
 
     def _mark_single_row(self, name):
-        """把正在单跑的任务行高亮：标题胶囊变主题蓝（文字反白）+ 就绪标签改「▶ 正在单跑」；记下行供复位。"""
+        """把正在单跑的任务行高亮：标题胶囊变主题蓝（文字反白）+ 就绪标签改「▶ 正在单跑」。"""
         for g in self._rows:
             for r in self._rows[g]:
                 if r["name"] == name:
@@ -1243,7 +718,7 @@ class DailyPage(ctk.CTkFrame):
         self._single_row = None
 
     def _restore_single_row(self):
-        """复位单跑行（标题胶囊/就绪标签回构建时原样）。（行可能已被重建：经记录引用还原，失败则静默。）"""
+        """复位单跑行（标题胶囊/就绪标签回构建时原样）。行可能已被重建：经记录引用还原，失败则静默。"""
         r = self._single_row
         self._single_row = None
         if r is not None:
@@ -1252,6 +727,13 @@ class DailyPage(ctk.CTkFrame):
                 self._style_ready(r["ready"], r["ready_text"], r["ready_color"])
             except Exception:
                 pass
+
+    def _style_title(self, rec, chip_fg, txt):
+        """就地换某行标题胶囊配色，并同步「悬停还原基准色」（避免悬停后变回旧色）。"""
+        rec["chip"].configure(fg_color=chip_fg)
+        rec["title"].configure(text_color=txt)
+        rec["title"]._chip_base = chip_fg
+        rec["title"]._txt_base = txt
 
     def _single_finished(self):
         """单跑线程收尾：清状态、复位行标签、打结束日志。"""
@@ -1276,8 +758,6 @@ class DailyPage(ctk.CTkFrame):
         if self.runner:
             default_tag = getattr(self, "LOG_SOURCE", None)
             for level, msg, src in self.runner.drain_logs():
-                # 来源短标签：日常链每步把当前子任务名随日志带出来（src=任务名），
-                # 映射成单跑同款短标签（src 为空=流程/收尾类日志 → 回退「日常」）。
                 tag = self._SINGLE_SOURCE.get(src, default_tag) if src else default_tag
                 self.app.log_line(msg, level, tag)
             if not self.runner.is_running() and self.btn_run.cget("text") != self.RUN_LABEL:
@@ -1298,6 +778,3 @@ class DailyPage(ctk.CTkFrame):
     def _log_line(self, msg, level="info"):
         # 日志统一汇到 App 右侧全局面板，按本页 LOG_SOURCE 打来源标签。
         self.app.log_line(msg, level, getattr(self, "LOG_SOURCE", None))
-
-    def _clear_log(self):
-        self.app.clear_log()

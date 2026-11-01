@@ -220,6 +220,9 @@ class AppreciationTask(Task):
         # 先确认「活动」界面真的弹好了再翻卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
         if not self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0)):
             self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 切到「日常活动」标签再找卡：各号各自记住上次页签，停在别的标签时面板开着却没有鉴赏卡
+        # （daily_activity_tab 未标定/匹配失败静默跳过，与抓鬼/副本一致）。
+        self._click_daily_activity_tab(ctx, threshold)
         rec["scrolls"] = 0
         self._goto(rec, S_FIND_CARD)
 

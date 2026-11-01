@@ -240,6 +240,9 @@ class EscortTask(Task):
             ctx.log("已打开活动，等活动界面就绪（未标定 activity_ui_flag 或等待超时，按固定时长继续）…",
                     level="warn")
             self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 切到「日常活动」标签再找卡：各号各自记住上次页签，停在别的标签时面板开着却没有运镖卡
+        # （daily_activity_tab 未标定/匹配失败静默跳过，与抓鬼/副本一致）。
+        self._click_daily_activity_tab(ctx, threshold)
         rec["scrolls"] = 0
         self._goto(rec, S_FIND_CARD)
 

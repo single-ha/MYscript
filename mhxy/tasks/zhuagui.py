@@ -37,6 +37,7 @@ import time
 from ..core import scan
 from ..core import vision
 from ..core import window as win_mod
+from ..core.config import CAPTURES_DIR
 from ..core.teaming import (TeamFormation, TEAM_REQUIRED_REGIONS, TEAM_REQUIRED_TEMPLATES)
 from ..ui import ui_state
 from .base import Task, register
@@ -406,7 +407,12 @@ class ZhuaguiTask(Task):
 
     # ---- 开活动 → 找抓鬼卡片 → 点「参加」----
     def _open_and_join(self, ctx, loop, regions, threshold):
-        self._focus(ctx)
+        # 队长必须真正在最前：开活动快捷键发给前台窗口，且找卡片要抓队长号自己的画面。
+        # 5 开时号5固定在屏幕正中、被四角窗口各盖住约 40%，组队轮转结束时前台常停在最后处理的
+        # 队员窗口上；这里带校验地激活队长，激活不成就中止（避免在错误的号上开活动/抓错画面）。
+        if not self._captain_to_front(ctx):
+            ctx.log("无法把队长窗口切到前台，抓鬼中止（请检查是否有窗口挡住队长号）。", level="error")
+            return False
         if not ctx.send_hotkey("open_activity"):
             ctx.log("打不开活动界面（open_activity 未配置），中止。", level="error")
             return False
@@ -414,6 +420,10 @@ class ZhuaguiTask(Task):
         # 先确认「活动」界面真的弹好了再翻卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
         if not self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0)):
             self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 切到「日常活动」标签页再找卡片：各号各自记住上次停在哪个活动页签，队长号（尤其 5 开时的号5）
+        # 可能停在非日常页签——那样面板虽开着、列表里却没有抓鬼卡，翻遍也找不到（与 dungeon_base 同范式；
+        # daily_activity_tab 未标定/匹配失败时静默跳过，不影响旧行为）。
+        self._click_daily_activity_tab(ctx, threshold)
         list_region = regions.get("activity_list")
         # 找「参加」的微滚计数/告警标志（抓鬼本流程一次性发起、不复用轮转 record，局部状态即可）
         rec = {"_join_warned": False, "_nudges": 0}
@@ -422,6 +432,15 @@ class ZhuaguiTask(Task):
             rect = (ctx.window.region_to_screen_rect(list_region)
                     if list_region else ctx.window.rect())
             return rect
+
+        def grab_captain(rect):
+            # 找卡片专用抓图：每帧都确保抓到的是【队长号自己】的画面，而不是压在它上面的别的号。
+            # 号5(居中)与四角窗口大面积重叠，通用 grab_screen 的 5 点遮挡抽查会漏判/或前台窗口被压时
+            # 仍抓到覆盖窗口像素 → 肉眼有卡却模板永不命中（user 2026-11-01：号5当队长认不出抓鬼卡）。
+            # 这里显式 activate=True 走「遮挡则先激活、激活失败返回 None」的保守路径，宁缺勿错。
+            if rect is None:
+                return None
+            return ctx.window.grab_screen(rect, activate=True)
 
         def probe(scene, rect):
             hit = vision.match(scene, self.flags.get("gg_entry"), threshold,
@@ -448,7 +467,7 @@ class ZhuaguiTask(Task):
 
         res = scan.scroll_search(
             grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
-            grab_fn=ctx.window.grab_screen,
+            grab_fn=grab_captain,
             should_stop=ctx.should_stop,
             sleep=lambda s: self._interruptible_sleep(ctx, self._jitter(s, ctx)),
             scroll_step=loop.get("scroll_step", -3),
@@ -465,8 +484,51 @@ class ZhuaguiTask(Task):
             return True
         if res.stopped:
             return False
+        # 翻遍列表都没认出抓鬼卡片：留一张队长号活动列表区的真实抓图，方便区分「抓到了盖在上面的
+        # 别的号/画面错位」还是「卡片状态不同、模板没匹配上」（user 2026-11-01 号5队长认不出卡）。
+        self._capture_entry_not_found(ctx, list_region)
         ctx.log("翻找抓鬼卡片多次未果，中止。", level="error")
         return False
+
+    def _captain_to_front(self, ctx, tries=2):
+        """带校验地把队长窗口切到前台并置顶（找活动卡片前用）。
+
+        5 开时居中的号5会被四角窗口大面积盖住；通用 _focus 只 activate 一次且吞掉失败。这里重试并
+        用 is_foreground 校验，确保后续快捷键与抓图都落在队长号上。成功返回 True。"""
+        win = getattr(ctx, "window", None)
+        if win is None:
+            return False
+        for _ in range(max(1, tries)):
+            try:
+                if win.is_foreground():
+                    return True
+                if win.activate() and win.is_foreground():
+                    return True
+            except Exception:
+                pass
+            self._interruptible_sleep(ctx, self._jitter(0.3, ctx))
+        try:
+            return bool(win.is_foreground())
+        except Exception:
+            return False
+
+    def _capture_entry_not_found(self, ctx, list_region):
+        """翻遍活动列表仍没认出抓鬼卡片时的业务留证（captures/，不受 debug_log 控制）。
+
+        抓的就是队长号活动列表区域当时的真实像素：若图上压根不是本号活动列表（被别的号盖住/画面错位），
+        说明是前台/遮挡问题；若图上明明有抓鬼卡，说明是 gg_entry 模板/阈值问题。"""
+        try:
+            rect = (ctx.window.region_to_screen_rect(list_region)
+                    if list_region else ctx.window.rect())
+            scene = ctx.window.grab_screen(rect, activate=True) if rect else None
+            if scene is None:
+                return
+            fname = (time.strftime("%Y%m%d_%H%M%S") + "_zhuagui_entry_not_found.png")
+            ok = vision.save_image(str(CAPTURES_DIR / fname), scene)
+            if ok:
+                ctx.log(f"已留证队长号活动列表画面：{CAPTURES_DIR / fname}。", level="warn")
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # 通用：轮询等某模板出现就点它（命中返回 True；超时返回 False）。全程勤查 should_stop。

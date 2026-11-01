@@ -12,7 +12,7 @@ from ..common import Card, bind_wraplength, load_thumb
 from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...core.config import (ACTIVITY_UI_TPL_KEY, BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY,
-                             DAILY_ACTIVITY_TAB_TPL_KEY, JOIN_DONE_TPL_KEY,
+                             DAILY_ACTIVITY_TAB_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY, JOIN_DONE_TPL_KEY,
                              MAIN_ICON_TPL_KEYS, PANEL_CLOSE_TPL_KEY, POPUP_CLOSE_TPL_KEY,
                              SHARED_REGION_KEYS, SINGLE_TASK_ORDER)
 from ...core.teaming import TEAM_CALIB_TPL_KEYS, TEAM_REQUIRED_REGIONS
@@ -116,6 +116,7 @@ class ConfigPage(ctk.CTkFrame):
         self._team_card = TeamingCalibrationCard(scroll, self.app)
         self._team_card.grid(row=row, column=0, sticky="ew", padx=2, pady=(0, 12))
         self._sections[-1]["widgets"].append(self._team_card)
+        self._card_by_name["teaming"] = self._team_card   # 供 reveal_card("teaming") 定位
         row += 1
 
         # 单人任务区
@@ -215,6 +216,24 @@ class ConfigPage(ctk.CTkFrame):
             except Exception:
                 pass
 
+    def _refresh_leader_btn(self):
+        """转发给组队卡：App.refresh_leader_thumb 只按「页/子页」广播，组队卡是普通组件
+        收不到——不带这条转发，在队长ID库「设为当前/重新标定」后，本页组队卡上的队长
+        缩略图会停在旧图（要再进一次页面才刷新），现在广播后立即同步。"""
+        if hasattr(self, "_team_card"):
+            try:
+                self._team_card._refresh_leader_btn()
+            except Exception:
+                pass
+
+    def _refresh_leader_status(self):
+        # 同上：顺带把「队长ID：✓/⚠未标定」状态行也即时刷新（调组队卡完整 refresh）。
+        if hasattr(self, "_team_card"):
+            try:
+                self._team_card.refresh()
+            except Exception:
+                pass
+
     def stop_pending(self):
         if hasattr(self, "_team_card") and hasattr(self._team_card, "stop_pending"):
             try:
@@ -265,7 +284,7 @@ class ConfigPage(ctk.CTkFrame):
 
 
 class SharedCalibrationCard(ctk.CTkFrame):
-    """共享区域标定卡：活动/背包列表、战斗标识、小闹钟、主界面图标共用。"""
+    """共享区域标定卡：活动/背包列表、战斗标识、小闹钟、「使用」按钮、主界面图标共用。"""
 
     def __init__(self, master, app):
         super().__init__(master, fg_color="transparent")
@@ -285,7 +304,7 @@ class SharedCalibrationCard(ctk.CTkFrame):
         txt = ctk.CTkFrame(head, fg_color="transparent")
         txt.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(txt, text="公共区域（全局共享）", font=self.fonts["h2"], text_color=T.TEXT).grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(txt, text="活动列表/背包列表、战斗标识、小闹钟、主界面图标：标一次全任务通用。",
+        ctk.CTkLabel(txt, text="活动列表/背包列表、战斗标识、小闹钟、「使用」按钮、主界面图标：标一次全任务通用。",
                      font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w").grid(
             row=1, column=0, sticky="ew", pady=(2, 0))
         btns = ctk.CTkFrame(head, fg_color="transparent")
@@ -311,8 +330,8 @@ class SharedCalibrationCard(ctk.CTkFrame):
         req_reg_done = sum(1 for k in req_regions if sreg.get(k))
         opt_reg_done = 0
 
-        # 模板：必要 vs 可选
-        req_tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)
+        # 模板：必要 vs 可选（「使用」按钮已从宝图自身标定迁入公共标定，必标）
+        req_tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY)
         opt_tpl_keys = ((JOIN_DONE_TPL_KEY,) + MAIN_ICON_TPL_KEYS
                         + (POPUP_CLOSE_TPL_KEY, PANEL_CLOSE_TPL_KEY, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY))
         all_tpl_keys = req_tpl_keys + opt_tpl_keys

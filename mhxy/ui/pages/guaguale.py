@@ -30,7 +30,7 @@ class GuagualeConfig(ctk.CTkFrame):
         txt = ctk.CTkFrame(head, fg_color="transparent")
         txt.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(txt, text="刮刮乐", font=self.fonts["h2"], text_color=T.TEXT).pack(anchor="w")
-        ctk.CTkLabel(txt, text="福利 → 打开刮刮乐 → 刮奖区域刮开 → 有节日奖励就顺手领", font=self.fonts["small"],
+        ctk.CTkLabel(txt, text="福利 → 打开刮刮乐 → 刮奖区域刮开 → 有节日奖励就顺手领（领完点「使用」）", font=self.fonts["small"],
                      text_color=T.TEXT_DIM).pack(anchor="w", pady=(2, 0))
         btns = ctk.CTkFrame(head, fg_color="transparent")
         btns.grid(row=0, column=1, sticky="e")

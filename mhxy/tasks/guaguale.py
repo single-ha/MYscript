@@ -8,7 +8,9 @@
   主界面点「福利」按钮 → 点「打开刮刮乐」按钮 → 在标定的「刮奖区域」里按住鼠标 Z 字
   逐行来回扫、填满整块区域（loop.scratch_passes 遍） →
   有「节日奖励」按钮（今天有得领）就点它 → 等「领取节日奖励」按钮出现再点 → 等领奖弹窗
-  里的「奖励」图标出现再点（点了才真领奖）→
+  里的「奖励」图标出现再点（点了才真领奖）→ 等游戏弹出的「使用」按钮出现并点它
+  （走公共共享模板 flag_next_map，「任务配置」页「全局共享标定」卡里标，宝图同款通用；
+  超时没弹=直接收尾）→
   收尾：优先点共享「面板关闭按钮」(panel_close) 关层（领奖弹窗/刮奖界面/福利面板，最多
   loop.close_tries 层），找不到或没标就降级 ui_state.back_to_main_screen 逐层 Esc 回主界面。
 没有「节日奖励」按钮（今天没有/已领过）→ 直接进收尾。
@@ -29,6 +31,7 @@ import time
 
 from ..core import vision
 from ..ui import ui_state
+from ..core.config import FLAG_NEXT_MAP_TPL_KEY
 from .base import Task, register
 
 _NS = "guaguale"
@@ -42,11 +45,15 @@ S_FESTIVAL = "FESTIVAL"          # 等「节日奖励」按钮（可选；超时
 S_CLAIM_WAIT = "CLAIM_WAIT"      # 点完节日奖励，等「领取节日奖励」按钮出现
 S_CLAIM = "CLAIM"                # 点「领取节日奖励」
 S_REWARD = "REWARD"              # 等领奖弹窗里的「奖励」图标并点（点了才领奖）
+S_USE = "USE"                    # 点完「奖励」图标，等游戏弹「使用」按钮并点（公共共享模板，可选）
 S_CLOSE = "CLOSE"                # 收尾关面板回主界面
 
 # 必标模板 / 节日奖励三张可选模板（成组：任一没标就整段跳过领奖分支）
 _REQ_TPL = [("welfare", "福利按钮"), ("open_scratch", "打开刮刮乐按钮")]
 _FESTIVAL_TPL = ("festival_btn", "claim_festival", "reward_icon")
+# 点完「奖励」图标后等弹出的「使用」按钮：不标在刮刮乐里——走公共共享标定
+# tasks.shared.templates.flag_next_map（宝图同款），task_config 已把该键叠加进本任务 templates。
+_USE_TPL_KEY = FLAG_NEXT_MAP_TPL_KEY
 
 
 @register
@@ -88,6 +95,8 @@ class GuagualeTask(Task):
             # 标了一部分：说明用户想领但会卡在某一步 → 明确提示补标，但不拦跑
             problems.append("「节日奖励」三张模板（节日奖励按钮/领取节日奖励按钮/奖励图标）只标了一部分，"
                             "会领不到奖 —— 请把三张都标齐，或三张都不标（不领）")
+        # 公共「使用」按钮（点完「奖励」图标等弹出的那个）不进 preflight：没标时运行期只
+        # 白等到超时才收尾，不影响刮奖主流程，所以在 _do_use 里首次发现就警告（详见 _do_use）。
         if not ctx.select_windows():
             problems.append("没选到任何目标窗口 —— 请先「选择窗口」")
         return (len(problems) == 0), problems
@@ -142,6 +151,7 @@ class GuagualeTask(Task):
                 "festival_wait": float(loop.get("festival_wait_sec", 4)),
                 "claim_wait": float(loop.get("claim_wait_sec", 6)),
                 "reward_wait": float(loop.get("reward_icon_wait_sec", 6)),
+                "use_wait": float(loop.get("use_wait_sec", 6)),
                 "regions": regions,
                 "area": area, "n_rows": n_rows,
                 "step": max(3, int(loop.get("scratch_sample_step", 8))),
@@ -177,6 +187,8 @@ class GuagualeTask(Task):
             self._do_claim(ctx, rec)
         elif st == S_REWARD:
             self._do_reward(ctx, rec)
+        elif st == S_USE:
+            self._do_use(ctx, rec)
         elif st == S_CLOSE:
             self._do_close(ctx, rec)
 
@@ -342,19 +354,45 @@ class GuagualeTask(Task):
         self._goto(rec, S_REWARD)
 
     def _do_reward(self, ctx, rec):
-        """等领奖弹窗里的「奖励」图标并点（点了才真领奖）；超时跳过，不瞎点。"""
+        """等领奖弹窗里的「奖励」图标并点（点了才真领奖）；点完等游戏弹「使用」按钮（user 2026-11-01）。
+        超时跳过，不瞎点。"""
         scene_rect = self._scene_rect(ctx, rec["regions"])
         cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
         hit = self._match_scene(cur, scene_rect, "reward_icon", rec["threshold"])
         if hit is not None:
             self.click_after_hit(ctx, hit[0], hit[1])
-            ctx.log(f"点「奖励」图标（{hit[2]:.3f}），节日奖励已领。", level="hit")
+            ctx.log(f"点「奖励」图标（{hit[2]:.3f}），节日奖励已领，等「使用」按钮…", level="hit")
             self._interruptible_sleep(ctx, self._jitter(1.0, ctx))
-            self._goto(rec, S_CLOSE)
+            self._goto(rec, S_USE)     # 点完奖励图标先等「使用」按钮，出现点了再收尾
             return
         if time.time() - rec["t_state"] > rec["reward_wait"]:
             ctx.log(f"超 {rec['reward_wait']:.0f}s 没等到领奖弹窗里的「奖励」图标，跳过、直接收尾。",
                     level="warn")
+            self._goto(rec, S_CLOSE)
+
+    def _do_use(self, ctx, rec):
+        """点完「奖励」图标后游戏会弹「使用」按钮：等它出现并点击，才算真正用掉奖励，然后再收尾。
+        用的公共共享模板 flag_next_map（「任务配置」页「全局共享标定」卡的「使用」按钮，
+        与宝图挖完续挖同一个模板，标一次全通用）。超时没弹 → 不瞎点，直接收尾
+        （收尾的关面板/回主界面会处理弹窗层）。"""
+        scene_rect = self._scene_rect(ctx, rec["regions"])
+        cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
+        hit = self._match_scene(cur, scene_rect, _USE_TPL_KEY, rec["threshold"])
+        if hit is not None:
+            self.click_after_hit(ctx, hit[0], hit[1])
+            ctx.log(f"点「使用」按钮（{hit[2]:.3f}），刮刮乐流程完成，开始收尾。", level="hit")
+            self._interruptible_sleep(ctx, self._jitter(1.0, ctx))
+            self._goto(rec, S_CLOSE)
+            return
+        if self.flags.get(_USE_TPL_KEY) is None:
+            # 没标公共「使用」按钮：点完奖励在这等也等不到识别 → 第一眼就说明原因，不傻等超时
+            ctx.log("没标公共『使用』按钮（「任务配置」页「全局共享标定」卡，宝图同款，标一次全通用）——"
+                    "点完「奖励」图标后无法确认/点它，直接收尾。(标上后可自动点)", level="warn")
+            self._goto(rec, S_CLOSE)
+            return
+        if time.time() - rec["t_state"] > rec["use_wait"]:
+            ctx.log(f"点完「奖励」图标后超 {rec['use_wait']:.0f}s 没等到「使用」按钮"
+                    "（游戏没弹），直接收尾。", level="warn")
             self._goto(rec, S_CLOSE)
 
     def _do_close(self, ctx, rec):
@@ -403,7 +441,7 @@ class GuagualeTask(Task):
     def _load_flags(self, tc):
         templates = tc.get("templates", {})
         return {k: vision.load_template(templates.get(k)) if templates.get(k) else None
-                for k in _FESTIVAL_TPL + tuple(k for k, _ in _REQ_TPL)}
+                for k in _FESTIVAL_TPL + tuple(k for k, _ in _REQ_TPL) + (_USE_TPL_KEY,)}
 
     def _scene_rect(self, ctx, regions):
         region = regions.get("scene")

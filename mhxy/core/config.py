@@ -69,18 +69,25 @@ DAILY_ACTIVITY_TAB_TPL_KEY = "daily_activity_tab"
 # （比逐层按 Esc 更可靠——直接点面板自己的关闭按钮，不会误关别的层）
 # 不进 SHARED_TPL_KEYS（不叠加进各任务 templates）：与 popup_close 一样直接读 tasks.shared.templates。
 PANEL_CLOSE_TPL_KEY = "panel_close"
+# 挖宝「使用」按钮（存 tasks.shared.templates.flag_next_map，在「任务配置」页「全局共享标定」里标定）：
+# 挖完藏宝图后游戏自动弹出的「使用」按钮，宝图靠它续挖（必标）。原在宝图任务自身标定里标，
+# 2026-11-01 统一移到公共标定：标一次进 tasks.shared，task_config 叠加注入各任务 templates，
+# 宝图照旧 tc["templates"]["flag_next_map"] 读；未来任何「挖完弹『使用』继续」类玩法直接复用，不再各任务重标。
+FLAG_NEXT_MAP_TPL_KEY = "flag_next_map"
 # 共享模板的友好中文名（就绪/标定提示用的展示名，见 ui/common.shared_template_hint）。
 SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)",
                       "join_done": "完成标识",
+                      FLAG_NEXT_MAP_TPL_KEY: "「使用」按钮",
                       "activity_ui_flag": "活动界面标志",
                       DAILY_ACTIVITY_TAB_TPL_KEY: "日常活动标签",
                       POPUP_CLOSE_TPL_KEY: "弹窗关闭按钮(×)",
                       PANEL_CLOSE_TPL_KEY: "面板关闭按钮(×)"}
 # 共享模板键常量（用于标定对话框与配置卡片计数对齐）
 JOIN_DONE_TPL_KEY = "join_done"
-# 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟；shop/activity 由 ui_state 直接读 shared，
-# 不叠加，避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
-SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY)
+# 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟 + 挖宝「使用」按钮；shop/activity 由
+# ui_state 直接读 shared，不叠加，避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时
+# 会剥掉这些键防止回写冗余。
+SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY)
 
 # 周常（门派闯关/海底世界/迷魂塔）per-task 模板键都是通用的
 # card/join/confirm/enter/claim_task，若只按键名落盘 templates/tm_<key>.png 会让三任务共用
@@ -114,11 +121,11 @@ TASK_SHARED_REQ = {
 }
 
 # 各任务「就绪判定」还要查的共享模板键（tasks.shared.templates，同 TASK_SHARED_REQ 的语义，只是模板）。
-# 战斗标识（运镖/宝图必标）与小闹钟（刷副本/抓鬼必标）都已从各任务自身 CALIBRATION 移走、
-# 移到「任务配置」页「全局共享标定」卡统一标定。dungeon 指共享 tasks.dungeon 命名空间。
+# 战斗标识（运镖/宝图必标）、小闹钟（刷副本/抓鬼必标）与挖宝「使用」按钮（宝图必标）都已从各任务
+# 自身 CALIBRATION 移走、移到「任务配置」页「全局共享标定」卡统一标定。dungeon 指共享 tasks.dungeon 命名空间。
 TASK_SHARED_TPL_REQ = {
     "escort": (BATTLE_FLAG_TPL_KEY,),
-    "treasure_map": (BATTLE_FLAG_TPL_KEY,),
+    "treasure_map": (BATTLE_FLAG_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY),
     "dungeon": (CLOCK_TPL_KEY,),
     "zhuagui": (CLOCK_TPL_KEY,),
     "sect_gate": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY),
@@ -538,7 +545,8 @@ DEFAULT_CONFIG = {
                 "flag_treasure_entry": None, # 活动列表里「宝图任务」条目
                 "flag_join": None,           # 「宝图任务」那一行右侧的「参加」按钮（按行匹配点它）
                 "flag_tingting": None,       # 对话框「听听无妨」选项
-                "flag_next_map": None,       # 挖完弹出的「使用」按钮
+                "flag_next_map": None,       # 挖完弹出的「使用」按钮：已迁「任务配置」页公共标定（tasks.shared
+                                             #   叠加注入，见 SHARED_TPL_KEYS），此键仅兼容旧配置读取
                 "treasure_item": None,       # 背包里藏宝图道具图标（双击用图靠它定位）
                 "flag_bag_arrange": None     # 背包「整理」按钮（可选：回开背包确认前点一下让道具归位）
             }
@@ -719,7 +727,9 @@ DEFAULT_CONFIG = {
         "zhuagui": {
             "loop": {
                 "match_threshold": 0.85,     # 标志模板匹配阈值
-                "max_rounds": 2,             # 抓鬼轮数 = 领任务次数，跑满即停（默认 2）
+                "max_rounds": 2,             # 抓鬼轮数 = 领任务次数，跑满即停（整条龙跑抓鬼用，默认 2）
+                "single_rounds": 2,          # 日常页点「抓鬼」【单独跑】时的轮数：只在该单跑内存覆盖里顶替
+                                             #   max_rounds，与整链 max_rounds 相互独立、互不影响（user 2026-11-01）
                 "finish_cancel_rounds": None,  # 完成多少轮后改点「是否继续」弹窗的「取消」结束任务：None/空=跑满
                                              #   max_rounds 后点；正整数=提前到这轮结束后点（该轮战斗打完不发「继续」）；
                                              #   0=不点取消（保持旧行为：跑满直接结束）
@@ -973,7 +983,8 @@ DEFAULT_CONFIG = {
 
         # ---- 刮刮乐（单人任务，也可进日常个人组）----
         #   主界面点「福利」→ 点「打开刮刮乐」→ 在 scratch_area 刮奖区域里按住鼠标 Z 字来回扫填满
-        #   → 有「节日奖励」就点它、等「领取节日奖励」出现再点、再点领奖弹窗里的「奖励」图标 → 收尾关面板。
+        #   → 有「节日奖励」就点它、等「领取节日奖励」出现再点、再点领奖弹窗里的「奖励」图标、
+        #   等弹出的「使用」按钮出现并点它（走公共共享模板 flag_next_map，宝图同款）→ 收尾关面板。
         #   开刮前先确认在主界面（不在就逐层 Esc/右键带回，最多 ready_max 轮）。
         #   节日奖励三张模板（festival_btn/claim_festival/reward_icon）全可选：任一没标=整段跳过领奖。
         "guaguale": {
@@ -984,6 +995,7 @@ DEFAULT_CONFIG = {
                 "festival_wait_sec": 4,         # 刮完后等「节日奖励」按钮出现多久（没有=今天没得领，直接收尾）
                 "claim_wait_sec": 6,            # 点完节日奖励后等「领取节日奖励」按钮出现多久
                 "reward_icon_wait_sec": 6,      # 等领奖弹窗里的「奖励」图标出现多久
+                "use_wait_sec": 6,              # 点完「奖励」图标后等游戏弹「使用」按钮多久（超时=没弹，直接收尾）
                 "scratch_passes": 2,            # 刮奖区域来回扫几遍（不够干净就调大）
                 "scratch_line_gap": 10,         # 每行间距(px)：越小刮得越密、越慢
                 "scratch_sample_step": 8,       # 行内采样点间距(px)：越小越密、越慢
@@ -997,6 +1009,8 @@ DEFAULT_CONFIG = {
                 "festival_btn": None,           # 「节日奖励」按钮（可选）
                 "claim_festival": None,         # 「领取节日奖励」按钮（可选）
                 "reward_icon": None,            # 领奖弹窗里的「奖励」图标（可选）
+                # 点完「奖励」图标后弹出的「使用」按钮：不在这里标——走「任务配置」页「全局共享标定」卡
+                #   的「使用」按钮（tasks.shared.templates.flag_next_map，宝图同款），task_config 叠加注入。
             },
         },
 
@@ -1056,6 +1070,8 @@ def load_config():
         return copy.deepcopy(DEFAULT_CONFIG)
     cfg = _deep_merge(DEFAULT_CONFIG, user_cfg)
     if _migrate_shared_clock(cfg):
+        save_config(cfg)
+    if _migrate_shared_next_map(cfg):
         save_config(cfg)
     if _migrate_login_account_slots(cfg):
         save_config(cfg)
@@ -1272,6 +1288,28 @@ def _migrate_shared_clock(cfg):
         changed = True
     if "gg_nav" in zg:
         zg.pop("gg_nav", None)
+        changed = True
+    return changed
+
+
+def _migrate_shared_next_map(cfg):
+    """挖宝「使用」按钮标定迁「任务配置」页全局共享标定（tasks.shared）的一次性迁移（2026-11-01）：
+    把用户旧位置 tasks.treasure_map.templates.flag_next_map 搬到 tasks.shared.templates.flag_next_map，
+    搬完清掉旧任务的指针键（图片文件 templates/tm_flag_next_map.png 原地不动——宝图不在
+    TASK_SCOPED_TPL_TASKS 里，两个命名空间的落盘路径相同，shared 继续指着即可）。返回是否改动。"""
+    tasks = cfg.get("tasks") or {}
+    shared = tasks.get("shared") or {}
+    st = shared.setdefault("templates", {})
+    tmtpl = (tasks.get("treasure_map", {}) or {}).get("templates")
+    changed = False
+    old = tmtpl.get("flag_next_map") if isinstance(tmtpl, dict) else None
+    # 只对「真指针」做迁移：None 是 DEFAULT 的占位（新配置也带），动它只会造成一次无谓落盘。
+    if old and not st.get("flag_next_map"):
+        st["flag_next_map"] = old
+        shared["templates"] = st
+        changed = True
+    if old and isinstance(tmtpl, dict) and "flag_next_map" in tmtpl:
+        tmtpl.pop("flag_next_map", None)
         changed = True
     return changed
 

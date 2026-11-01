@@ -40,7 +40,7 @@ from ..core import rotation
 from ..core import scan
 from ..core.tuoying_flow import TuoyingFlow
 from ..ui import ui_state
-from ..core.config import BATTLE_FLAG_TPL_KEY
+from ..core.config import BATTLE_FLAG_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY
 from .base import Task, register
 
 # 每个号的状态机状态（非阻塞：每访问一次只推进一步）
@@ -64,11 +64,13 @@ _STILL_DIFF = 8.0   # 帧差低于此视为画面静止（人物不动）的默�
 
 # 必备模板（缺失则 preflight 阻断）与可选模板（缺失仅 warn）
 #   flag_join=活动列表里「宝图任务」那一行右侧的「参加」按钮——按行匹配点它（不是点条目本身）。
+#   flag_next_map=「使用」按钮已迁 tasks.shared（公共标定叠加注入），键仍列此供 templates.get 读值。
 _FLAG_KEYS = ["flag_treasure_entry", "flag_join", "flag_tingting",
               "battle_flag", "flag_next_map", "treasure_item", "flag_bag_arrange"]
-# 必备模板（缺失则 preflight 阻断）：battle_flag 虽不点它，但「静止判定」要在战斗期暂停——
-# 不标它一进战斗就被误判（收集提前完成/挖完），故必标。走公共共享模板 tasks.shared.templates.battle_flag
-# （「任务配置」页「全局共享标定」卡标定，全任务共用），task_config 已把它叠加进本任务 templates。
+# 必备模板（缺失则 preflight 阻断）：flag_next_map=「使用」按钮（挖宝续挖必点）与 battle_flag
+# （虽不点它，但「静止判定」要在战斗期暂停——不标它一进战斗就被误判收集提前完成/挖完）都要标。
+# 两者都走公共共享模板 tasks.shared.templates（在「任务配置」页「全局共享标定」卡标定，全任务共用，
+# task_config 已把它们叠加进本任务 templates）。
 _REQUIRED_FLAGS = ["flag_treasure_entry", "flag_join", "flag_tingting",
                    "flag_next_map", "battle_flag", "treasure_item"]
 
@@ -90,10 +92,10 @@ class TreasureMapTask(TuoyingFlow, Task):
             ("flag_treasure_entry", "宝图任务入口", "活动列表里「宝图任务」那一条，框图标+文字、要独特"),
             ("flag_join", "参加按钮", "活动列表里「宝图任务」那一行右侧的「参加」按钮，框按钮本身、要独特"),
             ("flag_tingting", "「听听无妨」选项", "和 NPC 对话弹框里要点的那个选项"),
-            ("flag_next_map", "「使用」按钮", "挖完一张后游戏自动弹出的继续按钮"),
             ("treasure_item", "藏宝图道具", "背包里藏宝图那个图标的样子"),
             ("flag_bag_arrange", "背包「整理」按钮", "打开背包后那个「整理」按钮。每次回开背包确认前先点它让道具归位（可选，找不到就跳过）", True),
-            # 战斗界面标志已移到「任务配置」页「全局共享标定」卡统一标定（全任务共用），见 tasks.shared
+            # 战斗界面标志 / 挖宝「使用」按钮（flag_next_map）已移到「任务配置」页「全局共享标定」卡
+            # 统一标定（全任务共用），task_config 叠加注入 templates，见 tasks.shared / SHARED_TPL_KEYS
         ],
         "watchlist": False,
     }
@@ -117,6 +119,8 @@ class TreasureMapTask(TuoyingFlow, Task):
             if not path or vision.load_template(path) is None:
                 if tk == BATTLE_FLAG_TPL_KEY:
                     problems.append("『战斗界面标志』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
+                elif tk == FLAG_NEXT_MAP_TPL_KEY:
+                    problems.append("『使用』按钮未标定 —— 请到「任务配置」页「全局共享标定」卡框选（宝图挖宝续挖必标，标一次全通用）")
                 else:
                     problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
@@ -285,6 +289,9 @@ class TreasureMapTask(TuoyingFlow, Task):
         # 先确认「活动」界面真的弹好了再翻卡片（标了 activity_ui_flag 生效；未标/超时退回原固定等待）。
         if not self._wait_activity_ui(ctx, threshold, loop.get("activity_ui_wait_sec", 3.0)):
             self._interruptible_sleep(ctx, self._jitter(0.6, ctx))
+        # 切到「日常活动」标签再找卡：各号各自记住上次页签，停在别的标签时面板开着却没有宝图卡
+        # （daily_activity_tab 未标定/匹配失败静默跳过，与抓鬼/副本一致）。
+        self._click_daily_activity_tab(ctx, threshold)
         rec["scrolls"] = 0
         self._goto(rec, S_FIND_CARD)
 

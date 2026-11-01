@@ -202,6 +202,7 @@
             "templates": {
                 "battle_flag": "templates/tm_battle_flag.png",
                 "clock": "templates/tm_clock.png",
+                "flag_next_map": "templates/tm_flag_next_map.png",
                 "shop_icon": "templates/tm_shop_icon.png",
                 "activity_icon": "templates/tm_activity_icon.png"
             }
@@ -302,7 +303,6 @@
                 "flag_treasure_entry": "templates/tm_flag_treasure_entry.png",
                 "flag_join": "templates/tm_flag_join.png",
                 "flag_tingting": "templates/tm_flag_tingting.png",
-                "flag_next_map": "templates/tm_flag_next_map.png",
                 "treasure_item": "templates/tm_treasure_item.png",
                 "flag_bag_arrange": "templates/tm_flag_bag_arrange.png"
             }

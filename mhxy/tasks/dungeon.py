@@ -104,6 +104,8 @@ class DungeonTask(Task):
         if dry_run:
             return
         if ok:
+            # 供「日常」把组队步骤后的多人步标为队伍已就绪（只组一次、不重复握手）。
+            self._team_formed = True
             ctx.log("✔ 组队完成。", level="hit")
         else:
             ctx.log(f"组队未完成（{reason}）。", level="warn")

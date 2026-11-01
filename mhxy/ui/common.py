@@ -139,6 +139,9 @@ class Tooltip:
     另加「窗口失焦就收起」：<Leave> 只在鼠标移出控件时触发，而切到别的程序时鼠标往往还停在
     控件上，<Leave> 永远不来；提示窗又带 -topmost，于是会一直浮在别的窗口上面。故用弱引用
     注册表 + 窗口级 <FocusOut>，失焦时把当前所有提示窗一并销毁（连没弹出来的待弹计时也取消）。
+
+    最后，被控控件被销毁（列表行整表重建）时也得收起：浮窗挂在主窗口下不随控件一起死，
+    故再绑一个 <Destroy> 主动关窗并取消待弹计时，杜绝“重建后提示不消失”的孤儿窗。
     """
 
     _delay_ms = 400
@@ -160,8 +163,15 @@ class Tooltip:
         # <Leave>，提示窗会一直悬着不消失；add="+" 追加，不覆盖控件原有的点击行为
         # （如任务名上的「单跑」<Button-1>）。
         widget.bind("<ButtonPress>", self._on_leave, add="+")
+        # 控件被销毁（行内 ＋/✕/改任务、刷新配置会整表重建）时同样要收起：提示浮窗
+        # 挂在主窗口 root 下，并不随被控控件一起销毁，不主动关就成了永不消失的孤儿窗。
+        widget.bind("<Destroy>", self._on_widget_destroy, add="+")
         Tooltip._live.add(self)
         self._bind_toplevel()
+
+    def _on_widget_destroy(self, _event):
+        self._cancel_pending()
+        self._hide()
 
     # —— 窗口失焦统一收起 ——
     def _bind_toplevel(self, root=None):
