@@ -10,6 +10,7 @@ import time
 
 from ..core import vision
 from ..core import window as win_mod
+from ..core.config import BUY_BUTTON_TPL_KEY
 from .base import Task, register
 
 
@@ -37,7 +38,9 @@ class SniperTask(Task):
             ("buy_want", "「我要购买」按钮", "进入「关注」页后的「我要购买」按钮"),
             ("refresh_1", "「坊」标识", "刷新：依次点它 + 「摊」标识，不点条目进货架"),
             ("refresh_2", "「摊」标识", "刷新：先点「坊」标识之后点它"),
-            ("buy_button", "购买按钮", "选中摊位后出现的「购买」按钮"),
+            # 「购买」按钮(buy_button) 已迁「任务配置」页「全局共享标定」卡（tasks.shared.buy_button），
+            # 抢关注下单与红/蓝不足补充守卫共用同一张；这里不再单列，旧标定由 _migrate_shared_buy_button
+            # 自动搬到公共标定、无需重标。confirm_button（二次确认）仍是抢关注私有。
             ("confirm_button", "确认购买按钮", "二次确认弹窗的按钮，没有可不标"),
         ],
         "watchlist": True,
@@ -337,6 +340,10 @@ class SniperTask(Task):
         供「坊/摊」标识刷新、购买/确认按钮这些会移动/变化的元素使用。"""
         tc = ctx.task_cfg(self.name)
         tpl_path = (tc.get("templates") or {}).get(key)
+        # 「购买」按钮已迁公共标定（tasks.shared.buy_button）：优先读公共，旧 sniper 位置保留兼容兜底。
+        if key == BUY_BUTTON_TPL_KEY and not tpl_path:
+            tpl_path = ((((ctx.cfg or {}).get("tasks", {}) or {}).get("shared", {}) or {})
+                        .get("templates", {}) or {}).get(BUY_BUTTON_TPL_KEY)
         rect = ctx.window.rect()
         if not tpl_path or rect is None:
             return False

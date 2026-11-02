@@ -6,10 +6,10 @@
   开活动 → 点「抓鬼」卡片右侧「参加」→ 角色自动寻路到 NPC
   → 等「领取抓鬼任务」出现并点击（点完【可能弹提醒弹窗】→点「取消」关掉再继续）
   → 点任务条目标签（自动寻路到鬼的位置）→ 领完自动进战斗 → 自动战斗打完
-  → 战斗结束弹「是否继续」→ 点「继续」（自动寻路到任务 NPC）
+  → 战斗结束弹「是否继续」→ 点「确定」（自动寻路到任务 NPC）
    → 再等「领取抓鬼任务」→ 点它 → 点任务条目 → 战斗 …… 循环
    → 直到 领满 loop.max_rounds 轮（轮回数=领任务次数，默认 2）→ 收尾：最后一轮战斗打完的
-     「是否继续」弹窗改点「取消」（gg_finish_cancel）结束抓鬼任务，不再点「继续」→ 结束。
+     「是否继续」弹窗改点「取消」（gg_finish_cancel）结束抓鬼任务，不再点「确定」→ 结束。
    （收尾轮数可调：loop.finish_cancel_rounds=None/空=跑满后点取消；正整数=提前到这轮结束后点；0=不点取消保持旧行为。）
 
 一轮领一次任务可能【连打 n 场战斗，全部打完才弹一次「是否继续」】。故一轮内的推进靠两层超时：
@@ -45,6 +45,8 @@ from .base import Task, register
 # 抓鬼自身模板键（gg_ 前缀=抓鬼，存盘 templates/tm_gg_*.png，避免与别的任务同名互相覆盖）。
 # 取任务条目寻路的图标（曾叫 gg_nav）= 任务栏的「小闹钟」（clock），已迁「任务配置」页全局共享标定、
 # 由 task_config 叠加进本任务 templates（见 SHARED_TPL_KEYS）；旧 gg_nav 值仅作兼容读取兜底。
+# gg_next（确定按钮）/ gg_cancel（提醒弹窗取消）同样已迁公共标定（tasks.shared，见 SHARED_TPL_KEYS），
+# 仍由 task_config 注入，故下面照读不误；旧值由 _migrate_shared_zhuagui_next 一次性搬到 shared。
 _FLAG_KEYS = ["gg_entry", "gg_join", "gg_claim", "clock", "gg_next", "gg_cancel", "gg_finish_cancel",
               "battle_flag"]   # battle_flag=公共标定(可选)：判「是否已进战」用，见文件头两层超时
 
@@ -66,13 +68,12 @@ class ZhuaguiTask(Task):
         "templates": [
             ("gg_entry", "活动卡片入口", "活动列表里「抓鬼」那张卡片，框图标+文字、要独特"),
             ("gg_join", "参加按钮", "抓鬼卡片右侧的「参加」按钮，框按钮本身、要独特"),
-            ("gg_claim", "领取抓鬼任务按钮", "自动寻路到任务 NPC 后对话框里那个「领取抓鬼任务」按钮；每轮都要点它领当前轮任务（第 1 轮与点「继续」寻路回 NPC 后都点）"),
+            ("gg_claim", "领取抓鬼任务按钮", "自动寻路到任务 NPC 后对话框里那个「领取抓鬼任务」按钮；每轮都要点它领当前轮任务（第 1 轮与点「确定」寻路回 NPC 后都点）"),
             # 取任务条目寻路的图标（曾叫 gg_nav）= 任务栏「小闹钟」，已迁「任务配置」页「全局共享标定」卡统一标定，
             # 这里不再单独标（见 tasks/shared + SHARED_TPL_KEYS + CLOCK_TPL_KEY）。
-            ("gg_next", "继续按钮（是否继续弹窗）", "这场战斗打完弹出「是否继续」弹窗，点里面的「继续」自动寻路到任务 NPC 领下一轮（最后一轮不点）"),
+            # gg_next（确定按钮）/ gg_cancel（提醒弹窗取消）也已迁「任务配置」页「全局共享标定」卡
+            # （见 SHARED_TPL_KEYS + GG_NEXT_TPL_KEY/GG_CANCEL_TPL_KEY），这里不再单列；旧标定自动迁移、无需重标。
             ("gg_finish_cancel", "结束轮取消按钮（是否继续弹窗）", "「是否继续」弹窗里的「取消」按钮：跑满设定轮数（loop.finish_cancel_rounds）后点它结束抓鬼任务——不点任务会一直挂着，回不到外面界面"),
-            ("gg_cancel", "提醒弹窗取消按钮", "点「领取抓鬼任务」后可能弹出的提醒弹窗内的「取消」按钮；"
-                                                "没标=弹窗时不处理（可能挡着下一步点不到任务条目）", True),
         ],
         "watchlist": False,
     }
@@ -112,7 +113,9 @@ class ZhuaguiTask(Task):
         if not regions.get("activity_list"):
             problems.append("『活动列表区域』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（所有任务共用）")
         templates = tc.get("templates", {})
-        for tk in ["gg_entry", "gg_join", "gg_claim", "gg_next", "gg_finish_cancel"]:
+        # gg_next（确定按钮）已迁公共标定，其就绪检查走 TASK_SHARED_TPL_REQ（ui 卡片 shared_template_hint），
+        # 不再列入本任务私有必需模板；这里只校验仍归抓鬼私有的四项。
+        for tk in ["gg_entry", "gg_join", "gg_claim", "gg_finish_cancel"]:
             p = templates.get(tk)
             if not p or vision.load_template(p) is None:
                 problems.append(f"抓鬼模板『{tk}』缺失或加载失败 —— 请在本页「标定」里框选裁图")
@@ -230,16 +233,16 @@ class ZhuaguiTask(Task):
         if not self._open_and_join(ctx, loop, regions, threshold):
             return
 
-        need_continue = False   # 第 1 轮直接领任务；打完第 1 轮后，每轮开头先点「继续」寻路回任务 NPC
-        cancel_rounds = self._cancel_rounds(loop)   # 收尾轮数：>0 时本轮战斗打完不点「继续」，改点「取消」结束；0=不点取消
+        need_continue = False   # 第 1 轮直接领任务；打完第 1 轮后，每轮开头先点「确定」寻路回任务 NPC
+        cancel_rounds = self._cancel_rounds(loop)   # 收尾轮数：>0 时本轮战斗打完不点「确定」，改点「取消」结束；0=不点取消
         for round_no in range(1, self.max_rounds + 1):
             if ctx.should_stop():
                 return
 
             if need_continue:
-                # 上一轮战斗打完 → 弹「是否继续」→ 点「继续」自动寻路到任务 NPC
-                if not self._click_when(ctx, "gg_next", "继续（是否继续）", regions, threshold, step_to):
-                    ctx.log(f"等「继续」超时（第 {round_no} 轮开头弹窗），中止。", level="error")
+                # 上一轮战斗打完 → 弹「是否继续」→ 点「确定」自动寻路到任务 NPC
+                if not self._click_when(ctx, "gg_next", "确定（是否继续）", regions, threshold, step_to):
+                    ctx.log(f"等「确定」超时（第 {round_no} 轮开头弹窗），中止。", level="error")
                     return
 
             # 寻路到任务 NPC 后：等「领取抓鬼任务」出现并点它；
@@ -267,7 +270,7 @@ class ZhuaguiTask(Task):
                     ctx.log(f"第 {round_no} 轮战斗异常（{why}），中止。", level="error")
                 return
             ctx.log(f"★ 第 {round_no}/{self.max_rounds} 轮抓鬼完成。★", level="hit")
-            # 收尾：完成设定轮数后不点「继续」，改点「是否继续」弹窗的「取消」结束抓鬼任务
+            # 收尾：完成设定轮数后不点「确定」，改点「是否继续」弹窗的「取消」结束抓鬼任务
             if cancel_rounds > 0 and round_no >= cancel_rounds:
                 if self._click_finish_cancel(ctx, loop, regions, threshold):
                     ctx.log(f"已跑满 {round_no} 轮抓鬼，点「取消」结束任务。", level="hit")
@@ -320,7 +323,7 @@ class ZhuaguiTask(Task):
             self._interruptible_sleep(ctx, self._jitter(0.25, ctx))
         return True
 
-    # ---- 等本轮结束：一轮可能连打 n 场，全部打完才弹一次「是否继续」(gg_next) ----
+    # ---- 等本轮结束：一轮可能连打 n 场，全部打完才弹一次「是否继续」(gg_next=点「确定」) ----
     def _wait_round_end(self, ctx, loop, regions, threshold, battle_gap_to, round_to, round_no):
         """等第 round_no 轮打完（返回 (ok, why)：why=None=成功/已停止，非 None=中止原因，由调用方打 error）。
 

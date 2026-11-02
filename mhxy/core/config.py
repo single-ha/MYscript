@@ -74,20 +74,38 @@ PANEL_CLOSE_TPL_KEY = "panel_close"
 # 2026-11-01 统一移到公共标定：标一次进 tasks.shared，task_config 叠加注入各任务 templates，
 # 宝图照旧 tc["templates"]["flag_next_map"] 读；未来任何「挖完弹『使用』继续」类玩法直接复用，不再各任务重标。
 FLAG_NEXT_MAP_TPL_KEY = "flag_next_map"
+# 商城/摆摊窗口通用「购买」按钮（存 tasks.shared.templates.buy_button，在「任务配置」页
+# 「全局共享标定」卡里标定）：原只在「抢关注」(sniper) 自身标定里标（sniper 的 buy_button，
+# 落盘 templates/tm_buy_button.png），2026-11-03 迁到公共标定——抢关注与红/蓝不足补充守卫
+# （base._handle_hpmp_purchase 第 2 步「购买」）共用同一张，标一次全通用。不进 SHARED_TPL_KEYS：
+# 抢关注与守卫都像读 shop_icon 那样直接读 tasks.shared.templates（旧 sniper 值保留兼容兜底）。
+BUY_BUTTON_TPL_KEY = "buy_button"
+# 抓鬼「是否继续」弹窗的「确定」按钮（存 tasks.shared.templates.gg_next，在「任务配置」页「全局共享标定」
+# 卡里标定）：每场战斗打完弹「是否继续」，点它自动寻路回任务 NPC 领下一轮（最后一轮不点）；它也是抓鬼
+# 判定「本轮打完」的结束信号。原在抓鬼自身标定里标（显示名「继续按钮」），2026-11-02 统一移到公共标定。
+# 键名/落盘文件 tm_gg_next.png 保持不变（图原地不动），仅改存储位置；抓鬼必标。
+GG_NEXT_TPL_KEY = "gg_next"
+# 抓鬼领任务后概率弹出的「提醒弹窗」里的「取消」按钮（存 tasks.shared.templates.gg_cancel，公共标定，可选）：
+# 弹窗挡着会点不到任务条目，命中就点掉；没标=弹窗时不处理。原在抓鬼自身标定，2026-11-02 一并迁公共标定。
+GG_CANCEL_TPL_KEY = "gg_cancel"
 # 共享模板的友好中文名（就绪/标定提示用的展示名，见 ui/common.shared_template_hint）。
 SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)",
                       "join_done": "完成标识",
                       FLAG_NEXT_MAP_TPL_KEY: "「使用」按钮",
+                      BUY_BUTTON_TPL_KEY: "购买按钮",
+                      GG_NEXT_TPL_KEY: "确定按钮",
+                      GG_CANCEL_TPL_KEY: "提醒弹窗取消按钮",
                       "activity_ui_flag": "活动界面标志",
                       DAILY_ACTIVITY_TAB_TPL_KEY: "日常活动标签",
                       POPUP_CLOSE_TPL_KEY: "弹窗关闭按钮(×)",
                       PANEL_CLOSE_TPL_KEY: "面板关闭按钮(×)"}
 # 共享模板键常量（用于标定对话框与配置卡片计数对齐）
 JOIN_DONE_TPL_KEY = "join_done"
-# 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟 + 挖宝「使用」按钮；shop/activity 由
-# ui_state 直接读 shared，不叠加，避免无谓污染各任务模板配置）。calibrate_dialog._save 写任务命名空间时
-# 会剥掉这些键防止回写冗余。
-SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY)
+# 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟 + 挖宝「使用」按钮 + 抓鬼确定/提醒取消；
+# shop/activity 由 ui_state 直接读 shared，不叠加，避免无谓污染各任务模板配置）。
+# calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
+SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
+                   GG_NEXT_TPL_KEY, GG_CANCEL_TPL_KEY)
 
 # 周常（门派闯关/海底世界/迷魂塔）per-task 模板键都是通用的
 # card/join/confirm/enter/claim_task，若只按键名落盘 templates/tm_<key>.png 会让三任务共用
@@ -121,13 +139,14 @@ TASK_SHARED_REQ = {
 }
 
 # 各任务「就绪判定」还要查的共享模板键（tasks.shared.templates，同 TASK_SHARED_REQ 的语义，只是模板）。
-# 战斗标识（运镖/宝图必标）、小闹钟（刷副本/抓鬼必标）与挖宝「使用」按钮（宝图必标）都已从各任务
-# 自身 CALIBRATION 移走、移到「任务配置」页「全局共享标定」卡统一标定。dungeon 指共享 tasks.dungeon 命名空间。
+# 战斗标识（运镖/宝图必标）、小闹钟（刷副本/抓鬼必标）、挖宝「使用」按钮（宝图必标）与抓鬼「确定」按钮
+# （gg_next）都已从各任务自身 CALIBRATION 移走、移到「任务配置」页「全局共享标定」卡统一标定。
+# 抓鬼的「提醒弹窗取消」(gg_cancel) 是可选项，不列入必需。dungeon 指共享 tasks.dungeon 命名空间。
 TASK_SHARED_TPL_REQ = {
     "escort": (BATTLE_FLAG_TPL_KEY,),
     "treasure_map": (BATTLE_FLAG_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY),
     "dungeon": (CLOCK_TPL_KEY,),
-    "zhuagui": (CLOCK_TPL_KEY,),
+    "zhuagui": (CLOCK_TPL_KEY, GG_NEXT_TPL_KEY),
     "sect_gate": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY),
     "underwater": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY),
     "maze_tower": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY),
@@ -419,6 +438,21 @@ DEFAULT_CONFIG = {
         "click_settle_sec": 0.6,   # 点完「×」后等弹窗消失的冷却秒数
         "esc_fallback": True,      # × 点不掉时按 Esc 兜底（只在这种已确认有弹窗时才按）
         "max_esc": 2               # 同一弹窗 Esc 次数封顶，超限告警一次后放弃（避免死循环）
+    },
+
+    # ---- 红/蓝不足补充守卫：日常任务等待期检测「补充红/蓝」弹窗，按 确定→购买→使用→关窗 自动处理 ----
+    #   挂在 base._interruptible_sleep 的节流守卫里（和弹窗守卫同节拍）。三步按钮全部【复用公共标定】，
+    #   不新增模板：确定=「确定按钮」gg_next（抓鬼那一个）、购买=「购买按钮」buy_button（原抢关注标定，
+    #   已迁公共）、使用=「「使用」按钮」flag_next_map（宝图那一个），关窗复用 panel_close（可选，
+    #   没标则在确认购买窗口仍开时按 Esc 兜底）。前三张都标定守卫才启用，缺一静默；
+    #   只在目标窗口已在前台时点击（多开不乱点）。
+    "hpmp_guard": {
+        "enabled": True,           # 总开关。默认开；前三张模板没标齐时自动无效
+        "interval_sec": 2.0,       # 两次扫描的最小间隔秒数（节流）
+        "match_threshold": 0.85,   # 三张按钮模板匹配阈值
+        "step_settle_sec": 0.8,    # 每点一步后等界面切换的秒数（确定→商城、购买→背包/使用提示）
+        "step_timeout_sec": 12.0,  # 每一步等目标按钮出现的超时；超时放弃本次处理（避免死循环），下次扫描重来
+        "use_settle_sec": 1.0      # 点完「使用」到去关窗之间的额外等待
     },
 
     # ---- 游戏快捷键：脚本按「动作名」调用的语义映射（ctx.send_hotkey("open_bag")，键名列表）----
@@ -744,7 +778,7 @@ DEFAULT_CONFIG = {
                                              #   battle_recover_max 次）。判「是否在战斗中」用公共标定
                                              #   battle_flag（tasks.shared），未标则不补点、退回只等 gg_next
                 "battle_recover_max": 3,     # 进战超时后补点小闹钟的次数上限，连续超限即中止本轮
-                "round_timeout_sec": 3600,   # 本轮打完上限：等「是否继续」(gg_next) 出现，挂 60min 没出现
+                "round_timeout_sec": 3600,   # 本轮打完上限：等「是否继续」弹窗的「确定」(gg_next) 出现，挂 60min
                                              #   视为一场战斗永远没打完的异常，中止（兜底看门狗）
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
                 "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
@@ -768,9 +802,10 @@ DEFAULT_CONFIG = {
                 "gg_claim": None,            # 寻路到任务 NPC 后「领取抓鬼任务」按钮（每轮点它领当前轮）
                 "clock": None,              # 小闹钟(寻路)：任务栏那个图标，点任务条目等价点它寻路；现由「任务配置」页
                                             #   公共标定注入（tasks.shared，见 SHARED_TPL_KEYS），此键仅兼容旧配置读取
-                "gg_cancel": None,           # 点「领取抓鬼任务」后可能弹出的提醒弹窗里的取消按钮（可选；没标=弹窗时不处理）
-                "gg_next": None,             # 「是否继续」弹窗里的「继续」按钮（战斗打完且还没跑满时，点它寻路回 NPC 领下一轮）
-                "gg_finish_cancel": None     # 「是否继续」弹窗里的「取消」按钮（战斗打完且已到收尾轮时，点它结束抓鬼任务）
+                # gg_next（确定按钮）/ gg_cancel（提醒弹窗取消）已迁「任务配置」页「全局共享标定」卡
+                # （tasks.shared，见 SHARED_TPL_KEYS + GG_NEXT_TPL_KEY/GG_CANCEL_TPL_KEY），由 task_config
+                # 叠加注入，这里不再单列；旧值由 _migrate_shared_zhuagui_next 一次性搬走（tm_gg_*.png 原地不动）。
+                "gg_finish_cancel": None     # 「是否继续」弹窗里的「取消」按钮（战斗打完且已到收尾轮时，点它结束抓鬼任务；仍是抓鬼私有标定）
             }
         },
 
@@ -799,6 +834,10 @@ DEFAULT_CONFIG = {
                 "activity_ui_flag": None, # 活动界面标志（可选，发 open_activity 后等它出现再翻找卡片）
                 "daily_activity_tab": None, # 日常活动标签（可选，活动界面顶部的「日常活动」标签页）
                 "panel_close": None,     # 面板关闭按钮（可选，背包/商城/人物信息面板右上角「×」）
+                "gg_next": None,         # 抓鬼「确定」按钮（抓鬼必标）：「是否继续」弹窗里点它寻路回 NPC 领下一轮，也是本轮结束信号；红/蓝补充守卫第 1 步复用
+                "gg_cancel": None,       # 抓鬼提醒弹窗「取消」按钮（可选）：领任务后概率弹窗，命中点掉防挡画面
+                "buy_button": None,      # 通用「购买」按钮（原抢关注 sniper 的购买按钮，已迁公共）：抢关注下单 + 红/蓝补充守卫第 2 步共用
+                # 红/蓝补充第 3 步「使用」复用 flag_next_map（「使用」按钮），关窗复用 panel_close，均不另列。
             },
         },
 
@@ -1074,6 +1113,10 @@ def load_config():
         save_config(cfg)
     if _migrate_shared_next_map(cfg):
         save_config(cfg)
+    if _migrate_shared_zhuagui_next(cfg):
+        save_config(cfg)
+    if _migrate_shared_buy_button(cfg):
+        save_config(cfg)
     if _migrate_login_account_slots(cfg):
         save_config(cfg)
     if _migrate_dungeon_ready(cfg):
@@ -1331,6 +1374,59 @@ def _migrate_shared_next_map(cfg):
     if old and isinstance(tmtpl, dict) and "flag_next_map" in tmtpl:
         tmtpl.pop("flag_next_map", None)
         changed = True
+    return changed
+
+
+def _migrate_shared_buy_button(cfg):
+    """商城/摆摊「购买」按钮标定迁「任务配置」页全局共享标定（tasks.shared）的一次性迁移（2026-11-03）：
+    把用户旧位置 tasks.sniper.templates.buy_button（抢关注的购买按钮）搬到
+    tasks.shared.templates.buy_button，搬完清掉抢关注命名空间里的旧指针键。图片文件
+    templates/tm_buy_button.png 原地不动（sniper 不在 TASK_SCOPED_TPL_TASKS，旧位置与 shared 的
+    落盘路径相同，shared 继续指着），用户已标定的图无需重标。迁后由抢关注与红/蓝补充守卫共用。
+    返回是否改动（改动由 load_config 存盘）。"""
+    tasks = cfg.get("tasks") or {}
+    shared = tasks.get("shared") or {}
+    st = shared.setdefault("templates", {})
+    stpl = (tasks.get("sniper", {}) or {}).get("templates")
+    changed = False
+    if not isinstance(stpl, dict):
+        return False
+    old = stpl.get("buy_button")
+    # 只搬「真指针」：None 占位不搬，避免无谓落盘。
+    if old and not st.get("buy_button"):
+        st["buy_button"] = old
+        shared["templates"] = st
+        changed = True
+    if old and "buy_button" in stpl:
+        stpl.pop("buy_button", None)
+        changed = True
+    return changed
+
+
+def _migrate_shared_zhuagui_next(cfg):
+    """抓鬼「确定」(gg_next) 与「提醒弹窗取消」(gg_cancel) 标定迁「任务配置」页全局共享标定
+    （tasks.shared）的一次性迁移（2026-11-02）：把用户旧位置 tasks.zhuagui.templates.gg_next /
+    gg_cancel 搬到 tasks.shared.templates 同名键，搬完清掉抓鬼命名空间里的旧指针键。
+    图片文件 templates/tm_gg_next.png、tm_gg_cancel.png 原地不动——抓鬼不在 TASK_SCOPED_TPL_TASKS
+    里，旧位置与 shared 命名空间的落盘路径相同（task_template_rel 都给 tm_<key>.png），shared 继续指着即可，
+    用户已标定的图无需重标。返回是否改动（改动由 load_config 存盘）。"""
+    tasks = cfg.get("tasks") or {}
+    shared = tasks.get("shared") or {}
+    st = shared.setdefault("templates", {})
+    zt = (tasks.get("zhuagui", {}) or {}).get("templates")
+    changed = False
+    if not isinstance(zt, dict):
+        return False
+    for key in (GG_NEXT_TPL_KEY, GG_CANCEL_TPL_KEY):
+        old = zt.get(key)
+        # 只搬「真指针」：None 是 DEFAULT 占位（新配置也带），动它只会造成一次无谓落盘。
+        if old and not st.get(key):
+            st[key] = old
+            shared["templates"] = st
+            changed = True
+        if old and key in zt:
+            zt.pop(key, None)
+            changed = True
     return changed
 
 

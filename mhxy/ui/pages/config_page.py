@@ -8,11 +8,13 @@
 import customtkinter as ctk
 
 from .. import theme as T
-from ..common import Card, bind_wraplength, load_thumb
+from ..common import (Card, bind_wraplength, load_thumb, optional_regions,
+                      optional_templates, required_regions, required_templates)
 from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
-from ...core.config import (ACTIVITY_UI_TPL_KEY, BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY,
-                             DAILY_ACTIVITY_TAB_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY, JOIN_DONE_TPL_KEY,
+from ...core.config import (ACTIVITY_UI_TPL_KEY, BATTLE_FLAG_TPL_KEY, BUY_BUTTON_TPL_KEY,
+                             CLOCK_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
+                             GG_CANCEL_TPL_KEY, GG_NEXT_TPL_KEY, JOIN_DONE_TPL_KEY,
                              MAIN_ICON_TPL_KEYS, PANEL_CLOSE_TPL_KEY, POPUP_CLOSE_TPL_KEY,
                              SHARED_REGION_KEYS, SINGLE_TASK_ORDER)
 from ...core.teaming import TEAM_CALIB_TPL_KEYS, TEAM_REQUIRED_REGIONS
@@ -284,7 +286,7 @@ class ConfigPage(ctk.CTkFrame):
 
 
 class SharedCalibrationCard(ctk.CTkFrame):
-    """共享区域标定卡：活动/背包列表、战斗标识、小闹钟、「使用」按钮、主界面图标共用。"""
+    """共享区域标定卡：活动/背包列表、战斗标识、小闹钟、「确定」/「购买」/「使用」按钮、主界面图标共用。"""
 
     def __init__(self, master, app):
         super().__init__(master, fg_color="transparent")
@@ -304,7 +306,7 @@ class SharedCalibrationCard(ctk.CTkFrame):
         txt = ctk.CTkFrame(head, fg_color="transparent")
         txt.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(txt, text="公共区域（全局共享）", font=self.fonts["h2"], text_color=T.TEXT).grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(txt, text="活动列表/背包列表、战斗标识、小闹钟、「使用」按钮、主界面图标：标一次全任务通用。",
+        ctk.CTkLabel(txt, text="活动列表/背包列表、战斗标识、小闹钟、「确定」/「购买」/「使用」按钮、主界面图标：标一次全任务通用。",
                      font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left", anchor="w").grid(
             row=1, column=0, sticky="ew", pady=(2, 0))
         btns = ctk.CTkFrame(head, fg_color="transparent")
@@ -324,18 +326,28 @@ class SharedCalibrationCard(ctk.CTkFrame):
         sreg = shared_tc.get("regions", {})
         stpl = shared_tc.get("templates", {})
 
-        # 区域：全部为必要，无可选
-        req_regions = SHARED_REGION_KEYS
-        opt_regions = ()
+        # 必要/可选分组直接从公共标定的 spec 推导（单一来源）：标定向导里加/删行、或改某行
+        # 「可选」标记，这里计数自动跟随，不再各自维护一份写死的键列表（否则新迁入的
+        # 「确定按钮」「购买按钮」等会漏计，出现 5/6 这类对不上的数字）。
+        try:
+            from ..calibrate_dialog import _VIRTUAL_SPECS
+            spec = _VIRTUAL_SPECS["shared"][1]
+            req_regions = required_regions(spec)
+            opt_regions = optional_regions(spec)
+            req_tpl_keys = required_templates(spec)
+            opt_tpl_keys = optional_templates(spec)
+        except Exception:
+            # 兜底：极端情况（导入失败等）仍按已知公共项显示，别让整卡空白
+            req_regions = SHARED_REGION_KEYS
+            opt_regions = ()
+            req_tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
+                            GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY)
+            opt_tpl_keys = ((GG_CANCEL_TPL_KEY,) + (JOIN_DONE_TPL_KEY,) + MAIN_ICON_TPL_KEYS
+                            + (POPUP_CLOSE_TPL_KEY, PANEL_CLOSE_TPL_KEY, ACTIVITY_UI_TPL_KEY,
+                               DAILY_ACTIVITY_TAB_TPL_KEY))
+
         req_reg_done = sum(1 for k in req_regions if sreg.get(k))
-        opt_reg_done = 0
-
-        # 模板：必要 vs 可选（「使用」按钮已从宝图自身标定迁入公共标定，必标）
-        req_tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY)
-        opt_tpl_keys = ((JOIN_DONE_TPL_KEY,) + MAIN_ICON_TPL_KEYS
-                        + (POPUP_CLOSE_TPL_KEY, PANEL_CLOSE_TPL_KEY, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY))
-        all_tpl_keys = req_tpl_keys + opt_tpl_keys
-
+        opt_reg_done = sum(1 for k in opt_regions if sreg.get(k))
         req_tpl_done = sum(1 for k in req_tpl_keys if stpl.get(k))
         opt_tpl_done = sum(1 for k in opt_tpl_keys if stpl.get(k))
 

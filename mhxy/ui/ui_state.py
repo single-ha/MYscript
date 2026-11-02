@@ -116,6 +116,36 @@ def find_popup_close(cfg, window, threshold=0.85):
     return (rect[0] + int(cx), rect[1] + int(cy))
 
 
+def find_shared_template(cfg, window, key, threshold=0.85):
+    """在当前窗口画面里找 tasks.shared.templates[key] 模板（如红/蓝补充守卫复用的
+    gg_next「确定」/ buy_button「购买」/ flag_next_map「使用」）。
+
+    只【找】不点：命中返回按钮中心的【屏幕绝对坐标】(cx, cy)；未标模板 / key 为空 /
+    窗口没定位 / 抓图失败 / 未命中 一律返回 None，语义与 find_popup_close 一致，交调用方决定点不点。
+    """
+    try:
+        shared = ((cfg or {}).get("tasks", {}) or {}).get("shared", {}) or {}
+        tpl_path = (shared.get("templates") or {}).get(key)
+    except AttributeError:
+        return None
+    if not tpl_path:
+        return None
+    tpl = vision.load_template(tpl_path)
+    if tpl is None:
+        return None
+    rect = window.rect()
+    if rect is None:
+        return None
+    scene = window.grab_screen(rect)
+    if scene is None:
+        return None
+    hit = vision.match(scene, tpl, threshold)
+    if hit is None:
+        return None
+    cx, cy, _score = hit
+    return (rect[0] + int(cx), rect[1] + int(cy))
+
+
 def find_panel_close(cfg, window, threshold=0.85):
     """找「面板关闭按钮」的探测原语：在当前窗口画面里找背包/商城/人物信息等面板右上角的「×」
     （tasks.shared.templates.panel_close，可选共享模板，在「任务配置」页「全局共享标定」卡里标）。

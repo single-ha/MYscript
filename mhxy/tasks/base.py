@@ -21,7 +21,8 @@ import numpy as np
 from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
-from ..core.config import CAPTURES_DIR, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY
+from ..core.config import (CAPTURES_DIR, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY,
+                          GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY)
 from ..core.input import CLICK_DELAY, TEAM_CLICK_DELAY
 
 _REGISTRY = {}
@@ -316,6 +317,10 @@ class Task:
         # 任务画面本身是「带×的弹窗式界面」时整个挂起（见 POPUP_GUARD_OFF 类属性）。
         if getattr(self, "POPUP_GUARD_OFF", False):
             return
+        # 红/蓝不足「补充」弹窗（确定→购买→使用→关窗）优先处理：它是有序多步流程，处理期间直接返回，
+        # 免得下面的「点×」守卫把补充弹窗/购买窗口当普通公告弹窗关掉。该守卫有独立开关与节流（hpmp_guard）。
+        if self._handle_hpmp_purchase(ctx):
+            return
         cfg = ctx.cfg or {}
         pg = cfg.get("popup_guard") or {}
         if not pg.get("enabled", True):
@@ -362,6 +367,124 @@ class Task:
             cap = self._save_capture(ctx, scene, "popup_stuck") if scene is not None else None
             ctx.log(f"弹窗守卫：同一弹窗「×」+Esc 都关不掉，已放弃（截图 {cap} 供核对，任务照常继续）。",
                     level="warn")
+
+    # ------------------------------------------------------------------
+    # 红/蓝不足「补充」弹窗：确定 → 购买 → 使用 → 关闭购买窗口（有序四步，全任务等待期共用）
+    # ------------------------------------------------------------------
+    def _hpmp_sleep(self, ctx, seconds):
+        """红/蓝补充流程内部用的可中断短睡（不回调守卫，避免递归）。"""
+        end = time.time() + seconds
+        while time.time() < end:
+            if ctx.should_stop():
+                return
+            time.sleep(min(0.05, max(0.0, end - time.time())))
+
+    def _hpmp_click(self, ctx, point, label):
+        """拟人移动+点击一个屏幕绝对坐标。"""
+        ctx.mouse.human_move(point[0], point[1])
+        ctx.mouse.click(point[0], point[1])
+        ctx.log(f"红/蓝补充：点「{label}」。", level="hit")
+
+    def _hpmp_wait(self, ctx, window, cfg, key, threshold, timeout, settle):
+        """等到屏幕上出现 tasks.shared.templates[key] 按钮，返回屏幕绝对坐标；超时/停止返回 None。
+        先 settle 一拍让界面切换，再在 timeout 内轮询。"""
+        from ..ui import ui_state
+        self._hpmp_sleep(ctx, settle)
+        end = time.time() + timeout
+        while time.time() < end and not ctx.should_stop():
+            point = ui_state.find_shared_template(cfg, window, key, threshold)
+            if point is not None:
+                return point
+            self._hpmp_sleep(ctx, 0.25)
+        return None
+
+    def _handle_hpmp_purchase(self, ctx):
+        """红/蓝不足补充守卫。返回 True=本拍已归它处理（无论成功/失败，调用方应跳过「点×」守卫）；
+        False=当前没有补充弹窗、也没在处理，交回普通「点×」守卫。
+
+        触发与节流独立于 popup_guard（hpmp_guard 块）：开关开 + 复用的四张公共模板
+        （确定 gg_next / 购买 buy_button / 使用 flag_next_map / 关窗 panel_close）都标定 +
+        目标窗口在前台，才会动手；多开绝不在后台号点。检测到补充弹窗的「确定」后串行跑完四步，
+        任一步等不到目标按钮就放弃本次（告警一次），下次扫描重新从「确定」开始，不在半路乱点。"""
+        # 重入保护：处理流程内部的短睡不再触发守卫
+        if getattr(self, "_hpmp_busy", False):
+            return False
+        cfg = ctx.cfg or {}
+        hg = cfg.get("hpmp_guard") or {}
+        if not hg.get("enabled", True):
+            return False
+        window = ctx.window
+        if window is None or window.rect() is None:
+            return False
+        now = time.time()
+        if now - getattr(self, "_hpmp_last_action", 0.0) < float(hg.get("step_settle_sec", 0.8)):
+            return False
+        if now - getattr(self, "_hpmp_last_scan", 0.0) < float(hg.get("interval_sec", 2.0)):
+            return False
+        self._hpmp_last_scan = now
+        if not window.is_foreground():
+            return False
+
+        from ..ui import ui_state
+        threshold = float(hg.get("match_threshold", 0.85))
+        # 先确认三步按钮模板都标定（确定=gg_next、购买=buy_button、使用=flag_next_map，缺一静默交回普通守卫）。
+        # 关窗 panel_close 不在此硬卡：没标就退回按 Esc 兜底（见末尾）。
+        shared = (cfg.get("tasks", {}) or {}).get("shared", {}) or {}
+        stpl = shared.get("templates") or {}
+        for k in (GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY):
+            if not stpl.get(k) or vision.load_template(stpl.get(k)) is None:
+                return False
+
+        confirm = ui_state.find_shared_template(cfg, window, GG_NEXT_TPL_KEY, threshold)
+        if confirm is None:
+            return False
+
+        # 命中补充弹窗：本拍起归红/蓝流程处理
+        self._hpmp_busy = True
+        settle = float(hg.get("step_settle_sec", 0.8))
+        timeout = float(hg.get("step_timeout_sec", 12.0))
+        try:
+            ctx.log("检测到红/蓝不足「补充」弹窗 → 自动 确定→购买→使用→关窗。", level="hit")
+            # 第 1 步：点「确定」(gg_next)，打开购买（商城）窗口
+            self._hpmp_click(ctx, confirm, "确定")
+            self._hpmp_last_action = time.time()
+            buy = self._hpmp_wait(ctx, window, cfg, BUY_BUTTON_TPL_KEY, threshold, timeout, settle)
+            if buy is None:
+                ctx.log("红/蓝补充：点「确定」后未出现「购买」按钮，放弃本次（下次扫描重来）。", level="warn")
+                return True
+            # 第 2 步：点「购买」(buy_button)，道具进背包
+            self._hpmp_click(ctx, buy, "购买")
+            self._hpmp_last_action = time.time()
+            use = self._hpmp_wait(ctx, window, cfg, FLAG_NEXT_MAP_TPL_KEY, threshold, timeout, settle)
+            if use is None:
+                ctx.log("红/蓝补充：点「购买」后未出现「使用」按钮，放弃本次（下次扫描重来）。", level="warn")
+                return True
+            # 第 3 步：点「使用」(flag_next_map)，把刚买的药用上
+            self._hpmp_click(ctx, use, "使用")
+            self._hpmp_last_action = time.time()
+            self._hpmp_sleep(ctx, float(hg.get("use_settle_sec", 1.0)))
+            if ctx.should_stop():
+                return True
+            # 第 4 步：关闭购买窗口——优先点通用面板「×」(panel_close)；没找到「×」时，
+            # 仅当购买窗口仍在（还能识别到「购买」或「使用」按钮）才按一次 Esc 兜底；
+            # 两个都看不到=窗口已自动关掉，直接跳过，绝不盲按 Esc 误关任务正在用的背包/活动面板。
+            self._hpmp_sleep(ctx, settle)
+            close_pt = ui_state.find_panel_close(cfg, window, threshold)
+            if close_pt is not None:
+                self._hpmp_click(ctx, close_pt, "关闭购买窗口(×)")
+            else:
+                still_open = (ui_state.find_shared_template(cfg, window, BUY_BUTTON_TPL_KEY, threshold) is not None
+                              or ui_state.find_shared_template(cfg, window, FLAG_NEXT_MAP_TPL_KEY, threshold) is not None)
+                if still_open:
+                    ctx.mouse.press_key("esc")
+                    ctx.log("红/蓝补充：没找到面板「×」，按 Esc 关闭购买窗口。", level="hit")
+                else:
+                    ctx.log("红/蓝补充：购买窗口已自动关闭，无需再关。", level="info")
+            self._hpmp_last_action = time.time()
+            ctx.log("红/蓝补充处理完成。", level="hit")
+        finally:
+            self._hpmp_busy = False
+        return True
 
     def _find_join_ready(self, ctx, rec, list_region, entry_xy, threshold, loop, entry_tpl=None):
         """找「参加」按钮。认出卡片但按钮没匹配上，最常见原因是卡片贴着列表区域上/下缘只露了半张、

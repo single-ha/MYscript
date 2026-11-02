@@ -588,6 +588,11 @@ def required_regions(spec):
     return [t[0] for t in spec.get("regions", []) if not _row_optional(t)] if spec else []
 
 
+def optional_regions(spec):
+    """从任务的 CALIBRATION spec 取「可选区域」键（第 4 元素为真 = 可留空）。"""
+    return [t[0] for t in spec.get("regions", []) if _row_optional(t)] if spec else []
+
+
 def required_templates(spec):
     """从任务的 CALIBRATION spec 取「必选模板」键（第 4 元素为真 = 可选，不参与就绪）。"""
     return [t[0] for t in spec.get("templates", []) if not _row_optional(t)] if spec else []
