@@ -230,7 +230,7 @@ class WeeklyBaseTask(Task):
         start_ts = time.time()
         clean_need = float(loop.get("clean_need_sec", 12))
         poll = max(0.2, float(loop.get("poll_sec", 1.0)))
-        clock_cooldown = float(loop.get("step_to", 30))
+        clock_cooldown = float(loop.get("step_to", 6))
 
         rounds = 0            # 已完成的轮数
         fights = 0            # 本轮已点「进入战斗」的场数（仅日志诊断）
@@ -305,7 +305,13 @@ class WeeklyBaseTask(Task):
                     hit = self._match_scene(cur, rect, "clock", threshold)
                     if hit is not None and now >= clock_cool_until:
                         self.click_after_hit(ctx, hit[0], hit[1])
-                        ctx.log(f"点「小闹钟」寻路（{hit[2]:.3f}）。", level="hit")
+                        # 连点两次（与抓鬼/秘境同款）：任务栏小闹钟首击常被游戏当成「聚焦/选中」吞掉，
+                        # 隔 nav_double_gap_sec（默认 0.3s）在同坐标补击一次才真正触发寻路。
+                        double_gap = float(loop.get("nav_double_gap_sec", 0.3))
+                        if double_gap > 0:
+                            self._interruptible_sleep(ctx, self._jitter(double_gap, ctx))
+                            ctx.mouse.click(hit[0], hit[1])
+                        ctx.log(f"点「小闹钟」寻路（{hit[2]:.3f}，已连点两次）。", level="hit")
                         clean_since = None
                         clock_cool_until = now + clock_cooldown
                         enter_cool_until = 0.0

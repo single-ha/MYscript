@@ -134,7 +134,9 @@ def enabled_chain_entries(cfg):
                 out.append(("organize", t))
             continue
         if t in TEAM_STEPS:
-            out.append(("team", t))
+            # 与引擎 _enabled_steps 同口径：停用的组队/解散步不执行、也不计入摘要/「共N项」。
+            if bool(s.get("enabled", True)):
+                out.append(("team", t))
             continue
         if t in ("timing", "shutdown"):
             continue

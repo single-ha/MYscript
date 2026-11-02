@@ -304,8 +304,9 @@ class DailyFlowPage(ctk.CTkToplevel):
                 organize_count += 1
                 continue
             if task in TEAM_STEPS:
-                # 组队/解散：可重复，放在链里就执行，位置由存储顺序决定（不参与缺行补齐）。
-                out.append({"task": task, "enabled": True})
+                # 组队/解散：可重复，按存储位置保留任意多个（不参与缺行补齐）。尊重行开关的存储态
+                # （缺省 True 兼容旧链）；停用的行要能在重开弹窗后仍是关的，否则关掉组队不生效。
+                out.append({"task": task, "enabled": bool(s.get("enabled", True))})
                 continue
             if task in FLOW_SINGLE and task not in seen:
                 entry = {"task": task, "enabled": bool(s.get("enabled", False))}

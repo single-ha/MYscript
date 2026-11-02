@@ -783,10 +783,12 @@ class DailyTask(Task):
                 continue
             name = step.get("task")
             if name in TEAM_STEPS:
-                # 流程控制的集体动作：没有组/勾选门控，放在链里就执行；位置=存储绝对顺序。
-                # 可在整条流程里出现多次（重复组队/解散），不做去重。
-                stored.append(name)
+                # 流程控制的集体动作：位置=存储绝对顺序，可在整条流程里出现多次（重复组队/解散）。
+                # 但必须尊重行开关：停用的组队/解散步跳过不执行（否则弹窗关掉组队仍会组队）。
+                # 停用行仍计入结构标记（保持绝对序、且不被当缺行补回/去重），与「整理背包」同口径。
                 has_structure_step = True
+                if step.get("enabled", True):
+                    stored.append(name)
                 continue
             if name == ORGANIZE_STEP:
                 # 整理背包：可重复出现的「每号独立」步骤，走到才整理（不是集体屏障）。
