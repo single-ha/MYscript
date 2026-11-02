@@ -88,6 +88,21 @@ class App(ctk.CTk):
 
     def __init__(self):
         super().__init__()
+        # 构造期先隐藏主窗：CTkScrollableFrame 等重控件在构造时会同步 update_idletasks，
+        # 若主窗已可见，首屏会被「一个个控件刷出来」。改为先 withdraw，立刻用一个与主窗【同根】的
+        # 无边框置顶 Toplevel 遮罩盖住整段构造（同根不会触发「双 Tk 根崩溃」，独立 OS 窗又不会被
+        # 主窗内部控件的重绘/置顶穿透），首屏全部建完后一次性 deiconify 主窗并撤遮罩。
+        try:
+            self.withdraw()
+        except Exception:
+            pass
+        self._startup_cover = None
+        win_w, win_h = 1310, 700
+        pos_x = max(0, (self.winfo_screenwidth() - win_w) // 2)
+        pos_y = max(0, (self.winfo_screenheight() - win_h) // 2)
+        # 尽早弹遮罩，连 load_config/build_fonts 这段也盖住，与前置启动页(splash)之间几乎无空档。
+        self._show_startup_cover(pos_x, pos_y, win_w, win_h)
+
         self.cfg = cfg_mod.load_config()
         # 全局窗口识别按进程名过滤（避免把终端/编辑器等同名标题窗口当游戏号）；GUI 各窗口操作据此生效。
         win_mod.set_game_process(self.cfg.get("window_process", "MyGame_x64r.exe"))
@@ -95,9 +110,6 @@ class App(ctk.CTk):
         ctk.set_appearance_mode(mode if mode in ("dark", "light") else "dark")
         self.title("梦幻 · 时空 助手")
         # 主界面默认尺寸启动（1310x700），不再设最小尺寸限制，可拖到任意大小
-        win_w, win_h = 1310, 700
-        pos_x = max(0, (self.winfo_screenwidth() - win_w) // 2)
-        pos_y = max(0, (self.winfo_screenheight() - win_h) // 2)
         self.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
         self.configure(fg_color=T.BG)
 
@@ -116,13 +128,67 @@ class App(ctk.CTk):
         self._show("start")
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.after(150, self._tick)
         self._hotkey_down = False
+
+        # 首屏（起始页）已全部构建：先做一次布局计算，再 deiconify 主窗，并在【遮罩仍盖着】时
+        # update() 强制主窗真正映射+绘制，最后才撤遮罩——用户看到完整界面直接出现，而非逐控件刷出。
+        try:
+            self.update_idletasks()
+            self.deiconify()
+            self.update()
+        except Exception:
+            pass
+        self._dismiss_startup_cover()
+
+        # 定时器/运行锁在「主窗已显示、遮罩已撤」之后才注册：构造耗时数秒，若在构造中途 after()，
+        # 到这里这些定时器早已到期，上面的 update() 会立刻把它们（含 _prebuild_idle 建重页）触发掉，
+        # 等于又在亮窗前建页、卡顿回归。此刻起计时，预建/轮询都在窗口可见后才开始。
+        self.after(150, self._tick)
         self.after(60, self._poll_hotkey)
-        # 界面显示后趁空闲把其余页面逐个预建好，首次切过去即秒开（每个间隔开，单帧不卡）。
-        self.after(800, self._prebuild_idle)
+        # 界面显示后先给用户一小段纯净交互时间，再趁空闲逐个预建其余页面（首次切过去即秒开）。
+        self.after(1000, self._prebuild_idle)
         # 全局唯一运行锁：某页「开始」被已有任务挡住时，这里弹醒目红 toast 提醒。
         set_run_rejected_hook(self._toast_task_rejected)
+
+    def _show_startup_cover(self, x, y, w, h):
+        """构造期显示在主窗位置上的无边框置顶遮罩（与主窗同根 Toplevel，非第二个 Tk 根）。"""
+        import tkinter as tk
+        try:
+            cover = tk.Toplevel(self)
+            cover.overrideredirect(True)
+            try:
+                cover.attributes("-topmost", True)
+            except Exception:
+                pass
+            # 叠在尚未显示的主窗同一位置/尺寸；主窗 deiconify 时被它整个盖住。
+            cover.geometry(f"{w}x{h}+{x}+{y}")
+            bg = T.resolve(T.BG)
+            cover.configure(bg=bg)
+            tk.Frame(cover, bg=bg).place(relx=0, rely=0, relwidth=1, relheight=1)
+            tk.Label(cover, text="梦幻 · 时空 助手", bg=bg, fg=T.resolve(T.TEXT),
+                     font=("Microsoft YaHei UI", 17, "bold")
+                     ).place(relx=0.5, rely=0.44, anchor="center")
+            tk.Label(cover, text="正在准备界面…", bg=bg, fg=T.resolve(T.TEXT_DIM),
+                     font=("Microsoft YaHei UI", 11)
+                     ).place(relx=0.5, rely=0.53, anchor="center")
+            # 主窗处于 withdrawn：新建的 overrideredirect Toplevel 仅 update_idletasks 不会真正
+            # 映射上屏（实测要等到构造末尾）。必须用一次完整 update() 强制处理 Map/Expose 事件，
+            # 遮罩才会立刻出现并盖住接下来的整段构建。
+            cover.update_idletasks()
+            cover.update()
+            self._startup_cover = cover
+        except Exception:
+            self._startup_cover = None
+
+    def _dismiss_startup_cover(self):
+        cover = getattr(self, "_startup_cover", None)
+        if cover is None:
+            return
+        try:
+            cover.destroy()
+        except Exception:
+            pass
+        self._startup_cover = None
 
     def _build_sidebar(self):
         bar = ctk.CTkFrame(self, fg_color=T.SIDEBAR, corner_radius=0, width=180)
@@ -587,80 +653,25 @@ class App(ctk.CTk):
         for sub in getattr(page, "sub_pages", {}).values():
             yield from self._iter_page_tree(sub)
 
-    def build_all_pages(self, on_step=None):
-        """一次性把所有页面都建好（建完再亮窗口，杜绝「出现后才逐页卡」）。
-        每建好一页回调一次 on_step——用它驱动遮罩上的进度条转动，让构建期也有动画。
-        单个页面构建失败不中止整批（记录日志、跳过继续）——否则遮罩会一直挂着让界面「卡在准备中」。"""
-        for key in self.PAGE_CLASSES:
-            if key not in self.pages:
-                try:
-                    self._ensure_page(key)
-                except Exception as e:
-                    try:
-                        self.log_line(f"页面「{key}」初始化失败，已跳过：{e}", "warn")
-                    except Exception:
-                        pass
-                if callable(on_step):
-                    try:
-                        on_step()
-                    except Exception:
-                        pass
-        cur = getattr(self, "_current_key", None)
-        if cur in self.pages:
-            self.pages[cur].tkraise()
-
-    def _safe_update(self):
-        try:
-            self.update()
-        except Exception:
-            pass
-
-    def reveal_with_overlay(self):
-        """在本窗口上盖一层全屏「正在准备界面…」遮罩，遮罩后把其余页面全部建好，再撤遮罩。
-        全程只用本窗口这一个 Tk 根（不再开第二个根），既避免双根崩溃，又盖住建页面的卡顿。
-
-        遮罩是 App 的直接子组件、最后创建，叠在 container（含所有页面）与侧栏之上；各页面建在
-        container 里，层级在遮罩之下，故新建页面不会盖穿遮罩。建页期间用 update() 让进度条转动。"""
-        import tkinter as tk
-        from tkinter import ttk
-
-        bg, fg, dim, acc, trough = (T.resolve(T.BG), T.resolve(T.TEXT), T.resolve(T.TEXT_DIM),
-                                    T.resolve(T.ACCENT), T.resolve(T.SURFACE_2))
-        ov = tk.Frame(self, bg=bg)
-        ov.place(x=0, y=0, relwidth=1, relheight=1)
-        tk.Label(ov, text="梦幻 · 时空 助手", bg=bg, fg=fg,
-                 font=("Microsoft YaHei UI", 16, "bold")).place(relx=0.5, rely=0.43, anchor="center")
-        tk.Label(ov, text="正在准备界面…", bg=bg, fg=dim,
-                 font=("Microsoft YaHei UI", 11)).place(relx=0.5, rely=0.51, anchor="center")
-        try:
-            style = ttk.Style(self)
-            style.theme_use("default")
-            style.configure("Ovl.Horizontal.TProgressbar", troughcolor=trough,
-                            background=acc, bordercolor=bg, lightcolor=acc, darkcolor=acc)
-            pb = ttk.Progressbar(ov, mode="indeterminate", length=240,
-                                 style="Ovl.Horizontal.TProgressbar")
-            pb.place(relx=0.5, rely=0.59, anchor="center")
-            pb.start(12)
-        except Exception:
-            pass
-        self._safe_update()                 # 先把遮罩画出来（盖住未完成的界面）
-        self.build_all_pages(on_step=self._safe_update)
-        try:
-            ov.destroy()                    # 撤遮罩，露出已就绪的界面
-        except Exception:
-            pass
-        self._safe_update()
+    # 启动后后台空闲预建的页面顺序：起始页由 __init__ 立即建好（不在此列），这里按日常使用频率
+    # 把最常用的页面先补（日常→任务配置→周常→工具→设置），让用户大概率在切过去前就已就绪。
+    PRELOAD_ORDER = ("daily", "config", "weekly", "tools", "settings")
 
     def _prebuild_idle(self):
-        """启动后趁空闲逐个把尚未创建的页面建好；每次只建一个并重排一次调度，避免单帧卡顿。"""
-        for key in self.PAGE_CLASSES:
+        """启动后趁空闲把尚未创建的页面按 PRELOAD_ORDER 逐个预建，首次切过去即秒开。
+
+        关键：每次只建一个页面、再 after 调度下一个——CTk 的 ScrollableFrame 在构造时会同步
+        update_idletasks（实测单页构造要 0.2~2.3s），一次建多个会把 UI 卡死、日志/急停都不响应；
+        拆成单页 + 间隔后，每个页面在自己那一拍承担耗时，其余拍 UI 照常响应。用户已手动切到某页时
+        该页经 _ensure_page 即时建好，这里跳过即可。"""
+        for key in self.PRELOAD_ORDER:
             if key not in self.pages:
                 self._ensure_page(key)
                 # 新建的页默认叠在最上、会盖住当前可见页，立刻把当前页重新置顶。
                 cur = getattr(self, "_current_key", None)
                 if cur in self.pages:
                     self.pages[cur].tkraise()
-                self.after(120, self._prebuild_idle)
+                self.after(160, self._prebuild_idle)
                 return
         # 全部建完，停止调度。
 

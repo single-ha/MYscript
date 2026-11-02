@@ -157,8 +157,11 @@ def _make_splash():
 
 
 def _launch_gui():
-    """设 DPI → 启动页全程盖住「导入重库 + 建主窗口 + 预建全部页面」→ 一次性亮出就绪窗口。
-    任一步异常都回退到无启动页的直接启动，保证一定能起来。"""
+    """设 DPI → 启动页盖住「导入重库」→ 建只含起始页的主窗口并立即亮出 → 其余页后台空闲预建。
+    任一步异常都回退到无启动页的直接启动，保证一定能起来。
+
+    启动页只负责盖住 import 重库那 ~0.4s；主窗口 App() 只建默认页（起始页），建完就首绘上屏，
+    其余页面绝不阻塞亮窗（旧版用遮罩在亮窗前建完全部 6 页，实测要等 ~8s，已移除）。"""
     import threading
 
     _set_dpi_aware_early()
@@ -194,6 +197,10 @@ def _launch_gui():
         # 关键：创建主窗口（另一个 ctk Tk 根）之前，必须先销毁启动页这个根——
         # 两个 Tk 根并存会让 customtkinter 直接崩（之前「正在准备界面」后闪退就是这个）。
         try:
+            splash["pb"].stop()             # 先停 indeterminate 进度条，撤销其 after 自增回调，
+        except Exception:                   # 否则根销毁后残留定时器触发会报 ttk winfo 错（无害但脏）
+            pass
+        try:
             splash["root"].destroy()
         except Exception:
             pass
@@ -203,16 +210,16 @@ def _launch_gui():
         except Exception:
             pass
 
-    # —— 阶段二：建主窗口；用主窗口自带的同根遮罩盖住「建全部页面」的过程，建完再撤遮罩 ——
+    # —— 阶段二：建主窗口。App() 只建主框架 + 默认页（起始页），随后立即首绘亮出——
+    # 其余「日常/周常/任务配置/工具/设置」页交给 App 的空闲预建在后台逐个补，首次切到即已就绪；
+    # 不再像旧版那样用遮罩在亮窗前把全部页面一次性建完（那是启动「正在准备界面」卡 ~8s 的根因）。
     _appmod = importlib.import_module(_GUI_MOD)
     app = _appmod.App()
-    if splash is not None:
-        # 有过启动页时，亮界面前把其余页面也建好（同根遮罩盖住），杜绝「窗口出现后再逐页卡」。
-        try:
-            app.reveal_with_overlay()
-        except Exception:
-            pass
-    # 无启动页（回退）时：不预建，让窗口尽快出现，其余页面交给空闲预建在后台补。
+    try:
+        app.update_idletasks()      # 立刻把主窗口 + 起始页绘制上屏（一次事件排空，不跑主循环）
+        app.update()
+    except Exception:
+        pass
     try:
         app.lift()
         app.focus_force()
