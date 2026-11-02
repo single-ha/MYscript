@@ -11,7 +11,7 @@
     生效时机固定（定时=链开头、整理=任务之间、关机=链结尾），与拖拽位置无关。
     「组队」「解散队伍」同样是可拖到任意位置、到点真正执行的步骤。
   · 整体时间上限、自动拓印保留在顶部固定设置（不参与拖拽）。
-配置与「日常」页读同一份 tasks.daily.steps / group_enabled / loop，两边数据互通。
+配置与「日常」页读同一份 tasks.daily.steps / loop，两边数据互通。
 本弹窗不放「开始日常」与「调整窗口」按钮（启动在起始页日常卡 / 后台由「日常」页承载）。
 
 弹窗约定（与 account_gallery.AccountGallery 一致）：CTkToplevel + open() 去重 +
@@ -26,7 +26,7 @@ from .. import theme as T
 from ...core import config as cfg_mod
 from ...tasks import get_task
 from ...tasks.daily import (
-    CHAINABLE, GROUPS, TEAM_STEPS, TEAM_STEP_TITLES,
+    CHAINABLE, TEAM_STEPS, TEAM_STEP_TITLES,
     ORGANIZE_STEP, ORGANIZE_STEP_TITLE, REPEATABLE_STEPS, FLOW_ORDERED_KEY,
 )
 from ...core.config import SINGLE_TASK_ORDER
@@ -77,7 +77,6 @@ class DailyFlowPage(ctk.CTkToplevel):
         self.fonts = app.fonts
         self.on_done = on_done
         self._steps = []
-        self._group_on = {"multi": True, "single": True}
         self._items = {}
         self._drag = None
         self._drag_line = None   # 拖拽时的目标位置彩色细线预览
@@ -223,8 +222,6 @@ class DailyFlowPage(ctk.CTkToplevel):
     def refresh(self):
         self.app.cfg = cfg_mod.load_config()
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
-        self._group_on = {g: bool((tc.get("group_enabled") or {}).get(g, True))
-                          for g in GROUPS}
         self._removed = [t for t in (tc.get("removed_tasks") or [])]
         # 旧开关字段（流程伪步骤还没进 steps 的旧 config 用它做一次性迁移）
         # timing 直接给已存的时间串（空串=关）；迁移成行时把时刻一并带上。
@@ -394,8 +391,7 @@ class DailyFlowPage(ctk.CTkToplevel):
         self._grid_all()
 
     def _steps_signature(self):
-        return (tuple((s["task"], s["enabled"]) for s in self._steps),
-                tuple(self._group_on.get(g, True) for g in GROUPS))
+        return tuple((s["task"], s["enabled"]) for s in self._steps)
 
     # ------------------------------------------------------------------ 行控件回调
     def on_flow_toggle(self, key, on):

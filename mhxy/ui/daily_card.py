@@ -91,12 +91,10 @@ def ordered_steps(cfg):
 
 
 def enabled_names(cfg):
-    """本趟真正会跑的任务名（只读展示序）：行级启用 且 所属整组启用。与「日常」页
-    _refresh_exec_order 同展示口径——整组或单行停用的都剔除；聚合 dungeon 行已在 ordered_steps 隐藏。"""
-    d = ((cfg.get("tasks", {}) or {}).get("daily", {}) or {})
-    ge = d.get("group_enabled") or {}
-    return [s["task"] for s in ordered_steps(cfg)
-            if s["enabled"] and ge.get(GROUP_OF.get(s["task"]), True)]
+    """本趟真正会跑的任务名（只读展示序）：只看行级启用。与「日常」页 _refresh_exec_order
+    同展示口径——单行停用的剔除；聚合 dungeon 行已在 ordered_steps 隐藏。
+    （旧版「多人/单人整组开关」group_enabled 已废弃移除，不再参与过滤。）"""
+    return [s["task"] for s in ordered_steps(cfg) if s["enabled"]]
 
 
 def enabled_chain_entries(cfg):
@@ -112,17 +110,15 @@ def enabled_chain_entries(cfg):
     定时/关机是单例、由引擎固定在首尾生效，不在这里输出（chain_parts 单独贴首尾）。
     返回每项为 (kind, name)：kind∈{"task","team","organize"}。"""
     d = ((cfg.get("tasks", {}) or {}).get("daily", {}) or {})
-    ge = d.get("group_enabled") or {}
     removed = set(d.get("removed_tasks") or ())
     raw_steps = d.get("steps") or []
     has_structure = any(isinstance(s, dict) and s.get("task") in STRUCTURE_STEPS
                         for s in raw_steps)
     absolute_order = has_structure or bool(d.get(FLOW_ORDERED_KEY))
 
-    # 旧链：固定区分段序（多人在前、区内固定/存储序），只保留启用且整组启用的普通任务。
+    # 旧链：固定区分段序（多人在前、区内固定/存储序），只保留启用的普通任务。
     if not absolute_order:
-        return [("task", s["task"]) for s in ordered_steps(cfg)
-                if s["enabled"] and ge.get(GROUP_OF.get(s["task"]), True)]
+        return [("task", s["task"]) for s in ordered_steps(cfg) if s["enabled"]]
 
     out, seen = [], set()
     for s in raw_steps:
@@ -142,14 +138,14 @@ def enabled_chain_entries(cfg):
             continue
         if t in CHAINABLE and t not in _HIDDEN_TASKS and t not in seen and t not in removed:
             seen.add(t)
-            if bool(s.get("enabled", True)) and ge.get(GROUP_OF.get(t), True):
+            if bool(s.get("enabled", True)):
                 out.append(("task", t))
     # 缺行补齐：存储里没有的普通任务按固定展示序补到末尾（新任务上线/老 config 安全网）
     for s in ordered_steps(cfg):
         name = s["task"]
         if name not in seen:
             seen.add(name)
-            if s.get("enabled", True) and ge.get(GROUP_OF.get(name), True):
+            if s.get("enabled", True):
                 out.append(("task", name))
     return out
 

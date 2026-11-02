@@ -751,10 +751,9 @@ class DailyTask(Task):
 
     def _enabled_steps(self, ctx):
         """返回本趟真正会跑的任务名列表，顺序=执行顺序，**严格按界面流程控制弹窗里设置的顺序**：
-        ① 行级已勾选；② 组级开关（tasks.daily.group_enabled，{single,multi}，缺省 True）开启——
-        整组关掉时该组全部任务不进日常（组内行级 enabled 独立保留，重开整组即恢复）；
-        ③ 存储 steps 里没有的新任务补到末尾（默认启用，见下）；
-        ④ 顺序：弹窗存过的链（flow_ordered=True）或含组队/解散/整理伪步骤时，严格按 steps
+        ① 行级已勾选（旧版「多人/单人整组开关」group_enabled 已废弃移除，不再参与过滤）；
+        ② 存储 steps 里没有的新任务补到末尾（默认启用，见下）；
+        ③ 顺序：弹窗存过的链（flow_ordered=True）或含组队/解散/整理伪步骤时，严格按 steps
            存储绝对顺序（用户拖成啥就跑成啥，单人/多人可任意穿插）；没经弹窗保存的旧 config
            才按 GROUPS 拼段（多人组在前、区内保持存储相对顺序），行为零回归。
 
@@ -764,10 +763,6 @@ class DailyTask(Task):
         日常页 _refresh_exec_order、_renumber 必须同源，三处不一致就会「界面显示这步、引擎
         忽略」。"""
         tc = ctx.task_cfg(self.name)
-        ge = tc.get("group_enabled") or {}
-        def group_on(name):
-            g = GROUP_OF.get(name)
-            return ge.get(g, True) if g else True
         def dungeon_ok(name):
             return name != "dungeon" or self._selected_dungeons(ctx)
         # 单跑：内存覆盖的 steps 就是「只跑这个任务」，**不做缺行补齐**——否则会把其它
@@ -802,7 +797,7 @@ class DailyTask(Task):
             seen.add(name)          # 存在即可（禁用的行也算「存过」，见下：不能被当成缺行补回来）
             if not dungeon_ok(name):
                 continue
-            if step.get("enabled") and group_on(name):
+            if step.get("enabled"):
                 stored.append(name)
         # 存储 steps 里没有、CHAINABLE 里有 = 新任务上线、老 config 还没存这行：
         # 与界面「缺的补到末尾（默认启用）」同口径补进来，否则「界面显示这行、引擎却跳过」。
@@ -819,8 +814,7 @@ class DailyTask(Task):
             for name in CHAINABLE:
                 if name == "dungeon":
                     continue
-                if name not in seen and name not in removed \
-                        and group_on(name) and dungeon_ok(name):
+                if name not in seen and name not in removed and dungeon_ok(name):
                     stored.append(name)
         # 严格按存储绝对顺序执行（=UI 流程控制弹窗里设置/拖拽的顺序）的两种情形：
         #   ① 含组队/解散/整理伪步骤（旧判定，自然是弹窗排过的新结构链）；

@@ -215,7 +215,7 @@ class DailyPage(ctk.CTkFrame):
         """把存储的 steps 规整成「含全部要展示的任务」，再按当前区顺序拼段。
         单人组段内保留存储相对顺序；多人组用固定展示序（见 _MULTI_ORDER：5 副本子任务→抓鬼）。
         聚合「刷副本」(dungeon) 不在只读清单展示（其勾选区已移除），故只取 _LIST_TASKS；
-        不关心 enabled/group_enabled。"""
+        不关心 enabled（只读清单）。"""
         out, seen = [], []
         for s in stored or []:
             if (isinstance(s, dict) and s.get("task") in _LIST_TASKS
@@ -647,7 +647,7 @@ class DailyPage(ctk.CTkFrame):
     @staticmethod
     def _single_build_cfg(cfg, name):
         """单跑用运行配置：只改内存深拷贝，绝不触盘。steps=只含这一个任务（整步语义；
-        5 个副本子任务=只含该子任务名，引擎据此只集体刷那一本）；group_enabled 全开。
+        5 个副本子任务=只含该子任务名，引擎据此只集体刷那一本）。
         同时忽略整链设置：单跑只按这个任务自己的流程走——不套整体时间上限、绝不跑完关机、
         不做定时等待、不按「跑完解散」收尾解散、不触发「自动整理背包」；「已组队」是当前会话的
         组队条件、属于共享组队设置，不动。抓鬼单跑额外用日常页的「单跑轮数」single_rounds 在内存
@@ -658,7 +658,6 @@ class DailyPage(ctk.CTkFrame):
         # 标记「steps 就是全部、别再补缺行」——否则引擎的缺行补齐会把其它 CHAINABLE 补回来，
         # 单跑会跑成整条日常链（只影响本内存覆盖，不落盘）。
         daily["explicit_steps"] = True
-        daily["group_enabled"] = {"single": True, "multi": True}
         loop = daily.setdefault("loop", {})
         loop["time_limit_min"] = 0          # 不套整条龙的整体时间上限
         loop["shutdown_after"] = False      # 单跑绝对不触发「跑完关机」

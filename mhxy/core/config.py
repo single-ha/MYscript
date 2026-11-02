@@ -1086,6 +1086,8 @@ def load_config():
         save_config(cfg)
     if _migrate_zhuagui_battle_gap(cfg):
         save_config(cfg)
+    if _migrate_drop_daily_group_enabled(cfg):
+        save_config(cfg)
     return cfg
 
 
@@ -1233,6 +1235,23 @@ def _migrate_zhuagui_battle_gap(cfg):
     if val < 100:
         return False
     loop["battle_timeout_sec"] = 10
+    return True
+
+
+def _migrate_drop_daily_group_enabled(cfg):
+    """一次性迁移（2026-11-02 日常流程控制弹窗重构）：删除孤儿字段 tasks.daily.group_enabled。
+
+    旧版日常页有「多人任务 / 单人任务」**整组开关**，关过一次就把 {multi:false,...} 落进
+    config.json。重构后该整组开关已从界面移除（区头纯只读，单人/多人的取舍改由每行 enabled 与
+    「移除任务」表达），但起始页摘要(daily_card)与引擎(_enabled_steps)仍读这个字段做组级过滤——
+    于是旧 config 里残留的 multi:false 会让多人任务（副本/抓鬼）**永久不显示、也无法在界面恢复**
+    （user 2026-11-02：别的电脑拉取更新后起始页不显示多人任务流程）。新版没有任何入口写它，
+    保留只有害，故直接删除；删除后各处 ge.get(...,True) 缺省全开，恢复显示。一次性：删掉后
+    再次加载不再触发。"""
+    daily = ((cfg.get("tasks") or {}).get("daily") or {})
+    if not isinstance(daily, dict) or "group_enabled" not in daily:
+        return False
+    daily.pop("group_enabled", None)
     return True
 
 
