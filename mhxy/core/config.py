@@ -457,15 +457,33 @@ DEFAULT_CONFIG = {
     #     某项留空 [] 表示该入口没快捷键（个别任务会据此降级处理）。
     #     注：同一物理键在「功能页/战斗页」可能是不同功能，下面取的是【功能页(非战斗)】含义——
     #     脚本导航基本都在非战斗态发起。完整实测全表见顶层 game_hotkeys。
-    #     ★这里只保留脚本实际调用（send_hotkey / ctx.hotkeys）的动作名；其余键位见 game_hotkeys，
-    #       新增任务真用到某个入口时再按实测表补回来即可。
     "hotkeys": {
         "close_panel": ["esc"],          # 关闭面板/复位（Esc 游戏内未绑定，但通用关面板/退栈）
         "open_bag": ["alt", "e"],        # 包裹
+        "open_task": ["alt", "y"],       # 任务（订正：旧种子 alt+q 错——时空 alt+q 是召唤灵/默认随机法术）
         "open_activity": ["alt", "c"],   # 活动（订正：实测 Alt+C；F8 其实未绑定，旧情报误把 F8 当活动）
+        "open_character": ["alt", "w"],  # 人物
+        "open_skill": ["alt", "s"],      # 技能（仅功能页；战斗页 alt+s 是默认法术）
+        "open_summon": ["alt", "q"],     # 召唤灵（功能页）
         "open_team": ["alt", "t"],       # 队伍（功能页；战斗页 alt+t 是保护）
         "open_friend": ["alt", "f"],     # 好友
-        "open_guild": ["alt", "b"]       # 帮派
+        "open_rank": ["alt", "r"],       # 排行（功能页；战斗页 alt+r 是召唤）
+        "open_map": ["alt", "m"],        # 大地图
+        "open_minimap": ["tab"],         # 小地图（功能页 Tab）
+        "open_system": ["alt", "j"],     # 系统
+        "open_mount": ["alt", "k"],      # 坐骑
+        "open_guide": ["alt", "h"],      # 指引
+        "open_shop": ["alt", "a"],       # 商城（功能页；战斗页 alt+a 是攻击）
+        "open_welfare": ["alt", "d"],    # 福利（功能页；战斗页 alt+d 是防御）
+        "open_strengthen": ["alt", "v"], # 强化
+        "open_guild": ["alt", "b"],      # 帮派
+        "open_home": ["alt", "n"],       # 家园
+        "open_helper": ["alt", "z"],     # 助战（功能页；战斗页 alt+z 是特技）
+        "open_chat": ["alt", "x"],       # 聊天（订正：实测 Alt+X；O 其实未绑定）
+        "hide_ui": ["alt", "p"],         # 隐藏界面（功能页）
+        "afk": ["alt", "g"],             # 挂机（功能页；战斗页 alt+g 是捕捉）
+        "boss_key": ["alt", "l"],        # 老板键
+        "pin_window": ["alt", "u"]       # 置顶客户端
     },
 
     # ---- 《时空》游戏内快捷键【实测全表】（用户 2026-06-22 截图核对，作为今后操控游戏的权威依据）----

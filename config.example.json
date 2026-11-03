@@ -42,9 +42,25 @@
             "alt",
             "e"
         ],
+        "open_task": [
+            "alt",
+            "y"
+        ],
         "open_activity": [
             "alt",
             "c"
+        ],
+        "open_character": [
+            "alt",
+            "w"
+        ],
+        "open_skill": [
+            "alt",
+            "s"
+        ],
+        "open_summon": [
+            "alt",
+            "q"
         ],
         "open_team": [
             "alt",
@@ -54,9 +70,72 @@
             "alt",
             "f"
         ],
+        "open_rank": [
+            "alt",
+            "r"
+        ],
+        "open_map": [
+            "alt",
+            "m"
+        ],
+        "open_minimap": [
+            "tab"
+        ],
+        "open_system": [
+            "alt",
+            "j"
+        ],
+        "open_mount": [
+            "alt",
+            "k"
+        ],
+        "open_guide": [
+            "alt",
+            "h"
+        ],
+        "open_shop": [
+            "alt",
+            "a"
+        ],
+        "open_welfare": [
+            "alt",
+            "d"
+        ],
+        "open_strengthen": [
+            "alt",
+            "v"
+        ],
         "open_guild": [
             "alt",
             "b"
+        ],
+        "open_home": [
+            "alt",
+            "n"
+        ],
+        "open_helper": [
+            "alt",
+            "z"
+        ],
+        "open_chat": [
+            "alt",
+            "x"
+        ],
+        "hide_ui": [
+            "alt",
+            "p"
+        ],
+        "afk": [
+            "alt",
+            "g"
+        ],
+        "boss_key": [
+            "alt",
+            "l"
+        ],
+        "pin_window": [
+            "alt",
+            "u"
         ]
     },
     "game_hotkeys": {
