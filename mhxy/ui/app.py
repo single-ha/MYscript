@@ -8,6 +8,7 @@
 import datetime
 import os
 import threading
+import time
 
 import customtkinter as ctk
 
@@ -129,6 +130,14 @@ class App(ctk.CTk):
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._hotkey_down = False
+        # 用户最后操作时刻：预建页面只在「确实空闲」时才跑，避免刚打开就抢占 UI 线程（见 _prebuild_idle）。
+        # bind_all 覆盖所有子控件；add="+" 不覆盖控件自身的绑定。只记时间戳，开销可忽略。
+        self._last_input = time.monotonic()
+        for seq in ("<ButtonPress>", "<KeyPress>", "<MouseWheel>", "<Motion>"):
+            try:
+                self.bind_all(seq, self._mark_user_input, add="+")
+            except Exception:
+                pass
 
         # 首屏（起始页）已全部构建：先做一次布局计算，再 deiconify 主窗，并在【遮罩仍盖着】时
         # update() 强制主窗真正映射+绘制，最后才撤遮罩——用户看到完整界面直接出现，而非逐控件刷出。
@@ -146,7 +155,8 @@ class App(ctk.CTk):
         self.after(150, self._tick)
         self.after(60, self._poll_hotkey)
         # 界面显示后先给用户一小段纯净交互时间，再趁空闲逐个预建其余页面（首次切过去即秒开）。
-        self.after(1000, self._prebuild_idle)
+        # 第一次推迟到 3s；真正开建还要过 _prebuild_idle 的空闲判断，用户一直在操作就会继续让路。
+        self.after(3000, self._prebuild_idle)
         # 全局唯一运行锁：某页「开始」被已有任务挡住时，这里弹醒目红 toast 提醒。
         set_run_rejected_hook(self._toast_task_rejected)
 
@@ -657,13 +667,38 @@ class App(ctk.CTk):
     # 把最常用的页面先补（日常→任务配置→周常→工具→设置），让用户大概率在切过去前就已就绪。
     PRELOAD_ORDER = ("daily", "config", "weekly", "tools", "settings")
 
+    # 预建的空闲门控（秒/毫秒）：用户最后一次操作后静置 IDLE 秒才建一页；建完隔 GAP 毫秒再检查。
+    # 刚开始操作时不断让路，所以「刚打开就点」不会撞上建页；停手后才会在后台补齐。
+    PREBUILD_IDLE = 2.0
+    PREBUILD_GAP = 500
+    PREBUILD_DEFER = 500
+
+    def _mark_user_input(self, _event=None):
+        """记录用户最后一次鼠标/键盘操作时刻（bind_all 绑定，见 __init__）。"""
+        self._last_input = time.monotonic()
+
     def _prebuild_idle(self):
         """启动后趁空闲把尚未创建的页面按 PRELOAD_ORDER 逐个预建，首次切过去即秒开。
 
         关键：每次只建一个页面、再 after 调度下一个——CTk 的 ScrollableFrame 在构造时会同步
         update_idletasks（实测单页构造要 0.2~2.3s），一次建多个会把 UI 卡死、日志/急停都不响应；
         拆成单页 + 间隔后，每个页面在自己那一拍承担耗时，其余拍 UI 照常响应。用户已手动切到某页时
-        该页经 _ensure_page 即时建好，这里跳过即可。"""
+        该页经 _ensure_page 即时建好，这里跳过即可。
+
+        但仅靠间隔还不够：刚打开窗口时用户往往就在点按钮，任一页的 1~2s 构造都会表现为「点了没反应」。
+        故这里是**空闲门控**——用户最近 PREBUILD_IDLE 秒内有操作、或有任务在跑、或开着模态弹窗，都先推迟，
+        等真正停手后再补页；不会在用户操作时抢占 UI 线程。"""
+        if time.monotonic() - getattr(self, "_last_input", 0.0) < self.PREBUILD_IDLE:
+            self.after(self.PREBUILD_DEFER, self._prebuild_idle)
+            return
+        # 有任务在跑时别建页（建页会冻住日志刷新/停止按钮）；有模态弹窗时不建，避免弹窗卡住。
+        try:
+            busy = bool(TaskRunner.active_titles()) or self.grab_current() is not None
+        except Exception:
+            busy = False
+        if busy:
+            self.after(self.PREBUILD_DEFER, self._prebuild_idle)
+            return
         for key in self.PRELOAD_ORDER:
             if key not in self.pages:
                 self._ensure_page(key)
@@ -671,13 +706,29 @@ class App(ctk.CTk):
                 cur = getattr(self, "_current_key", None)
                 if cur in self.pages:
                     self.pages[cur].tkraise()
-                self.after(160, self._prebuild_idle)
+                self.after(self.PREBUILD_GAP, self._prebuild_idle)
                 return
         # 全部建完，停止调度。
 
     def _show(self, key):
         self._current_key = key   # 记当前可见页，全局热键只控它
-        page, _just_created = self._ensure_page(key)
+        # 首次切到某页要同步构造（0.2~2.3s）。预建还没轮到它时，至少用等待光标告诉用户「在加载」，
+        # 而不是看起来像死机；构造期间新页尚未 grid，不会出现控件逐个刷出的画面。
+        need_build = key not in self.pages
+        if need_build:
+            try:
+                self.configure(cursor="watch")
+                self.update_idletasks()
+            except Exception:
+                pass
+        try:
+            page, _just_created = self._ensure_page(key)
+        finally:
+            if need_build:
+                try:
+                    self.configure(cursor="")
+                except Exception:
+                    pass
 
         # 关键修正：所有页面都放在同一 grid 位置，切页时必须先把旧页移出布局，
         # 再显示新页，避免 Tk 在同一帧里同时绘制两个页面、造成几帧错乱混合。
