@@ -28,6 +28,8 @@ from ...tasks import get_task
 from ...tasks.daily import (
     CHAINABLE, TEAM_STEPS, TEAM_STEP_TITLES,
     ORGANIZE_STEP, ORGANIZE_STEP_TITLE, REPEATABLE_STEPS, FLOW_ORDERED_KEY,
+    FLOW_TIMING_STEP, FLOW_SHUTDOWN_STEP, FLOW_SINGLE_STEPS, FLOW_STEPS,
+    normalize_flow_steps, normalize_hhmm,
 )
 from ...core.config import SINGLE_TASK_ORDER
 from ..common import Card, Tooltip, bind_wraplength, required_regions, required_templates
@@ -35,29 +37,12 @@ from .flow_items import TaskFlowItem, FlowControlItem
 
 _SINGLE_ORDER = list(SINGLE_TASK_ORDER)
 
-# 5个副本子任务对应的任务类名（用于显示标题）
-_SUB_TASK_TITLES = {
-    "dt_60_xiashi": "60级侠士副本",
-    "dt_70_xiashi": "70级侠士副本",
-    "dt_60_common1": "60级普通1",
-    "dt_60_common2": "60级普通2",
-    "dt_70_common": "70级普通",
-}
-
-# 流程控制伪步骤：与普通任务一样作为 steps 里的可拖拽行（可改/＋/✕/排序）。
-# · 定时 / 跑完关机：整条链各只有一个（单例，右侧开关决定是否生效，生效时机引擎固定——
-#   定时=链开头、关机=链结尾），不占执行序号；
-# · 自动整理背包（ORGANIZE_STEP）：**可在流程里放多个**（见 tasks.daily.REPEATABLE_STEPS），
-#   引擎走到每个该步就在各号上整理一次，位置即生效位置（不占执行序号）。
-# 保存时定时/关机由本弹窗同步回引擎仍在读的旧字段（loop.schedule / loop.shutdown_after）；
-# 整理是否启用=链中是否存在启用的 organize 步，同步 organize_bag.auto_organize（仅供旧交接点
-# 自动整理与其它页面开关回显；新结构链下引擎只按 organize 步的位置执行）。
-FLOW_TIMING = "timing"
+# 流程控制伪步骤名/标题统一来自 tasks.daily（引擎与本弹窗同源），这里只起别名便于本文件使用。
+FLOW_TIMING = FLOW_TIMING_STEP
 FLOW_ORGANIZE = ORGANIZE_STEP          # "organize"
-FLOW_SHUTDOWN = "shutdown"
+FLOW_SHUTDOWN = FLOW_SHUTDOWN_STEP
 # 单例流程控制（整条链至多一个）；organize 不在此列（可重复）。
-FLOW_SINGLE = [FLOW_TIMING, FLOW_SHUTDOWN]
-FLOW_STEPS = [FLOW_TIMING, FLOW_ORGANIZE, FLOW_SHUTDOWN]
+FLOW_SINGLE = list(FLOW_SINGLE_STEPS)
 FLOW_TITLES = {
     FLOW_TIMING: "定时延后执行",
     FLOW_ORGANIZE: ORGANIZE_STEP_TITLE,
@@ -253,93 +238,14 @@ class DailyFlowPage(ctk.CTkToplevel):
 
     @staticmethod
     def _norm_hhmm(raw, default="10:00"):
-        """把输入规整成合法 HH:MM；非法/空返回 default。与行控件输入框同一口径。"""
-        if not raw:
-            return default
-        raw = str(raw).strip().replace("：", ":")
-        if ":" not in raw:
-            return default
-        try:
-            hh, mm = raw.split(":")[:2]
-            hh, mm = int(hh), int(mm)
-        except (ValueError, TypeError):
-            return default
-        if not (0 <= hh <= 23 and 0 <= mm <= 59):
-            return default
-        return f"{hh:02d}:{mm:02d}"
+        """把输入规整成合法 HH:MM；非法/空返回 default。实现统一在 tasks.daily.normalize_hhmm。"""
+        return normalize_hhmm(raw, default)
 
     @staticmethod
     def _normalize(stored, removed=(), legacy=None):
-        """把存储的 steps 规整成统一的可编辑行序列：
-        · task="" 空白占位原样保留；
-        · CHAINABLE 普通任务（排除已废弃的 dungeon）去重、尊重存储的 enabled
-          （行开关=启用/停用，停用的行保留在流程里、引擎跳过），removed 里明确
-          移除的不补、其余缺省任务补到末尾（默认启用）；
-        · TEAM_STEPS（组队/解散）与「整理背包」(organize) 是【可重复】伪步骤：按存储位置
-          原样保留任意多个、不去重、不参与缺行补齐；
-        · 定时/关机是【单例】伪步骤：整条链各至多一个、按存储位置保留、不去重补齐；
-          「定时」额外保留/补齐 time=HH:MM（缺失时取旧 loop.schedule，再缺省 10:00）；
-        · 旧 config 的 steps 里还没有流程伪步骤时，按旧开关字段 legacy 迁移一次
-          （开着的默认开启，timing 带上旧 schedule 时刻）；organize 仅在链中一个都没有时迁移，
-          用户已移出（进 removed）不补。"""
-        removed = set(removed or ())
-        legacy = legacy or {}
-        legacy_sched = legacy.get(FLOW_TIMING, "") if isinstance(
-            legacy.get(FLOW_TIMING, ""), str) else ""
-        out, seen = [], set()
-        organize_count = 0
-        for s in stored or []:
-            if not isinstance(s, dict):
-                continue
-            task = s.get("task", "")
-            if task == "":
-                out.append({"task": "", "enabled": bool(s.get("enabled", False))})
-                continue
-            if task == FLOW_ORGANIZE:
-                # 整理背包：允许在流程里出现多次，全部按存储位置/启用态保留。
-                out.append({"task": task, "enabled": bool(s.get("enabled", False))})
-                organize_count += 1
-                continue
-            if task in TEAM_STEPS:
-                # 组队/解散：可重复，按存储位置保留任意多个（不参与缺行补齐）。尊重行开关的存储态
-                # （缺省 True 兼容旧链）；停用的行要能在重开弹窗后仍是关的，否则关掉组队不生效。
-                out.append({"task": task, "enabled": bool(s.get("enabled", True))})
-                continue
-            if task in FLOW_SINGLE and task not in seen:
-                entry = {"task": task, "enabled": bool(s.get("enabled", False))}
-                if task == FLOW_TIMING:
-                    entry["time"] = DailyFlowPage._norm_hhmm(
-                        s.get("time") or legacy_sched)
-                out.append(entry)
-                seen.add(task)
-                continue
-            if task in CHAINABLE and task != "dungeon" and task not in seen:
-                # 任务行开关=启用/停用：尊重存储的 enabled（缺省 True）。停用的行保留在
-                # 流程里（引擎按 enabled=False 跳过、不补回），可用开关再开；✕ 才彻底移除。
-                out.append({"task": task, "enabled": bool(s.get("enabled", True))})
-                seen.add(task)
-        for task in CHAINABLE:
-            if task not in seen and task != "dungeon" and task not in removed:
-                out.append({"task": task, "enabled": True})
-                seen.add(task)
-        # 旧开关 → 流程伪步骤的一次性迁移（只在存储里一个对应伪步骤都没有时进行）
-        def _has(kind):
-            return any(x.get("task") == kind for x in (stored or [])
-                       if isinstance(x, dict))
-        for task in FLOW_STEPS:
-            if task in removed or not legacy.get(task):
-                continue
-            if task == FLOW_ORGANIZE:
-                if organize_count > 0:
-                    continue                 # 已有（哪怕多个）整理步，不再按旧开关迁移
-            elif task in seen or _has(task):
-                continue                     # 定时/关机单例，已存在不迁
-            entry = {"task": task, "enabled": True}
-            if task == FLOW_TIMING:
-                entry["time"] = DailyFlowPage._norm_hhmm(legacy.get(task))
-            out.append(entry)
-            seen.add(task)
-        return out
+        """规整存储 steps 为可编辑行序列；实现统一在 tasks.daily.normalize_flow_steps，
+        弹窗行、起始页摘要、引擎真实执行序三处共用同一套顺序/缺行补齐/旧开关迁移口径。"""
+        return normalize_flow_steps(stored, removed, legacy)
 
     def _task_display_name(self, name):
         if not name:
@@ -348,8 +254,6 @@ class DailyFlowPage(ctk.CTkToplevel):
             return FLOW_TITLES[name]
         if name in TEAM_STEP_TITLES:
             return TEAM_STEP_TITLES[name]
-        if name in _SUB_TASK_TITLES:
-            return _SUB_TASK_TITLES[name]
         cls = get_task(name)
         return cls.title if cls else name
 
@@ -451,8 +355,8 @@ class DailyFlowPage(ctk.CTkToplevel):
         # 摘要严格镜像引擎真实执行顺序（与行前徽标序号、「共N项」完全一致）：
         # 定时=第 1 步、关机=最后一步（引擎固定首尾，与拖拽位置无关），中段的任务/组队/解散/
         # 每个启用的自动整理背包按各自存储位置排列；停用行与空白占位不计。
-        flow_label = {FLOW_TIMING: "⏰定时",
-                      FLOW_ORGANIZE: "🎒整理背包",
+        # 定时标签带真实时刻「⏰HH:MM开始执行」，与起始页日常卡摘要同格式、同源（step.time）。
+        flow_label = {FLOW_ORGANIZE: "🎒整理背包",
                       FLOW_SHUTDOWN: "🔌关机"}
         middle, timing, shutdown = [], None, None
         for entry in self._flat:
@@ -465,7 +369,8 @@ class DailyFlowPage(ctk.CTkToplevel):
                 if not bool(getattr(item, "enabled", False)):
                     continue
                 if name == FLOW_TIMING:
-                    timing = flow_label[name]
+                    hhmm = normalize_hhmm(item.step.get("time"))
+                    timing = f"⏰{hhmm}开始执行"
                 elif name == FLOW_SHUTDOWN:
                     shutdown = flow_label[name]
                 else:

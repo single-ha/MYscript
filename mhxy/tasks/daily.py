@@ -76,6 +76,12 @@ REPEATABLE_STEPS = TEAM_STEPS + [ORGANIZE_STEP]
 # 任何一个这类伪步骤出现，就视为「新结构链」：严格按存储绝对顺序执行、不按区重排。
 STRUCTURE_STEPS = TEAM_STEPS + [ORGANIZE_STEP]
 
+# 定时/关机：整条链各至多一个（单例），由引擎固定在链首/链尾生效；整理背包可重复。
+FLOW_TIMING_STEP = "timing"
+FLOW_SHUTDOWN_STEP = "shutdown"
+FLOW_SINGLE_STEPS = [FLOW_TIMING_STEP, FLOW_SHUTDOWN_STEP]
+FLOW_STEPS = FLOW_SINGLE_STEPS + [ORGANIZE_STEP]
+
 # 「日常流程控制」弹窗保存链时打的显式标记（tasks.daily.flow_ordered=True，user 2026-11-01）：
 # 用户的诉求是「引擎严格按 UI 上设置的流程顺序执行」，故只要这条链是弹窗存过的，**哪怕里面
 # 一个伪步骤都没有（纯普通任务）**，引擎也按 steps 存储绝对顺序跑，绝不再按多人/单人分区重排。
@@ -110,6 +116,101 @@ def get_selected_dungeon_titles(cfg):
         if n in chosen:
             cls = get_task(n)
             out.append(cls.title if cls else n)
+    return out
+
+
+def normalize_hhmm(raw, default="10:00"):
+    """把输入规整成合法 HH:MM；非法/空返回 default。流程弹窗定时行与本规整共用同一口径。"""
+    if not raw:
+        return default
+    raw = str(raw).strip().replace("：", ":")
+    if ":" not in raw:
+        return default
+    try:
+        hh, mm = raw.split(":")[:2]
+        hh, mm = int(hh), int(mm)
+    except (ValueError, TypeError):
+        return default
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        return default
+    return f"{hh:02d}:{mm:02d}"
+
+
+def normalize_flow_steps(stored, removed=(), legacy=None):
+    """把存储的 tasks.daily.steps 规整成统一的可编辑/可执行行序列（弹窗行、起始页摘要、引擎
+    真实执行序三处【唯一来源】，避免再各写一套导致显示与实跑不一致）。
+
+    · task="" 空白占位原样保留；
+    · CHAINABLE 普通任务（排除已废弃的聚合 dungeon）去重、尊重存储的 enabled
+      （行开关=启用/停用，停用的行保留在流程里、引擎跳过），removed 里明确移除的不补，
+      其余缺省任务按 CHAINABLE 顺序补到末尾（默认启用）；
+    · TEAM_STEPS（组队/解散）与「整理背包」(organize) 是【可重复】伪步骤：按存储位置原样
+      保留任意多个、不去重、不参与缺行补齐；
+    · 定时/关机是【单例】伪步骤：整条链各至多一个、按存储位置保留、不去重补齐；
+      「定时」额外保留/补齐 time=HH:MM（缺失取旧 loop.schedule，再缺省 10:00）；
+    · 旧 config 的 steps 里还没有流程伪步骤时，按旧开关字段 legacy 迁移一次
+      （开着的默认开启，timing 带上旧 schedule 时刻）；organize 仅在链中一个都没有时迁移，
+      用户已移出（进 removed）不补。
+
+    返回行列表：每行 {"task": str, "enabled": bool}，定时行额外带 "time"。
+    legacy 形如 {"timing": "20:00", "shutdown": bool, "organize": bool}。"""
+    removed = set(removed or ())
+    legacy = legacy or {}
+    legacy_sched = legacy.get(FLOW_TIMING_STEP, "") if isinstance(
+        legacy.get(FLOW_TIMING_STEP, ""), str) else ""
+    out, seen = [], set()
+    organize_count = 0
+    for s in stored or []:
+        if not isinstance(s, dict):
+            continue
+        task = s.get("task", "")
+        if task == "":
+            out.append({"task": "", "enabled": bool(s.get("enabled", False))})
+            continue
+        if task == ORGANIZE_STEP:
+            # 整理背包：允许在流程里出现多次，全部按存储位置/启用态保留。
+            out.append({"task": task, "enabled": bool(s.get("enabled", False))})
+            organize_count += 1
+            continue
+        if task in TEAM_STEPS:
+            # 组队/解散：可重复，按存储位置保留任意多个（不参与缺行补齐）。尊重行开关的存储态
+            # （缺省 True 兼容旧链）；停用的行要能在重开弹窗后仍是关的。
+            out.append({"task": task, "enabled": bool(s.get("enabled", True))})
+            continue
+        if task in FLOW_SINGLE_STEPS and task not in seen:
+            entry = {"task": task, "enabled": bool(s.get("enabled", False))}
+            if task == FLOW_TIMING_STEP:
+                entry["time"] = normalize_hhmm(s.get("time") or legacy_sched)
+            out.append(entry)
+            seen.add(task)
+            continue
+        if task in CHAINABLE and task != "dungeon" and task not in seen:
+            # 任务行开关=启用/停用：尊重存储的 enabled（缺省 True）。停用的行保留在流程里
+            # （引擎按 enabled=False 跳过、不补回），可用开关再开；✕ 才彻底移除。
+            out.append({"task": task, "enabled": bool(s.get("enabled", True))})
+            seen.add(task)
+    for task in CHAINABLE:
+        if task not in seen and task != "dungeon" and task not in removed:
+            out.append({"task": task, "enabled": True})
+            seen.add(task)
+
+    # 旧开关 → 流程伪步骤的一次性迁移（只在存储里一个对应伪步骤都没有时进行）
+    def _has(kind):
+        return any(x.get("task") == kind for x in (stored or [])
+                   if isinstance(x, dict))
+    for task in FLOW_STEPS:
+        if task in removed or not legacy.get(task):
+            continue
+        if task == ORGANIZE_STEP:
+            if organize_count > 0:
+                continue                 # 已有（哪怕多个）整理步，不再按旧开关迁移
+        elif task in seen or _has(task):
+            continue                     # 定时/关机单例，已存在不迁
+        entry = {"task": task, "enabled": True}
+        if task == FLOW_TIMING_STEP:
+            entry["time"] = normalize_hhmm(legacy.get(task))
+        out.append(entry)
+        seen.add(task)
     return out
 
 
@@ -749,93 +850,50 @@ class DailyTask(Task):
         return sel, (get_task(sel) if sel else None)
 
     def _enabled_steps(self, ctx):
-        """返回本趟真正会跑的任务名列表，顺序=执行顺序，**严格按界面流程控制弹窗里设置的顺序**：
-        ① 行级已勾选（旧版「多人/单人整组开关」group_enabled 已废弃移除，不再参与过滤）；
-        ② 存储 steps 里没有的新任务补到末尾（默认启用，见下）；
-        ③ 顺序：弹窗存过的链（flow_ordered=True）或含组队/解散/整理伪步骤时，严格按 steps
-           存储绝对顺序（用户拖成啥就跑成啥，单人/多人可任意穿插）；没经弹窗保存的旧 config
-           才按 GROUPS 拼段（多人组在前、区内保持存储相对顺序），行为零回归。
-
-        「刷副本」步额外看有没有勾副本：**开着但一个都没勾 = 这步不存在**（用户拍板，与整行
-        关掉完全等效——否则会白设一道没人跑的集体屏障、还可能误触发收尾/强制解散）。
-        判据复用 _selected_dungeons（按展示顺序过滤已收录名），UI 侧 enabled_names /
-        日常页 _refresh_exec_order、_renumber 必须同源，三处不一致就会「界面显示这步、引擎
-        忽略」。"""
+        """返回本趟真正会跑的任务名列表，顺序=执行顺序，**与流程控制弹窗、起始页摘要严格同源**
+        （都走 normalize_flow_steps），保证「界面上看到的顺序 == 引擎实际跑的顺序」：
+        ① 行级 enabled=False 的跳过；task="" 空白占位跳过；被 removed_tasks 明确移出的不补；
+        ② 存储 steps 里缺的普通任务按 CHAINABLE 顺序补到末尾（默认启用）；
+        ③ 严格按规整后的存储顺序（用户拖成啥就跑成啥，单人/多人可任意穿插），不再按多人/单人
+           分区重排；组队/解散/整理伪步骤按各自存储位置、可重复计入；
+        ④ 聚合「刷副本」步 "dungeon" 一律不跑——流程弹窗早已把副本拆成 5 个独立子任务行
+           （dt_*，各自独立启停），弹窗/起始页摘要也不显示聚合行。
+        单跑（explicit_steps，内存覆盖只跑这一个任务）不走规整/补齐，原样返回。"""
         tc = ctx.task_cfg(self.name)
-        def dungeon_ok(name):
-            return name != "dungeon" or self._selected_dungeons(ctx)
-        # 单跑：内存覆盖的 steps 就是「只跑这个任务」，**不做缺行补齐**——否则会把其它
+        # 单跑：内存覆盖的 steps 就是「只跑这个任务」，**不做规整/缺行补齐**——否则会把其它
         # CHAINABLE 任务全补回来、单跑变成跑整条链（_single_build_cfg 置的标记）。
-        explicit_only = bool(tc.get("explicit_steps"))
-        # 「移除任务」标记：日常流程控制页明确移出的任务，存了也不跑、也不再当缺行补回
-        # （空白占位 task="" 本就不在 CHAINABLE，天然跳过）。
-        removed = set(tc.get("removed_tasks") or ())
-        stored, seen = [], set()
-        has_structure_step = False
-        for step in tc.get("steps", []):
-            if not isinstance(step, dict):
-                continue
-            name = step.get("task")
-            if name in TEAM_STEPS:
-                # 流程控制的集体动作：位置=存储绝对顺序，可在整条流程里出现多次（重复组队/解散）。
-                # 但必须尊重行开关：停用的组队/解散步跳过不执行（否则弹窗关掉组队仍会组队）。
-                # 停用行仍计入结构标记（保持绝对序、且不被当缺行补回/去重），与「整理背包」同口径。
-                has_structure_step = True
-                if step.get("enabled", True):
-                    stored.append(name)
-                continue
-            if name == ORGANIZE_STEP:
-                # 整理背包：可重复出现的「每号独立」步骤，走到才整理（不是集体屏障）。
-                # 停用的行跳过但仍计入结构标记，且绝不补回/去重。
-                has_structure_step = True
-                if step.get("enabled", True):
-                    stored.append(name)
-                continue
-            if name not in CHAINABLE or name in removed:
-                continue
-            seen.add(name)          # 存在即可（禁用的行也算「存过」，见下：不能被当成缺行补回来）
-            if not dungeon_ok(name):
-                continue
-            if step.get("enabled"):
-                stored.append(name)
-        # 存储 steps 里没有、CHAINABLE 里有 = 新任务上线、老 config 还没存这行：
-        # 与界面「缺的补到末尾（默认启用）」同口径补进来，否则「界面显示这行、引擎却跳过」。
-        # 用户在界面关掉的行是带 enabled=False 存着的（已在 seen 里），绝不会被这里补回来。
-        # 单跑（explicit_steps）时跳过补齐，保持「只跑指定的那一个」。
-        #
-        # 聚合「刷副本」步 "dungeon" 不在补齐之列（user 2026-11-01 拍板）：流程控制弹窗早已把
-        # 副本拆成 5 个独立子任务行（dt_*，勾选哪几个跑哪几个），存链时不再写聚合行；若这里还
-        # 把它当缺行补到链尾，就会在「所有拆分子本刷完」之后、链的末尾又把勾选的全部副本集体
-        # 重刷一遍（实测：活跃度奖励是最后一步，领完竟又跑「集体刷副本 1/2」）。显式存了聚合行
-        # 的旧 config 仍照常执行（上面 stored 收集没过滤它），只修「没存却被误补」这一种。
-        # UI 侧同口径隐藏集见 ui/pages/daily._HIDDEN_TASKS / daily_card / daily_flow（都排除 "dungeon"）。
-        if not explicit_only:
-            for name in CHAINABLE:
-                if name == "dungeon":
-                    continue
-                if name not in seen and name not in removed and dungeon_ok(name):
-                    stored.append(name)
-        # 严格按存储绝对顺序执行（=UI 流程控制弹窗里设置/拖拽的顺序）的两种情形：
-        #   ① 含组队/解散/整理伪步骤（旧判定，自然是弹窗排过的新结构链）；
-        #   ② tasks.daily.flow_ordered=True：弹窗保存纯普通任务链时也会打这个标记——
-        #      用户要求「引擎按 UI 上的流程顺序跑」，即便没有伪步骤也不能再按多人/单人分区重排。
-        # 两种情形都只对 CHAINABLE 普通任务去重（team/organize 允许重复，不能被 dedup 合并）。
-        # 都不满足（没经弹窗保存过的旧日常页/旧 config）：维持「多人组在前」的按区拼段，零回归。
-        absolute_order = has_structure_step or bool(tc.get(FLOW_ORDERED_KEY))
-        if absolute_order:
+        if tc.get("explicit_steps"):
             out, dedup = [], set()
-            for name in stored:
+            for step in tc.get("steps", []):
+                if not isinstance(step, dict):
+                    continue
+                name = step.get("task")
                 if name in REPEATABLE_STEPS:
                     out.append(name)
-                elif name not in dedup:
+                elif name in CHAINABLE and name not in dedup and step.get("enabled"):
                     out.append(name)
                     dedup.add(name)
             return out
-        out = stored
-        # 按区拼段（分段顺序与界面共用 tasks.daily.GROUPS），否则会「界面显示这步先跑、
-        # 引擎却先跑另一步」——尤其是还没被界面保存过的旧 config（存的原序不一定是区序）。
-        seg = {g: [n for n in out if GROUP_OF.get(n) == g] for g in GROUPS}
-        return [n for g in GROUPS for n in seg.get(g, [])]
+
+        legacy = {
+            FLOW_TIMING_STEP: (tc.get("loop", {}) or {}).get("schedule", "") or "",
+            FLOW_SHUTDOWN_STEP: bool((tc.get("loop", {}) or {}).get("shutdown_after", False)),
+            ORGANIZE_STEP: bool(ctx.task_cfg("organize_bag").get("auto_organize", False)),
+        }
+        rows = normalize_flow_steps(tc.get("steps", []), tc.get("removed_tasks") or (), legacy)
+        out, dedup = [], set()
+        for row in rows:
+            name = row.get("task")
+            if not name or not row.get("enabled", True):
+                continue                       # 空白占位 / 停用行 / 停用的定时·关机（引擎首尾单读 loop）
+            if name in FLOW_SINGLE_STEPS:
+                continue                       # 定时/关机由引擎在链首/链尾按 loop 固定处理，不进链
+            if name in REPEATABLE_STEPS:
+                out.append(name)               # 组队/解散/整理：可重复、不去重
+            elif name in CHAINABLE and name not in dedup:
+                out.append(name)
+                dedup.add(name)
+        return out
 
     def _time_limit(self, ctx):
         tc = ctx.task_cfg(self.name)

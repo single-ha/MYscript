@@ -20,20 +20,13 @@ import customtkinter as ctk
 from . import theme as T
 from ..core import config as cfg_mod
 from ..tasks import get_task
-from ..tasks.daily import (CHAINABLE, GROUP_OF, GROUPS, TEAM_STEPS, TEAM_STEP_TITLES,
-                           ORGANIZE_STEP, STRUCTURE_STEPS, FLOW_ORDERED_KEY,
-                           get_selected_dungeon_titles)
+from ..tasks.daily import (CHAINABLE, TEAM_STEPS, TEAM_STEP_TITLES,
+                           ORGANIZE_STEP, FLOW_TIMING_STEP, FLOW_SHUTDOWN_STEP,
+                           get_selected_dungeon_titles, normalize_flow_steps)
 from .common import Tooltip
 
-# 区顺序：与「日常」页/引擎同源（tasks.daily.GROUPS）——多人组在前、个人组在后，区内按配置原序。
-_GROUPS = GROUPS
-
-# 只读展示口径与「日常」页（pages/daily.py 的 _HIDDEN_TASKS/_MULTI_ORDER）严格一致：
-# 聚合「刷副本」行在清单/摘要里隐藏（它会展开成 5 个副本名，与 5 个独立副本子任务重复），
-# 多人组固定按 60侠士→70侠士→60普通1→60普通2→70普通→抓鬼 展示（不代表引擎执行序）。
-_HIDDEN_TASKS = {"dungeon"}
-_MULTI_ORDER = ["dt_60_xiashi", "dt_70_xiashi",
-                "dt_60_common1", "dt_60_common2", "dt_70_common", "zhuagui"]
+# 摘要/执行链的顺序一律以流程控制弹窗口径为准（tasks.daily.normalize_flow_steps），
+# 起始页、弹窗、引擎共用同一来源；这里不再另算「多人在前」的按区展示序。
 
 
 def task_title(name, cfg=None):
@@ -47,106 +40,34 @@ def task_title(name, cfg=None):
     return cls.title if cls else name
 
 
-def ordered_steps(cfg):
-    """规整成「含全部可串联任务、按区拼段」的有序列表（与 DailyPage._normalize 展示口径一致）。
-
-    · 聚合「刷副本」(dungeon) 行隐藏：清单只列 5 个独立副本子任务，避免 dungeon 展开后与之重名；
-    · 用户在「日常流程控制」弹窗明确移除的任务（tasks.daily.removed_tasks）一律不列出——
-      与引擎 DailyTask._enabled_steps、流程弹窗的「可添加项」同口径，否则被移除的副本子任务
-      （如用户移走的 70侠士/70普通）会经下面 CHAINABLE 缺行补齐又冒回摘要/只读清单（user 2026-11-01）；
-    · 多人组按 _MULTI_ORDER 固定序（60侠士/70侠士/60普通1/60普通2/70普通/抓鬼）；
-    · 单人组保持存储相对顺序；两组均为多人在前、单人在后（_GROUPS）。
-    注意：这是**只读展示序**；引擎实际执行序见 DailyTask._enabled_steps（含 team 步骤时按存储绝对序）。"""
-    d = ((cfg.get("tasks", {}) or {}).get("daily", {}) or {})
-    removed = set(d.get("removed_tasks") or ())
-    out, seen = [], set()
-    for s in (d.get("steps") or []):
-        if (isinstance(s, dict) and s.get("task") in CHAINABLE
-                and s["task"] not in _HIDDEN_TASKS and s["task"] not in removed
-                and s["task"] not in seen):
-            out.append({"task": s["task"], "enabled": bool(s.get("enabled", True))})
-            seen.add(s["task"])
-    for t in CHAINABLE:
-        if t not in seen and t not in _HIDDEN_TASKS and t not in removed:
-            out.append({"task": t, "enabled": True})
-            seen.add(t)
-
-    def _rank(task, group):
-        if group == "multi" and task in _MULTI_ORDER:
-            return _MULTI_ORDER.index(task)
-        return None
-
-    seg = {}
-    for g in _GROUPS:
-        rows = [s for s in out if GROUP_OF.get(s["task"]) == g]
-        if g == "multi":
-            # 固定序：在 _MULTI_ORDER 里的按表排，未收录的多人任务追加在后（保持存储相对顺序）。
-            indexed = [s for s in rows if s["task"] in _MULTI_ORDER]
-            extras = [s for s in rows if s["task"] not in _MULTI_ORDER]
-            indexed.sort(key=lambda s: _MULTI_ORDER.index(s["task"]))
-            seg[g] = indexed + extras
-        else:
-            seg[g] = rows
-    return [s for g in _GROUPS for s in seg.get(g, [])]
-
-
-def enabled_names(cfg):
-    """本趟真正会跑的任务名（只读展示序）：只看行级启用。与「日常」页 _refresh_exec_order
-    同展示口径——单行停用的剔除；聚合 dungeon 行已在 ordered_steps 隐藏。
-    （旧版「多人/单人整组开关」group_enabled 已废弃移除，不再参与过滤。）"""
-    return [s["task"] for s in ordered_steps(cfg) if s["enabled"]]
-
-
 def enabled_chain_entries(cfg):
-    """镜像引擎实际执行顺序的【摘要用】条目列表，与 DailyTask._enabled_steps 严格同口径。
+    """本趟真正执行的【摘要用】条目列表，顺序/口径与流程控制弹窗、引擎 `_enabled_steps`
+    严格同源（都走 tasks.daily.normalize_flow_steps），保证「弹窗顺序 == 起始页摘要 == 实跑顺序」。
 
-    两种顺序（判据同引擎）：
-      · 弹窗排过的链（tasks.daily.flow_ordered=True）或含组队/解散/整理伪步骤：
-        严格按 tasks.daily.steps 的存储绝对顺序输出——
-        - 普通 CHAINABLE 任务：启用且所属整组启用才计入，去重、隐藏聚合 dungeon；
-        - 组队/解散、自动整理背包：可重复出现，按各自存储位置逐个计入（organize 还看行 enabled）；
-        - 存储里缺失的普通任务（新任务上线/老 config）按固定展示序补到末尾；
-      · 没经弹窗保存的旧 config：退回「多人组在前」的固定区分段序（=ordered_steps），零回归。
-    定时/关机是单例、由引擎固定在首尾生效，不在这里输出（chain_parts 单独贴首尾）。
+    严格按规整后的存储顺序输出：
+    - 普通 CHAINABLE 任务：只取启用的（去重、隐藏聚合 dungeon，缺省任务按 CHAINABLE 补末尾）；
+    - 组队/解散、自动整理背包：可重复出现，按各自存储位置逐个计入（停用的不计）；
+    - 定时/关机不在此输出（chain_parts 按 loop.schedule / shutdown_after 贴链首/链尾）。
     返回每项为 (kind, name)：kind∈{"task","team","organize"}。"""
     d = ((cfg.get("tasks", {}) or {}).get("daily", {}) or {})
-    removed = set(d.get("removed_tasks") or ())
-    raw_steps = d.get("steps") or []
-    has_structure = any(isinstance(s, dict) and s.get("task") in STRUCTURE_STEPS
-                        for s in raw_steps)
-    absolute_order = has_structure or bool(d.get(FLOW_ORDERED_KEY))
-
-    # 旧链：固定区分段序（多人在前、区内固定/存储序），只保留启用的普通任务。
-    if not absolute_order:
-        return [("task", s["task"]) for s in ordered_steps(cfg) if s["enabled"]]
-
-    out, seen = [], set()
-    for s in raw_steps:
-        if not isinstance(s, dict):
+    legacy = {
+        FLOW_TIMING_STEP: ((d.get("loop", {}) or {}).get("schedule", "") or ""),
+        FLOW_SHUTDOWN_STEP: bool((d.get("loop", {}) or {}).get("shutdown_after", False)),
+        ORGANIZE_STEP: bool(((cfg.get("tasks", {}) or {}).get("organize_bag", {}) or {})
+                            .get("auto_organize", False)),
+    }
+    rows = normalize_flow_steps(d.get("steps") or [], d.get("removed_tasks") or (), legacy)
+    out = []
+    for row in rows:
+        t = row.get("task")
+        if not t or not row.get("enabled", True):
             continue
-        t = s.get("task")
         if t == ORGANIZE_STEP:
-            if bool(s.get("enabled", False)):
-                out.append(("organize", t))
-            continue
-        if t in TEAM_STEPS:
-            # 与引擎 _enabled_steps 同口径：停用的组队/解散步不执行、也不计入摘要/「共N项」。
-            if bool(s.get("enabled", True)):
-                out.append(("team", t))
-            continue
-        if t in ("timing", "shutdown"):
-            continue
-        if t in CHAINABLE and t not in _HIDDEN_TASKS and t not in seen and t not in removed:
-            seen.add(t)
-            if bool(s.get("enabled", True)):
-                out.append(("task", t))
-    # 缺行补齐：存储里没有的普通任务按固定展示序补到末尾（新任务上线/老 config 安全网）
-    for s in ordered_steps(cfg):
-        name = s["task"]
-        if name not in seen:
-            seen.add(name)
-            if s.get("enabled", True):
-                out.append(("task", name))
+            out.append(("organize", t))
+        elif t in TEAM_STEPS:
+            out.append(("team", t))
+        elif t in CHAINABLE and t != "dungeon":
+            out.append(("task", t))
     return out
 
 
