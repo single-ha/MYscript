@@ -185,12 +185,10 @@ enter_dungeon                选择副本对话框里的「进入」按钮（普
             "npc_dialog_sec": 60,        # 点「参加」后等角色寻路到 NPC、弹出「选择副本」对话框的超时
             "poll_sec": 1.0,           # 副本内统一轮询的间隔：空闲/等战斗打完全的空转节奏（默认 1s；调小更灵敏更费CPU，调大更省但不及时发现按钮）
             "step_timeout_sec": 30,      # 副本内统一轮询的「寻路等待」超时：点跳过剧情/小闹钟后在等「进入战斗」出现的空闲上限
-            "enter_clock_retries": 3,    # 寻路等待超时后：小闹钟还在→点它重新寻路再等，最多重试这么多次；小闹钟没了→判副本可能已结束进收尾
             "entry_skip_sec": 60,        # 副本内统一轮询的开局阶段空闲超时（传送动画结束、首个动作/结算出现的上限）
             "battle_timeout_sec": 600,   # 单场战斗上限：点「进入战斗」（或识别到战斗已开始）后在等本场打完全的空闲上限
             "max_rounds": 24,            # 副本内点「进入战斗」发起的最大场数（防无限循环，强制收尾）
             "settle_grace": 0.05,        # 结算界面匹配阈值放宽量（结算画面一闪而过，比统一阈值放宽些提高召回）
-            "post_skip_sec": 3.0,        # 已废弃（统一轮询每帧都查结算界面，不再需要点跳过后的专属驻留）——保留兼容旧配置读取
             "still_end_sec": 20,         # 兜底判结束：画面连续静止这么久(秒)就判副本已结束（结算界面自动关闭后回到静止场景，不必干等超时）；0=关
             "still_diff": 6.0,           # 平均帧差低于此值视为静止（战斗中画面一直在动，不会误判）
             "enter_retry_max": 3,        # 侠士「进入+确认」重试上限
@@ -201,10 +199,8 @@ enter_dungeon                选择副本对话框里的「进入」按钮（普
             "tuoying_reenter_max": 3,    # 拓印处理完成后队长重新点「进入」的封顶轮数（防反复弹窗死循环）
             "tuoying_detect_sec": 8.0,   # 点「进入」后轮询是否弹出「拓印」临摹界面的时长
             "tuoying_passes": 2,         # 拓印临摹：单遍内沿图案骨架描几轮（每轮各笔画重新随机，提升覆盖）
-            "tuoying_lateral": 3.0,      # 已废弃（★2026-10-22 用户拍板走笔直接沿骨架、不要Z字摆动）——保留兼容旧配置读取
             "tuoying_sample_step": 5.0,  # 拓印临摹：骨架采样间距(像素)，越小越贴笔画(也更慢)
             "tuoying_speed": 1.0,        # 拓印临摹：走笔速度倍率，越大越快(用户要求整遍描摹 < 2 分钟)
-            "tuoying_stripe_spacing": 8.0,  # 已废弃（拓印改骨架描摹）——保留兼容旧配置读取
             "tuoying_upload_sec": 6.0,   # 点「上传」后等按钮出现/消失的超时（点上传按钮的轮询用）
             "tuoying_gone_confirm_sec": 0.4,  # 判定拓印界面「真消失」的确认窗口：上传后「未完成态」和「拓印标题」都不见时，
                                               #   要持续观察这么久都还不见才判「拓印完成」（防单帧闪烁误判）
@@ -461,33 +457,15 @@ DEFAULT_CONFIG = {
     #     某项留空 [] 表示该入口没快捷键（个别任务会据此降级处理）。
     #     注：同一物理键在「功能页/战斗页」可能是不同功能，下面取的是【功能页(非战斗)】含义——
     #     脚本导航基本都在非战斗态发起。完整实测全表见顶层 game_hotkeys。
+    #     ★这里只保留脚本实际调用（send_hotkey / ctx.hotkeys）的动作名；其余键位见 game_hotkeys，
+    #       新增任务真用到某个入口时再按实测表补回来即可。
     "hotkeys": {
         "close_panel": ["esc"],          # 关闭面板/复位（Esc 游戏内未绑定，但通用关面板/退栈）
         "open_bag": ["alt", "e"],        # 包裹
-        "open_task": ["alt", "y"],       # 任务（订正：旧种子 alt+q 错——时空 alt+q 是召唤灵/默认随机法术）
         "open_activity": ["alt", "c"],   # 活动（订正：实测 Alt+C；F8 其实未绑定，旧情报误把 F8 当活动）
-        "open_character": ["alt", "w"],  # 人物
-        "open_skill": ["alt", "s"],      # 技能（仅功能页；战斗页 alt+s 是默认法术）
-        "open_summon": ["alt", "q"],     # 召唤灵（功能页）
         "open_team": ["alt", "t"],       # 队伍（功能页；战斗页 alt+t 是保护）
         "open_friend": ["alt", "f"],     # 好友
-        "open_rank": ["alt", "r"],       # 排行（功能页；战斗页 alt+r 是召唤）
-        "open_map": ["alt", "m"],        # 大地图
-        "open_minimap": ["tab"],         # 小地图（功能页 Tab）
-        "open_system": ["alt", "j"],     # 系统
-        "open_mount": ["alt", "k"],      # 坐骑
-        "open_guide": ["alt", "h"],      # 指引
-        "open_shop": ["alt", "a"],       # 商城（功能页；战斗页 alt+a 是攻击）
-        "open_welfare": ["alt", "d"],    # 福利（功能页；战斗页 alt+d 是防御）
-        "open_strengthen": ["alt", "v"], # 强化
-        "open_guild": ["alt", "b"],      # 帮派
-        "open_home": ["alt", "n"],       # 家园
-        "open_helper": ["alt", "z"],     # 助战（功能页；战斗页 alt+z 是特技）
-        "open_chat": ["alt", "x"],       # 聊天（订正：实测 Alt+X；O 其实未绑定）
-        "hide_ui": ["alt", "p"],         # 隐藏界面（功能页）
-        "afk": ["alt", "g"],             # 挂机（功能页；战斗页 alt+g 是捕捉）
-        "boss_key": ["alt", "l"],        # 老板键
-        "pin_window": ["alt", "u"]       # 置顶客户端
+        "open_guild": ["alt", "b"]       # 帮派
     },
 
     # ---- 《时空》游戏内快捷键【实测全表】（用户 2026-06-22 截图核对，作为今后操控游戏的权威依据）----
@@ -528,8 +506,6 @@ DEFAULT_CONFIG = {
             },
             "regions": {                 # 由标定向导写入，相对游戏窗口左上角 [x,y,w,h]
                 "listing": None,         # 货架/列表识别区域
-                "category_button": None, # 左侧侧边栏的商品类别（如「奇珍异宝」）
-                "product_entry": None,   # 右侧信息框里要进的那个商品条目
                 "buy_button": None,
                 "confirm_button": None
             },
@@ -542,8 +518,6 @@ DEFAULT_CONFIG = {
                 "time_limit_min": 30,        # 时间上限（分钟）安全网，0=不限；主终止是「背包挖空」
                 "match_threshold": 0.85,     # 标志模板匹配阈值
                 "tick_interval_sec": 0.6,    # 每次「截图→判状态」的节拍（带抖动）
-                "still_min_sec": 0.3,        # 帧差判静止：最短先等
-                "still_wait_sec": 2.0,       # 帧差判静止：单次最长等/超时
                 "still_diff": 8.0,           # 收集/挖宝判「人物静止」的整屏帧差阈值：低于此算静止。
                                              #   太小→待机动画/周围走动/特效让永远判不到静止→误超时；
                                              #   运行日志会实时打印真实帧差，照着设到静止<阈值<走动即可。
@@ -551,7 +525,6 @@ DEFAULT_CONFIG = {
                 "collect_timeout_sec": 1800, # 收集阶段整体超时（更宽松兜底）：超时仍未判到静止
                                              #   → 按「已收集完」转挖宝；2026-10-31 由 600 延长到 1800，
                                              #   平时仍以帧差静止判完成，此值只在帧差判不到时兜底
-                "activity_timeout_sec": 30,  # 开活动→找到宝图入口的超时
                 "dialog_timeout_sec": 30,    # 等 NPC 对话框出现的超时
                 "dig_timeout_sec": 120,      # 单张挖宝（含战斗）超时
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
@@ -600,8 +573,6 @@ DEFAULT_CONFIG = {
                 "confirm_timeout_sec": 10,   # 点「押送普通镖银」后等「确认」按钮的超时（超时容错继续）
                 "trip_start_wait_sec": 8.0,  # 点完「确认」后在本号前台等「运镖中/战斗」标志出现的最长时间；见到才进监控态，超时兜底照进
                 "escort_timeout_sec": 600,   # 单趟运镖（含自动战斗）超时，超了按本批结束处理
-                "still_min_sec": 0.3,        # 帧差判静止：最短先等
-                "still_wait_sec": 2.0,       # 帧差判静止：单次最长等/超时
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
                 "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
                 "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
@@ -648,8 +619,6 @@ DEFAULT_CONFIG = {
                 "battle_timeout_sec": 1800,  # 单轮秘境「超时判定」时长：挂够这么久仍没结束就视为超时、点离开（按真实关卡时限调）
                 "dungeon_enter_box": [0.0, 0.5, 0.55, 1.0],  # 「进入」按钮限定的左下角比例框 [x0,y0,x1,y1]（0~1）
                                              #   同款「进入」靠位置区分：只在 scene 这个左下角比例框里找
-                "still_min_sec": 0.3,        # 帧差判静止：最短先等
-                "still_wait_sec": 2.0,       # 帧差判静止：单次最长等/超时
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
                 "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
                 "nudge_step": 3,             # 微滚的格数（朝让被裁那半滚进画面里的方向）
@@ -686,14 +655,8 @@ DEFAULT_CONFIG = {
             "loop": {
                 "time_limit_min": 30,        # 时间上限（分钟）安全网，0=不限
                 "match_threshold": 0.85,     # 标志模板匹配阈值
-                "answer_idle_sec": 30,       # 答题循环里长时间找不到选项按钮就先进「结束确认」缓冲（见下），缓冲后仍无才按结束处理
-                "answer_idle_verify_sec": 10,  # 「结束确认」缓冲秒数：空闲超时后不急着收尾，这段时间里继续找选项/完成标志，
-                                                #   选项重现就续答（题间过渡动画/多开切前台会短暂不见选项，防止误判结束）
+                "answer_idle_sec": 30,       # 答题循环里长时间找不到选项按钮就按结束处理
                 "answer_pos": None,          # 不标定选项模板时的固定点位 [fx, fy]（答题选项在 scene 内的相对坐标 0~1）；有模板时可留空
-                "answer_grid_rows": 4,       # 盲点兜底：在「答题选项区域」里竖向网格候选数（模板认不出选项时按网格盲点+画面反馈作答）
-                "answer_grid_cols": 2,       # 盲点兜底：横向网格候选数（同题选项通常竖向排列，横向 2 列可覆盖两列布局）
-                "answer_click_diff": 10.0,   # 盲点兜底：点一下后该区域像素平均差>此值=画面变了=答中进下一题；偏大更保守(防动画误判)
-                "answer_click_settle_sec": 0.8,  # 盲点兜底：点一下后等画面落定再对比的间隔（带抖动）
                 "tick_interval_sec": 0.5,    # 多开轮转节拍：所有号各推进一步后的间隔（带抖动）
                 "scroll_step": -3,           # 每次滚轮格数（负=向下翻）
                 "nudge_max": 4,             # 卡片被列表区域边界裁成半张时，最多朝补齐方向微滚几格仍找不着才告警
@@ -972,8 +935,6 @@ DEFAULT_CONFIG = {
                 "tuoying_max_strokes": 14,   # 笔画数上限（游戏要求「少于15笔」）：超了合并最近端点直到 < 上限
                 "tuoying_absorb_span": 12,   # 碎片跨度阈值(像素)：又短又贴着别的笔画 → 并进最近笔画(不是删，保覆盖)
                 "tuoying_absorb_gap": 3,     # 碎片到最近笔画的最短像素距离上限：超过=孤立的真·点画，保留独立一笔
-                "tuoying_fill": 0.9,         # 已废弃（走笔改直接沿骨架，不再横向铺宽）——保留兼容旧配置读取
-                "tuoying_lateral_max": 40.0, # 已废弃（同上）——保留兼容旧配置读取
                 "tuoying_save_debug": True,  # 识别失败时把 frame/mask/skel/strokes/trace 图落 captures_debug
                 "tuoying_client_frame": [8, 31],  # 离线预览的边框补偿默认值(dx,dy)：截图是「客户区」(不含标题栏/
                                              #   左边框)时，把 config 里的绘制区减去它才对齐。游戏窗口在跑时用
@@ -1077,7 +1038,6 @@ DEFAULT_CONFIG = {
             "steps": ([{"task": n, "enabled": True} for n in SINGLE_TASK_ORDER]
                       + [{"task": "dungeon", "enabled": True},
                          {"task": "zhuagui", "enabled": True}]),
-            "group_order": ["multi", "single"],
             "loop": {
                 "time_limit_min": 0,          # 整条龙的时间上限(分钟)安全网，0=不限；正常按各子任务自身条件跑完
                 "shutdown_after": False,      # 跑完关机：整条龙全部跑完（且有实跑任务）后延迟关机

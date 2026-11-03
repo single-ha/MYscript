@@ -42,25 +42,9 @@
             "alt",
             "e"
         ],
-        "open_task": [
-            "alt",
-            "y"
-        ],
         "open_activity": [
             "alt",
             "c"
-        ],
-        "open_character": [
-            "alt",
-            "w"
-        ],
-        "open_skill": [
-            "alt",
-            "s"
-        ],
-        "open_summon": [
-            "alt",
-            "q"
         ],
         "open_team": [
             "alt",
@@ -70,72 +54,9 @@
             "alt",
             "f"
         ],
-        "open_rank": [
-            "alt",
-            "r"
-        ],
-        "open_map": [
-            "alt",
-            "m"
-        ],
-        "open_minimap": [
-            "tab"
-        ],
-        "open_system": [
-            "alt",
-            "j"
-        ],
-        "open_mount": [
-            "alt",
-            "k"
-        ],
-        "open_guide": [
-            "alt",
-            "h"
-        ],
-        "open_shop": [
-            "alt",
-            "a"
-        ],
-        "open_welfare": [
-            "alt",
-            "d"
-        ],
-        "open_strengthen": [
-            "alt",
-            "v"
-        ],
         "open_guild": [
             "alt",
             "b"
-        ],
-        "open_home": [
-            "alt",
-            "n"
-        ],
-        "open_helper": [
-            "alt",
-            "z"
-        ],
-        "open_chat": [
-            "alt",
-            "x"
-        ],
-        "hide_ui": [
-            "alt",
-            "p"
-        ],
-        "afk": [
-            "alt",
-            "g"
-        ],
-        "boss_key": [
-            "alt",
-            "l"
-        ],
-        "pin_window": [
-            "alt",
-            "u"
         ]
     },
     "game_hotkeys": {
@@ -223,18 +144,6 @@
                     600,
                     360
                 ],
-                "category_button": [
-                    40,
-                    240,
-                    96,
-                    36
-                ],
-                "product_entry": [
-                    180,
-                    300,
-                    160,
-                    40
-                ],
                 "buy_button": [
                     760,
                     480,
@@ -261,11 +170,8 @@
                 "time_limit_min": 30,
                 "match_threshold": 0.85,
                 "tick_interval_sec": 0.6,
-                "still_min_sec": 0.3,
-                "still_wait_sec": 2.0,
                 "still_diff": 8.0,
                 "collect_idle_sec": 4.0,
-                "activity_timeout_sec": 30,
                 "dialog_timeout_sec": 30,
                 "dig_timeout_sec": 120,
                 "scroll_step": -3,
@@ -318,8 +224,6 @@
                 "dialog_timeout_sec": 60,
                 "confirm_timeout_sec": 10,
                 "escort_timeout_sec": 600,
-                "still_min_sec": 0.3,
-                "still_wait_sec": 2.0,
                 "scroll_step": -3,
                 "scroll_max_tries": 8,
                 "scroll_settle_sec": 0.35,
@@ -372,8 +276,6 @@
                     0.55,
                     1.0
                 ],
-                "still_min_sec": 0.3,
-                "still_wait_sec": 2.0,
                 "scroll_step": -3,
                 "scroll_max_tries": 8,
                 "scroll_settle_sec": 0.35,
@@ -584,7 +486,6 @@
                 "battle_timeout_sec": 600,
                 "max_rounds": 24,
                 "settle_grace": 0.05,
-                "post_skip_sec": 3.0,
                 "still_end_sec": 20,
                 "still_diff": 6.0,
                 "enter_retry_max": 3,
@@ -673,10 +574,6 @@
                     "task": "guaguale",
                     "enabled": true
                 }
-            ],
-            "group_order": [
-                "multi",
-                "single"
             ],
             "loop": {
                 "time_limit_min": 0,

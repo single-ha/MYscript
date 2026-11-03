@@ -90,10 +90,9 @@ GROUP_OF.update({n: "multi" for n in MULTI_BARRIER})
 # 日常页 `_GROUPS`、起始页日常卡 `_GROUPS`、引擎 `_enabled_steps` 的 steps 分段都引用它，
 # 保证「界面显示的执行顺序 == 引擎跑的顺序」——别在别处再算一套。
 GROUPS = ["multi"] + [g for g in dict.fromkeys(GROUP_OF.values()) if g != "multi"]
-GROUP_ORDER_DEFAULT = list(GROUPS)          # 两区分组固定（多人在前、单人在后），保留作配置默认值
 GROUP_TITLES = {"single": "单人任务", "multi": "多人任务"}
 # 以后要加新分区：这里补 GROUP_OF 的映射 + GROUP_TITLES 标题即可；日常页/起始页的 _GROUPS、
-# 引擎的 steps 分段、config 的 group_order 都会自动跟进，无需改别处。
+# 引擎的 steps 分段都会自动跟进，无需改别处。
 
 
 def get_selected_dungeon_titles(cfg):
