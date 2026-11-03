@@ -22,7 +22,8 @@ from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
 from ..core.config import (CAPTURES_DIR, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY,
-                          GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY)
+                          GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
+                          HPMP_POPUP_TPL_KEY)
 from ..core.input import CLICK_DELAY, TEAM_CLICK_DELAY
 
 _REGISTRY = {}
@@ -402,10 +403,11 @@ class Task:
         """红/蓝不足补充守卫。返回 True=本拍已归它处理（无论成功/失败，调用方应跳过「点×」守卫）；
         False=当前没有补充弹窗、也没在处理，交回普通「点×」守卫。
 
-        触发与节流独立于 popup_guard（hpmp_guard 块）：开关开 + 复用的四张公共模板
-        （确定 gg_next / 购买 buy_button / 使用 flag_next_map / 关窗 panel_close）都标定 +
-        目标窗口在前台，才会动手；多开绝不在后台号点。检测到补充弹窗的「确定」后串行跑完四步，
-        任一步等不到目标按钮就放弃本次（告警一次），下次扫描重新从「确定」开始，不在半路乱点。"""
+        触发与节流独立于 popup_guard（hpmp_guard 块）：开关开 + 复用的公共模板
+        （弹窗标识 hpmp_popup / 确定 gg_next / 购买 buy_button / 使用 flag_next_map）都标定 +
+        目标窗口在前台，才会动手；多开绝不在后台号点。必须【先认出弹窗标识 hpmp_popup】才走流程，
+        不能只看「确定」——那是抓鬼每轮结束都会出现的按钮，单凭它会把正常画面误当补充弹窗。
+        认出后串行跑四步，任一步等不到目标按钮就放弃本次（告警一次），下次扫描重新从标识开始。"""
         # 重入保护：处理流程内部的短睡不再触发守卫
         if getattr(self, "_hpmp_busy", False):
             return False
@@ -427,16 +429,21 @@ class Task:
 
         from ..ui import ui_state
         threshold = float(hg.get("match_threshold", 0.85))
-        # 先确认三步按钮模板都标定（确定=gg_next、购买=buy_button、使用=flag_next_map，缺一静默交回普通守卫）。
-        # 关窗 panel_close 不在此硬卡：没标就退回按 Esc 兜底（见末尾）。
+        # 先确认弹窗标识 + 三步按钮模板都标定（标识=hpmp_popup、确定=gg_next、购买=buy_button、
+        # 使用=flag_next_map，缺一静默交回普通守卫）。关窗 panel_close 不在此硬卡：没标就退回 Esc 兜底。
         shared = (cfg.get("tasks", {}) or {}).get("shared", {}) or {}
         stpl = shared.get("templates") or {}
-        for k in (GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY):
+        for k in (HPMP_POPUP_TPL_KEY, GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY):
             if not stpl.get(k) or vision.load_template(stpl.get(k)) is None:
                 return False
 
+        # 关键：先认「补充红/蓝」弹窗专属标识，认不出就不动——只看到「确定按钮」不算
+        # （抓鬼每轮结束都弹它，单凭确定会把正常画面误当补充弹窗、乱点购买/使用）。
+        if ui_state.find_shared_template(cfg, window, HPMP_POPUP_TPL_KEY, threshold) is None:
+            return False
         confirm = ui_state.find_shared_template(cfg, window, GG_NEXT_TPL_KEY, threshold)
         if confirm is None:
+            # 标识在、但「确定」还没匹配上（可能刚弹出还没渲染完）：本拍不动，下次扫描再看
             return False
 
         # 命中补充弹窗：本拍起归红/蓝流程处理

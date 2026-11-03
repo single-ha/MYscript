@@ -117,8 +117,8 @@ def find_popup_close(cfg, window, threshold=0.85):
 
 
 def find_shared_template(cfg, window, key, threshold=0.85):
-    """在当前窗口画面里找 tasks.shared.templates[key] 模板（如红/蓝补充守卫复用的
-    gg_next「确定」/ buy_button「购买」/ flag_next_map「使用」）。
+    """在当前窗口画面里找 tasks.shared.templates[key] 模板（如红/蓝补充守卫的
+    hpmp_popup「补充弹窗标识」/ gg_next「确定」/ buy_button「购买」/ flag_next_map「使用」）。
 
     只【找】不点：命中返回按钮中心的【屏幕绝对坐标】(cx, cy)；未标模板 / key 为空 /
     窗口没定位 / 抓图失败 / 未命中 一律返回 None，语义与 find_popup_close 一致，交调用方决定点不点。

@@ -80,6 +80,11 @@ FLAG_NEXT_MAP_TPL_KEY = "flag_next_map"
 # （base._handle_hpmp_purchase 第 2 步「购买」）共用同一张，标一次全通用。不进 SHARED_TPL_KEYS：
 # 抢关注与守卫都像读 shop_icon 那样直接读 tasks.shared.templates（旧 sniper 值保留兼容兜底）。
 BUY_BUTTON_TPL_KEY = "buy_button"
+# 红/蓝不足「补充」弹窗的专属标识（存 tasks.shared.templates.hpmp_popup，公共标定，可选）：
+# 弹窗上独有的一块画面元素（标题/图标等）。守卫必须【先认出这个标识】才走补充流程——
+# 只看到「确定按钮」gg_next 不再误触发（那本是抓鬼每轮结束都出现的按钮）。
+# 与 gg_next / buy_button / flag_next_map 都标齐才启用。不进 SHARED_TPL_KEYS（守卫直接读 shared）。
+HPMP_POPUP_TPL_KEY = "hpmp_popup"
 # 抓鬼「是否继续」弹窗的「确定」按钮（存 tasks.shared.templates.gg_next，在「任务配置」页「全局共享标定」
 # 卡里标定）：每场战斗打完弹「是否继续」，点它自动寻路回任务 NPC 领下一轮（最后一轮不点）；它也是抓鬼
 # 判定「本轮打完」的结束信号。原在抓鬼自身标定里标（显示名「继续按钮」），2026-11-02 统一移到公共标定。
@@ -93,6 +98,7 @@ SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(�
                       "join_done": "完成标识",
                       FLAG_NEXT_MAP_TPL_KEY: "「使用」按钮",
                       BUY_BUTTON_TPL_KEY: "购买按钮",
+                      HPMP_POPUP_TPL_KEY: "补充红/蓝弹窗标识",
                       GG_NEXT_TPL_KEY: "确定按钮",
                       GG_CANCEL_TPL_KEY: "提醒弹窗取消按钮",
                       "activity_ui_flag": "活动界面标志",
@@ -437,15 +443,15 @@ DEFAULT_CONFIG = {
     },
 
     # ---- 红/蓝不足补充守卫：日常任务等待期检测「补充红/蓝」弹窗，按 确定→购买→使用→关窗 自动处理 ----
-    #   挂在 base._interruptible_sleep 的节流守卫里（和弹窗守卫同节拍）。三步按钮全部【复用公共标定】，
-    #   不新增模板：确定=「确定按钮」gg_next（抓鬼那一个）、购买=「购买按钮」buy_button（原抢关注标定，
-    #   已迁公共）、使用=「「使用」按钮」flag_next_map（宝图那一个），关窗复用 panel_close（可选，
-    #   没标则在确认购买窗口仍开时按 Esc 兜底）。前三张都标定守卫才启用，缺一静默；
-    #   只在目标窗口已在前台时点击（多开不乱点）。
+    #   挂在 base._interruptible_sleep 的节流守卫里（和弹窗守卫同节拍）。必须先认出弹窗专属标识
+    #   hpmp_popup 才动手（只看「确定按钮」不会误触发——那是抓鬼每轮都有的按钮）。三步按钮全部复用
+    #   公共标定：确定=gg_next、购买=buy_button（原抢关注，已迁公共）、使用=flag_next_map（宝图），
+    #   关窗复用 panel_close（可选，没标则在确认购买窗口仍开时按 Esc 兜底）。四张（标识+三按钮）都标定
+    #   守卫才启用，缺一静默；只在目标窗口已在前台时点击（多开不乱点）。
     "hpmp_guard": {
-        "enabled": True,           # 总开关。默认开；前三张模板没标齐时自动无效
+        "enabled": True,           # 总开关。默认开；标识+三按钮模板没标齐时自动无效
         "interval_sec": 2.0,       # 两次扫描的最小间隔秒数（节流）
-        "match_threshold": 0.85,   # 三张按钮模板匹配阈值
+        "match_threshold": 0.85,   # 弹窗标识与三张按钮模板的匹配阈值
         "step_settle_sec": 0.8,    # 每点一步后等界面切换的秒数（确定→商城、购买→背包/使用提示）
         "step_timeout_sec": 12.0,  # 每一步等目标按钮出现的超时；超时放弃本次处理（避免死循环），下次扫描重来
         "use_settle_sec": 1.0      # 点完「使用」到去关窗之间的额外等待
@@ -816,6 +822,7 @@ DEFAULT_CONFIG = {
                 "daily_activity_tab": None, # 日常活动标签（可选，活动界面顶部的「日常活动」标签页）
                 "panel_close": None,     # 面板关闭按钮（可选，背包/商城/人物信息面板右上角「×」）
                 "gg_next": None,         # 抓鬼「确定」按钮（抓鬼必标）：「是否继续」弹窗里点它寻路回 NPC 领下一轮，也是本轮结束信号；红/蓝补充守卫第 1 步复用
+                "hpmp_popup": None,      # 红/蓝不足「补充」弹窗标识（可选）：守卫先认出它才走补充流程，只看到「确定」不会误触发
                 "gg_cancel": None,       # 抓鬼提醒弹窗「取消」按钮（可选）：领任务后概率弹窗，命中点掉防挡画面
                 "buy_button": None,      # 通用「购买」按钮（原抢关注 sniper 的购买按钮，已迁公共）：抢关注下单 + 红/蓝补充守卫第 2 步共用
                 # 红/蓝补充第 3 步「使用」复用 flag_next_map（「使用」按钮），关窗复用 panel_close，均不另列。
