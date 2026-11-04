@@ -18,7 +18,8 @@ class SectGateTask(WeeklyBaseTask):
     description = "周常：门派闯关（多人组队，队长跑循环，漫无目标时自动中止）"
     NEEDS_CLAIM_TASK = True
 
-    _FLAG_KEYS = ["card", "join", "confirm", "claim_task", "enter", "battle_flag", "clock"]
+    _FLAG_KEYS = ["card", "confirm", "claim_task", "enter", "battle_flag", "clock",
+                  "join_button"]
 
     # 门派闯关寻路到 NPC 后对话框里那个按钮文案就是「门派闯关」（不是通用的「参加活动」），
     # 故把共用 spec 里 confirm 键的【显示名】改成「门派闯关按钮」——键仍为 confirm（流程读图与

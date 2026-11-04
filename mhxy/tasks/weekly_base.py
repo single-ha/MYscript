@@ -40,8 +40,8 @@ from ..ui import ui_state
 from ..ui.common import required_templates
 from .base import Task, register   # noqa: F401  (register 供子类用，语义上子类 @register)
 
-# 每个号/每轮的模板键（card/join/confirm/enter/claim_task 在任务自身命名空间标定；
-# battle_flag / clock 在「任务配置」页全局共享标定，task_config 叠加进本任务 templates）。
+# 每个号/每轮的模板键（card/confirm/enter/claim_task 在任务自身命名空间标定；
+# battle_flag / clock / join_button（参加按钮）在「任务配置」页全局共享标定，task_config 叠加进本任务 templates）。
 # ⚠ 模板要在这里登记，_load_flags 只按本列表建字典 —— 漏登记 = 运行期永远取不到该模板
 #   （踩过：claim_task 漏加 → 这一步永远走「没标定」分支、静默失效）。
 # （现移到 WeeklyBaseTask 类属性，子类可覆盖删减步骤）
@@ -66,7 +66,9 @@ class WeeklyBaseTask(Task):
     # 多人任务：先自动组队，再由队长窗口跑两阶段循环（不做逐号轮转）
 
     # 本任务用到的模板键（子类可覆盖以删减步骤，如门派闯关去掉 confirm/enter/battle_flag）
-    _FLAG_KEYS = ["card", "join", "confirm", "enter", "battle_flag", "clock", "claim_task"]
+    # 「参加」按钮已统一到公共标定 join_button（tasks.shared，task_config 叠加注入同键），这里不再单列。
+    _FLAG_KEYS = ["card", "confirm", "enter", "battle_flag", "clock", "claim_task",
+                  "join_button"]
 
     CALIBRATION = {
         "regions": [
@@ -75,7 +77,7 @@ class WeeklyBaseTask(Task):
         ],
         "templates": [
             ("card", "活动卡片", "活动列表里本任务那张卡片，框「图标+文字」、要独特（别的活动长得像）"),
-            ("join", "参加按钮", "该卡片右侧的「参加」按钮，框按钮本身、要独特"),
+            # 「参加」按钮已统一到「任务配置」页「全局共享标定」卡（join_button），这里不再单列，旧标定自动迁移
             ("confirm", "NPC「参加活动」按钮", "自动寻路到活动 NPC 后对话框里要点的「参加活动」按钮"
                                               "（每个活动的图样文案不同）"),
             ("enter", "进入战斗按钮", "做任务场景里点它发起战斗的「进入战斗」按钮"),
@@ -141,10 +143,11 @@ class WeeklyBaseTask(Task):
             p = templates.get(tk)
             if not p or vision.load_template(p) is None:
                 problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
-        for sk in ("battle_flag", "clock"):
+        for sk in ("battle_flag", "clock", "join_button"):
             p = templates.get(sk)
             if not p or vision.load_template(p) is None:
-                label = "战斗界面标志" if sk == "battle_flag" else "小闹钟(寻路)"
+                label = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)",
+                         "join_button": "参加按钮"}[sk]
                 problems.append(f"『{label}』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
 
         if not ctx.hotkeys.get("open_activity"):
@@ -524,7 +527,7 @@ class WeeklyBaseTask(Task):
         周常卡在此传 max_follow_cap：认出的卡片那行若没有匹配上的「参加」，宁可微滚重找，
         也绝不把隔壁行/邻卡按钮（曾 d=65 进错活动）当目标。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
-                                         self.flags.get("join"),
+                                         self.flags.get("join_button"),
                                          self.flags.get("card"),
                                          max_follow_cap=loop.get("join_same_row_px", 55))
 

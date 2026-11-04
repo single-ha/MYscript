@@ -45,10 +45,10 @@ from .base import Task, register
 # 抓鬼自身模板键（gg_ 前缀=抓鬼，存盘 templates/tm_gg_*.png，避免与别的任务同名互相覆盖）。
 # 取任务条目寻路的图标（曾叫 gg_nav）= 任务栏的「小闹钟」（clock），已迁「任务配置」页全局共享标定、
 # 由 task_config 叠加进本任务 templates（见 SHARED_TPL_KEYS）；旧 gg_nav 值仅作兼容读取兜底。
-# gg_next（确定按钮）/ gg_cancel（提醒弹窗取消）同样已迁公共标定（tasks.shared，见 SHARED_TPL_KEYS），
-# 仍由 task_config 注入，故下面照读不误；旧值由 _migrate_shared_zhuagui_next 一次性搬到 shared。
-_FLAG_KEYS = ["gg_entry", "gg_join", "gg_claim", "clock", "gg_next", "gg_cancel", "gg_finish_cancel",
-              "battle_flag"]   # battle_flag=公共标定(可选)：判「是否已进战」用，见文件头两层超时
+# gg_next（确定按钮）/ gg_cancel（提醒弹窗取消）/ join_button（参加按钮）同样已迁公共标定（tasks.shared，
+# 见 SHARED_TPL_KEYS），仍由 task_config 注入，故下面照读不误；旧值由对应一次性迁移搬到 shared。
+_FLAG_KEYS = ["gg_entry", "gg_claim", "clock", "gg_next", "gg_cancel", "gg_finish_cancel",
+              "battle_flag", "join_button"]   # battle_flag=公共标定(可选)：判「是否已进战」用，见文件头两层超时
 
 # 完整循环是没有「进入战斗」按钮的：领完自动寻路到鬼就【自己进战斗】，打完弹「领下一轮」。
 
@@ -67,7 +67,7 @@ class ZhuaguiTask(Task):
         ],
         "templates": [
             ("gg_entry", "活动卡片入口", "活动列表里「抓鬼」那张卡片，框图标+文字、要独特"),
-            ("gg_join", "参加按钮", "抓鬼卡片右侧的「参加」按钮，框按钮本身、要独特"),
+            # 「参加」按钮已统一到「任务配置」页「全局共享标定」卡（join_button），这里不再单列，旧 gg_join 自动迁移
             ("gg_claim", "领取抓鬼任务按钮", "自动寻路到任务 NPC 后对话框里那个「领取抓鬼任务」按钮；每轮都要点它领当前轮任务（第 1 轮与点「确定」寻路回 NPC 后都点）"),
             # 取任务条目寻路的图标（曾叫 gg_nav）= 任务栏「小闹钟」，已迁「任务配置」页「全局共享标定」卡统一标定，
             # 这里不再单独标（见 tasks/shared + SHARED_TPL_KEYS + CLOCK_TPL_KEY）。
@@ -113,12 +113,17 @@ class ZhuaguiTask(Task):
         if not regions.get("activity_list"):
             problems.append("『活动列表区域』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（所有任务共用）")
         templates = tc.get("templates", {})
-        # gg_next（确定按钮）已迁公共标定，其就绪检查走 TASK_SHARED_TPL_REQ（ui 卡片 shared_template_hint），
-        # 不再列入本任务私有必需模板；这里只校验仍归抓鬼私有的四项。
-        for tk in ["gg_entry", "gg_join", "gg_claim", "gg_finish_cancel"]:
+        # gg_next（确定按钮）已迁公共标定，其就绪检查走 TASK_SHARED_TPL_REQ
+        # （ui 卡片 shared_template_hint），不再列入本任务私有必需模板；这里只校验仍归抓鬼私有的三项。
+        for tk in ["gg_entry", "gg_claim", "gg_finish_cancel"]:
             p = templates.get(tk)
             if not p or vision.load_template(p) is None:
                 problems.append(f"抓鬼模板『{tk}』缺失或加载失败 —— 请在本页「标定」里框选裁图")
+        # 「参加」按钮已统一迁「任务配置」页「全局共享标定」卡（tasks.shared.join_button，task_config 叠加注入），
+        # 抓鬼找卡片后点它参加，必标（旧 gg_join 自动迁移）。
+        join_path = templates.get("join_button")
+        if not join_path or vision.load_template(join_path) is None:
+            problems.append("『参加按钮』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
         # 点任务条目寻路 = 点任务栏「小闹钟」：已迁「任务配置」页「全局共享标定」卡（tasks.shared，
         # task_config 叠加进本任务 templates）。gg_nav 是旧标定位（曾在抓鬼页标），保留兼容读取。
         nav_path = templates.get("clock") or templates.get("gg_nav")
@@ -465,7 +470,7 @@ class ZhuaguiTask(Task):
             if r != "nudged":
                 if not rec["_join_warned"]:
                     rec["_join_warned"] = True
-                    ctx.log("认出卡片但「参加」按钮一直没出现（已自动微滚补全；检查 gg_join 模板/阈值），原地重试。", level="warn")
+                    ctx.log("认出卡片但「参加」按钮一直没出现（已自动微滚补全；检查公共标定 join_button 模板/阈值），原地重试。", level="warn")
             return scan.STAY, None
 
         res = scan.scroll_search(
@@ -675,7 +680,7 @@ class ZhuaguiTask(Task):
 
     def _find_join_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop):
         """统一实现见 base.Task._find_join_in_column（整列枚举取距离卡片行最近那枚「参加」）。
-        抓鬼的参加按钮模板为 gg_join；卡片为 gg_entry。"""
+        抓鬼卡片为 gg_entry；参加按钮用公共标定 join_button。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
-                                         self.flags.get("gg_join"),
+                                         self.flags.get("join_button"),
                                          self.flags.get("gg_entry"))

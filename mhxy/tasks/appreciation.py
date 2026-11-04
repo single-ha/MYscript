@@ -36,9 +36,11 @@ S_HEART = "HEART"                   # 鉴赏界面：匹配心形图案→点它
 S_DONE = "DONE"                     # 收尾：返回主界面 → 本轮结束
 
 # 模板键（用 appr_ 前缀=鉴赏，避免与运镖/宝图/三界奇缘同名模板在磁盘互相覆盖——存盘按 templates/tm_<key>.png）。
-_FLAG_KEYS = ["appr_entry", "appr_join", "appr_heart"]
-# 必备：缺失则 preflight 阻断（心形图案是玩法核心，必标）。
-_REQUIRED_FLAGS = ["appr_entry", "appr_join", "appr_heart"]
+# 「参加」按钮已统一到公共标定 join_button（tasks.shared，task_config 叠加注入同键），这里不再单列。
+_FLAG_KEYS = ["appr_entry", "appr_heart", "join_button"]
+# 必备：缺失则 preflight 阻断（心形图案是玩法核心，必标）。参加按钮 join_button 走共享注入，
+# 也列入此表让 preflight 一并拦截（缺失时指路到「全局共享标定」卡）。
+_REQUIRED_FLAGS = ["appr_entry", "appr_heart", "join_button"]
 
 
 @register
@@ -58,7 +60,7 @@ class AppreciationTask(Task):
         ],
         "templates": [
             ("appr_entry", "活动卡片入口", "活动列表里要点「参加」的那张「趣味鉴赏」卡片，框图标+文字、要独特"),
-            ("appr_join", "参加按钮", "那张卡片右侧的「参加」按钮，框按钮本身、要独特"),
+            # 「参加」按钮已统一到「任务配置」页「全局共享标定」卡（join_button），这里不再单列，旧标定自动迁移
             ("appr_heart", "心形图案", "鉴赏界面里要点击的心形图案（图样/图标），框图案本身、要独特。"
                                         "当前屏没它时脚本会在图文列表区域里滚动再找"),
         ],
@@ -84,7 +86,10 @@ class AppreciationTask(Task):
         for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
             if not path or vision.load_template(path) is None:
-                problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
+                if tk == "join_button":
+                    problems.append("『参加按钮』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
+                else:
+                    problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
         if not ctx.hotkeys.get("open_activity"):
             problems.append("打开『活动』缺快捷键：请在 config.hotkeys.open_activity 填上（如 alt+c）")
@@ -263,7 +268,7 @@ class AppreciationTask(Task):
                 # 卡片露半张被裁剪是主因，_find_join_ready 已先朝补齐方向微滚过 nudge_max 次。
                 if not rec["_join_warned"]:
                     rec["_join_warned"] = True
-                    ctx.log("认出「趣味鉴赏」卡片但「参加」按钮一直没出现（已自动微滚补全；检查 appr_join 模板/阈值），原地重试。", level="warn")
+                    ctx.log("认出「趣味鉴赏」卡片但「参加」按钮一直没出现（已自动微滚补全；检查公共标定 join_button 模板/阈值），原地重试。", level="warn")
             return scan.STAY, None
 
         res = scan.scroll_search(
@@ -393,9 +398,9 @@ class AppreciationTask(Task):
 
     def _find_join_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop):
         """统一实现见 base.Task._find_join_in_column（整列枚举取距离卡片行最近那枚「参加」）。
-        趣味鉴赏的参加按钮模板为 appr_join；卡片为 appr_entry。"""
+        趣味鉴赏的卡片为 appr_entry；参加按钮用公共标定 join_button。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
-                                         self.flags.get("appr_join"),
+                                         self.flags.get("join_button"),
                                          self.flags.get("appr_entry"),
                                          max_follow_cap=loop.get("join_same_row_px", 55))
 
@@ -435,7 +440,7 @@ class AppreciationTask(Task):
     def _dry_run_selfcheck(self, ctx, contexts, multi, regions, threshold, switch_delay, deadline):
         """演练：先把每个号切到活动界面（发 open_activity 快捷键），再周期性识别各标志，报告命中。
         否则一开始屏上还是主界面、找不到任务入口卡片=误判（用户拍板：演练也要先开活动列表再识别）。"""
-        keys = [("appr_entry", "活动卡片"), ("appr_join", "参加"),
+        keys = [("appr_entry", "活动卡片"), ("join_button", "参加"),
                 ("appr_heart", "心形图案")]
         # 先给每个号打开活动列表，再开始识别「任务入口」（否则屏上还是主界面，找不到卡片=误判）
         for wctx in contexts:

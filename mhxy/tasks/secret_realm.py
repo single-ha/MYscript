@@ -56,14 +56,16 @@ S_BATTLE = "BATTLE"                 # 自动战斗中：盯「进入战斗」续
 S_LEAVE = "LEAVE"                   # 失败/超时后：点「离开」收尾本轮
 
 # 模板键（用 sr_ 前缀，避免与运镖/宝图同名模板在磁盘互相覆盖——存盘按 templates/tm_<key>.png）。
-# 战斗标识走公共共享模板 tasks.shared.templates.battle_flag（「任务配置」页「全局共享标定」卡标定，全任务共用），
-# task_config 已把它叠加进本任务 templates，用同 key「battle_flag」读，不必各自标。
-_FLAG_KEYS = ["sr_entry", "sr_join", "sr_select", "sr_dungeon_enter", "sr_confirm",
+# 战斗标识与「参加」按钮走公共共享模板 tasks.shared.templates（「任务配置」页「全局共享标定」卡标定，全任务共用），
+# task_config 已把它们叠加进本任务 templates，用同 key（battle_flag / join_button）读，不必各自标。
+_FLAG_KEYS = ["sr_entry", "sr_select", "sr_dungeon_enter", "sr_confirm",
               "sr_continue", "sr_nav", "sr_enter_battle", "sr_leave",
-              "sr_fail", "battle_flag"]
+              "sr_fail", "battle_flag", "join_button"]
 # 必备：缺失则 preflight 阻断。（结束判定改用「累计点进入战斗 N 次 + 非战斗态」，不再需要胜利标志。）
-_REQUIRED_FLAGS = ["sr_entry", "sr_join", "sr_select",
-                   "sr_continue", "sr_nav", "sr_enter_battle", "sr_leave"]
+# 参加按钮 join_button 走共享注入，也列入此表让 preflight 一并拦截（缺失时指路到「全局共享标定」卡）。
+_REQUIRED_FLAGS = ["sr_entry", "sr_select",
+                   "sr_continue", "sr_nav", "sr_enter_battle", "sr_leave",
+                   "join_button"]
 
 
 @register
@@ -80,7 +82,7 @@ class SecretRealmTask(Task):
         ],
         "templates": [
             ("sr_entry", "活动卡片入口", "活动列表里要点「参加」的那张卡片，框图标+文字、要独特"),
-            ("sr_join", "参加按钮", "那张卡片右侧的「参加」按钮，框按钮本身、要独特"),
+            # 「参加」按钮已统一到「任务配置」页「全局共享标定」卡（join_button），这里不再单列，旧标定自动迁移
             ("sr_select", "「秘境降妖」选项", "点参加后弹出的对话框里那个「秘境降妖」选项/按钮"),
             ("sr_dungeon_enter", "「进入」按钮", "若有「选择副本」界面，框左下角那个「进入」按钮。"
                                                        "几个进入长得一样，运行时只在左下角比例框里找；没有选副本环节可不标", True),
@@ -112,7 +114,10 @@ class SecretRealmTask(Task):
         for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
             if not path or vision.load_template(path) is None:
-                problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
+                if tk == "join_button":
+                    problems.append("『参加按钮』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
+                else:
+                    problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
         if not ctx.hotkeys.get("open_activity"):
             problems.append("打开『活动』缺快捷键：请在 config.hotkeys.open_activity 填上（如 alt+c）")
@@ -299,7 +304,7 @@ class SecretRealmTask(Task):
                 # 卡片完整显示仍没找到「参加」→ 告警一次+原地重试（走 scroll_search 的 STAY）。
                 if not rec["_join_warned"]:
                     rec["_join_warned"] = True
-                    ctx.log("认出卡片但「参加」按钮一直没出现（已自动微滚补全；检查 sr_join 模板/阈值），原地重试。", level="warn")
+                    ctx.log("认出卡片但「参加」按钮一直没出现（已自动微滚补全；检查公共标定 join_button 模板/阈值），原地重试。", level="warn")
             # 认出条目但没找到参加：不滚动（会滚走目标），原地重试
             return scan.STAY, None
 
@@ -646,9 +651,9 @@ class SecretRealmTask(Task):
 
     def _find_join_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop):
         """统一实现见 base.Task._find_join_in_column（整列枚举取距离卡片行最近那枚「参加」）。
-        秘境降妖的参加按钮模板为 sr_join；卡片为 sr_entry。"""
+        秘境降妖卡片为 sr_entry；参加按钮用公共标定 join_button。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
-                                          self.flags.get("sr_join"),
+                                          self.flags.get("join_button"),
                                           self.flags.get("sr_entry"),
                                           max_follow_cap=loop.get("join_same_row_px", 55))
 
@@ -700,7 +705,7 @@ class SecretRealmTask(Task):
 
     def _dry_run_selfcheck(self, ctx, contexts, multi, regions, threshold, switch_delay, deadline):
         """演练：周期性对【每个号】当前屏幕识别各标志，报告命中，便于验证模板/阈值。"""
-        keys = [("sr_entry", "活动卡片"), ("sr_join", "参加"), ("sr_select", "秘境降妖"),
+        keys = [("sr_entry", "活动卡片"), ("join_button", "参加"), ("sr_select", "秘境降妖"),
                 ("sr_dungeon_enter", "选副本-进入"), ("sr_confirm", "确定"),
                 ("sr_continue", "继续挑战"), ("sr_nav", "任务栏秘境条目"),
                 ("sr_enter_battle", "进入战斗"), ("sr_leave", "离开"),

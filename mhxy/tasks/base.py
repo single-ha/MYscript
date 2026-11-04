@@ -23,7 +23,7 @@ from ..core import window as win_mod
 from ..core import rotation
 from ..core.config import (CAPTURES_DIR, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY,
                           GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
-                          HPMP_POPUP_TPL_KEY)
+                          HPMP_POPUP_TPL_KEY, JOIN_BUTTON_TPL_KEY)
 from ..core.input import CLICK_DELAY, TEAM_CLICK_DELAY
 
 _REGISTRY = {}
@@ -572,7 +572,7 @@ class Task:
         x1 = min(sw, int(round((col_i + 1) * col_w)))
         half = max(10.0, float(loop.get("join_same_row_px", 55)))
         ry0, ry1 = max(0, int(ey - half)), min(sh - 1, int(ey + half))
-        join_tpl = self.flags.get("join")
+        join_tpl = self.flags.get(JOIN_BUTTON_TPL_KEY)
         marks = []
         if join_tpl is not None and x1 > x0:
             try:

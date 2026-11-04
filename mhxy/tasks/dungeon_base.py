@@ -69,12 +69,13 @@ DUNGEON_NS = "dungeon"                       # 共享配置命名空间（tasks.
 # task_config 叠加注入本任务 templates）；battle_flag 同理存 shared。由 _load_flags 统一读入）。
 # ⚠ 拓印资产（tuoying_title/upload/todo 模板 + tuoying_area）**不在本表**：由 core.tuoying_flow.TuoyingFlow
 #   运行时直接读 tasks.tuoying（「工具」页「拓印」标定，见 TUOYING_TPL_KEYS），所有副本/宝图共用同一份。
-# 顺序按操作流程走，并作为标定向导里模板画廊的展示顺序（clock/battle_flag 已不在画廊，被 shared 取代）：
-#   卡片(普通/侠士) → 参加 → 选择副本 → 侠士区标签页(侠士进副本前) → 进入 → 队员准备按钮(侠士) → 准备弹窗标志(可选) → 跳过/进入战斗/新版跳过 → 结算界面。
-SHARED_TPL_KEYS = ["entry_common", "entry_xiashi", "join", "select",
+# 顺序按操作流程走，并作为标定向导里模板画廊的展示顺序（clock/battle_flag/join_button 已不在画廊，被 shared 取代）：
+#   卡片(普通/侠士) → 选择副本 → 侠士区标签页(侠士进副本前) → 进入 → 队员准备按钮(侠士) → 准备弹窗标志(可选) → 跳过/进入战斗/新版跳过 → 结算界面。
+# 「参加」按钮已统一到公共标定 join_button（tasks.shared，task_config 叠加注入同键），不再占用本表 join。
+SHARED_TPL_KEYS = ["entry_common", "entry_xiashi", "select",
                    "xiashi_tab", "enter_dungeon", "ready", "ready_popup",
                    "skip", "skip_new", "clock", "enter",
-                   "settlement", "battle_flag"]
+                   "settlement", "battle_flag", "join_button"]
 
 # 标定向导/就绪判据用的共享标定 spec（一次标定所有副本）
 DUNGEON_CALIBRATION = {
@@ -89,7 +90,7 @@ DUNGEON_CALIBRATION = {
         ("entry_xiashi", "侠士副本卡片", "活动列表里侠士副本的那张卡片——侠士副本共用；可选项：侠士本优先用" 
                                        "它找卡，找不到/没标定时用「普通副本卡」兜底（两者参加后寻路到同一 NPC）",
          True),
-        ("join", "参加按钮", "卡片右侧的「参加」按钮（所有副本共用）"),
+        # 「参加」按钮已统一到「任务配置」页「全局共享标定」卡（join_button），这里不再单列，旧标定自动迁移
         ("select", "选择副本按钮", "「选择副本」对话框里的按钮（所有副本共用）"),
         ("xiashi_tab", "侠士区标签页", "「选择副本」里的「侠士区」标签页，侠士副本先进副本前先点到它（仅侠士用）"),
         ("enter_dungeon", "「进入」按钮", "选择副本对话框里的「进入」按钮（普通/侠士两标签区共用）"),
@@ -194,6 +195,11 @@ class DungeonBaseTask(TuoyingFlow, Task):
         clock_path = templates.get("clock")
         if not clock_path or vision.load_template(clock_path) is None:
             problems.append("『小闹钟(寻路)』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（副本/抓鬼共用）")
+        # 「参加」按钮已统一迁「任务配置」页「全局共享标定」卡（tasks.shared.join_button，task_config 叠加注入），
+        # 所有副本找卡片后点它参加，必标。
+        join_path = templates.get("join_button")
+        if not join_path or vision.load_template(join_path) is None:
+            problems.append("『参加按钮』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
         if self.cat == "xiashi":
             if not (templates.get("entry_common") or templates.get("entry_xiashi")):
                 problems.append("副本卡片模板缺失 —— 请至少标定『普通副本卡片』或『侠士副本卡片』之一")
@@ -860,7 +866,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
             if r != "nudged":
                 if not rec["_join_warned"]:
                     rec["_join_warned"] = True
-                    ctx.log("认出卡片但「参加」按钮一直没出现（已自动微滚补全；检查 join 模板/阈值），原地重试。", level="warn")
+                    ctx.log("认出卡片但「参加」按钮一直没出现（已自动微滚补全；检查公共标定 join_button 模板/阈值），原地重试。", level="warn")
             return scan.STAY, None
 
         res = scan.scroll_search(
@@ -919,6 +925,8 @@ class DungeonBaseTask(TuoyingFlow, Task):
 
     def _dry_run_selfcheck(self, ctx, assignments, regions, threshold):
         cap_keys = [(k, label) for (k, label, _d, *_x) in DUNGEON_CALIBRATION["templates"]]
+        # 「参加」按钮已迁公共标定 join_button（不在 DUNGEON_CALIBRATION 画廊），演练仍想看到它命中，故补上
+        cap_keys.append(("join_button", "参加按钮"))
         multi = ctx.cfg.get("targets", {}).get("multi", False)
         switch_delay = ctx.cfg.get("targets", {}).get("switch_delay_sec", 0.15)
         while not ctx.should_stop():
@@ -984,6 +992,6 @@ class DungeonBaseTask(TuoyingFlow, Task):
         也绝不把隔壁行按钮（例如运镖卡的「参加」，曾 d=65 被稀疏列容差放行而进错活动）当目标——
         本任务卡片的「参加」从不该指向其它行。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
-                                         self.flags.get("join"),
+                                         self.flags.get("join_button"),
                                          self.flags.get(self._card_key()),
                                          max_follow_cap=loop.get("join_same_row_px", 55))

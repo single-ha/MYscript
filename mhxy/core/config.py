@@ -85,6 +85,12 @@ BUY_BUTTON_TPL_KEY = "buy_button"
 # 只看到「确定按钮」gg_next 不再误触发（那本是抓鬼每轮结束都出现的按钮）。
 # 与 gg_next / buy_button / flag_next_map 都标齐才启用。不进 SHARED_TPL_KEYS（守卫直接读 shared）。
 HPMP_POPUP_TPL_KEY = "hpmp_popup"
+# 全任务通用的活动卡片「参加」按钮（存 tasks.shared.templates.join_button，在「任务配置」页
+# 「全局共享标定」卡里标定）：原来每个任务各标一份（运镖 escort_join / 宝图 flag_join / 抓鬼 gg_join /
+# 秘境 sr_join / 三界 qq_join / 鉴赏 appr_join / 副本 join / 周常 join），其实是同一个按钮，
+# 2026-11-04 统一迁到公共标定，标一次全任务通用。进 SHARED_TPL_KEYS：task_config 把它叠加进
+# 各任务 templates，各任务统一以键 join_button 读；旧任务键由 _migrate_shared_join_button 搬走。
+JOIN_BUTTON_TPL_KEY = "join_button"
 # 抓鬼「是否继续」弹窗的「确定」按钮（存 tasks.shared.templates.gg_next，在「任务配置」页「全局共享标定」
 # 卡里标定）：每场战斗打完弹「是否继续」，点它自动寻路回任务 NPC 领下一轮（最后一轮不点）；它也是抓鬼
 # 判定「本轮打完」的结束信号。原在抓鬼自身标定里标（显示名「继续按钮」），2026-11-02 统一移到公共标定。
@@ -96,6 +102,7 @@ GG_CANCEL_TPL_KEY = "gg_cancel"
 # 共享模板的友好中文名（就绪/标定提示用的展示名，见 ui/common.shared_template_hint）。
 SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)",
                       "join_done": "完成标识",
+                      JOIN_BUTTON_TPL_KEY: "参加按钮",
                       FLAG_NEXT_MAP_TPL_KEY: "「使用」按钮",
                       BUY_BUTTON_TPL_KEY: "购买按钮",
                       HPMP_POPUP_TPL_KEY: "补充红/蓝弹窗标识",
@@ -107,11 +114,11 @@ SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(�
                       PANEL_CLOSE_TPL_KEY: "面板关闭按钮(×)"}
 # 共享模板键常量（用于标定对话框与配置卡片计数对齐）
 JOIN_DONE_TPL_KEY = "join_done"
-# 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟 + 挖宝「使用」按钮 + 抓鬼确定/提醒取消；
-# shop/activity 由 ui_state 直接读 shared，不叠加，避免无谓污染各任务模板配置）。
+# 需要把共享模板叠加进任务 templates 的键（战斗标识 + 小闹钟 + 挖宝「使用」按钮 + 抓鬼确定/提醒取消
+# + 通用「参加」按钮；shop/activity 由 ui_state 直接读 shared，不叠加，避免无谓污染各任务模板配置）。
 # calibrate_dialog._save 写任务命名空间时会剥掉这些键防止回写冗余。
 SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
-                   GG_NEXT_TPL_KEY, GG_CANCEL_TPL_KEY)
+                   GG_NEXT_TPL_KEY, GG_CANCEL_TPL_KEY, JOIN_BUTTON_TPL_KEY)
 
 # 周常（门派闯关/海底世界/迷魂塔）per-task 模板键都是通用的
 # card/join/confirm/enter/claim_task，若只按键名落盘 templates/tm_<key>.png 会让三任务共用
@@ -145,17 +152,20 @@ TASK_SHARED_REQ = {
 }
 
 # 各任务「就绪判定」还要查的共享模板键（tasks.shared.templates，同 TASK_SHARED_REQ 的语义，只是模板）。
-# 战斗标识（运镖/宝图必标）、小闹钟（刷副本/抓鬼必标）、挖宝「使用」按钮（宝图必标）与抓鬼「确定」按钮
-# （gg_next）都已从各任务自身 CALIBRATION 移走、移到「任务配置」页「全局共享标定」卡统一标定。
-# 抓鬼的「提醒弹窗取消」(gg_cancel) 是可选项，不列入必需。dungeon 指共享 tasks.dungeon 命名空间。
+# 战斗标识（运镖/宝图必标）、小闹钟（刷副本/抓鬼必标）、挖宝「使用」按钮（宝图必标）、抓鬼「确定」按钮
+# （gg_next）与全任务通用「参加」按钮（join_button）都已从各任务自身 CALIBRATION 移走、移到「任务配置」页
+# 「全局共享标定」卡统一标定。抓鬼的「提醒弹窗取消」(gg_cancel) 是可选项，不列入必需。dungeon 指共享 tasks.dungeon 命名空间。
 TASK_SHARED_TPL_REQ = {
-    "escort": (BATTLE_FLAG_TPL_KEY,),
-    "treasure_map": (BATTLE_FLAG_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY),
-    "dungeon": (CLOCK_TPL_KEY,),
-    "zhuagui": (CLOCK_TPL_KEY, GG_NEXT_TPL_KEY),
-    "sect_gate": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY),
-    "underwater": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY),
-    "maze_tower": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY),
+    "escort": (BATTLE_FLAG_TPL_KEY, JOIN_BUTTON_TPL_KEY),
+    "secret_realm": (JOIN_BUTTON_TPL_KEY,),
+    "sanjie": (JOIN_BUTTON_TPL_KEY,),
+    "appreciation": (JOIN_BUTTON_TPL_KEY,),
+    "treasure_map": (BATTLE_FLAG_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY, JOIN_BUTTON_TPL_KEY),
+    "dungeon": (CLOCK_TPL_KEY, JOIN_BUTTON_TPL_KEY),
+    "zhuagui": (CLOCK_TPL_KEY, GG_NEXT_TPL_KEY, JOIN_BUTTON_TPL_KEY),
+    "sect_gate": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, JOIN_BUTTON_TPL_KEY),
+    "underwater": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, JOIN_BUTTON_TPL_KEY),
+    "maze_tower": (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, JOIN_BUTTON_TPL_KEY),
 }
 
 # 所有只存 tasks.shared.regions 的区域键（calibrate_dialog 写入路由 / _save 剥离用）：
@@ -234,7 +244,8 @@ enter_dungeon                选择副本对话框里的「进入」按钮（普
         "templates": {
             "entry_common": None,    # 活动列表里的普通副本卡片
             "entry_xiashi": None,    # 活动列表里的侠士副本卡片
-            "join": None,            # 卡片右侧的「参加」按钮
+            # 「参加」按钮统一用公共标定 join_button（tasks.shared，见 SHARED_TPL_KEYS +
+            # _migrate_shared_join_button），旧 tasks.dungeon.join 自动搬走、无需重标。
             "select": None,          # 对话框「选择副本」按钮
             "skip": None,            # 「跳过剧情」按钮（每轮先点它，也用来判上一场打完）
             "skip_new": None,        # 新版「跳过剧情」按钮（新版副本的跳过剧情，共用，备用）
@@ -350,7 +361,6 @@ def _mk_weekly():
         },
         "templates": {                   # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
             "card": None,                # 活动列表里本任务那张「活动卡片」（框图标+文字、要独特）
-            "join": None,                # 该卡片右侧的「参加」按钮（按行匹配点它）
             "confirm": None,             # 寻路到活动 NPC 后对话框里的「参加活动」按钮（每个活动图样文案不同）
             "enter": None,               # 做任务场景里的「进入战斗」按钮（点它发起本场）
             "battle_flag": None,         # 战斗中标识（共享标定注入，此键仅兼容旧配置读取）
@@ -575,12 +585,13 @@ DEFAULT_CONFIG = {
             },
             "templates": {               # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
                 "flag_treasure_entry": None, # 活动列表里「宝图任务」条目
-                "flag_join": None,           # 「宝图任务」那一行右侧的「参加」按钮（按行匹配点它）
                 "flag_tingting": None,       # 对话框「听听无妨」选项
                 "flag_next_map": None,       # 挖完弹出的「使用」按钮：已迁「任务配置」页公共标定（tasks.shared
                                              #   叠加注入，见 SHARED_TPL_KEYS），此键仅兼容旧配置读取
                 "treasure_item": None,       # 背包里藏宝图道具图标（双击用图靠它定位）
                 "flag_bag_arrange": None     # 背包「整理」按钮（可选：回开背包确认前点一下让道具归位）
+                # 「参加」按钮统一用公共标定 join_button（tasks.shared，见 SHARED_TPL_KEYS +
+                # _migrate_shared_join_button），旧 flag_join 自动搬走、无需重标。
             }
         },
 
@@ -616,7 +627,7 @@ DEFAULT_CONFIG = {
             },
             "templates": {               # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
                 "escort_entry": None,    # 活动列表里「运镖」条目
-                "escort_join": None,     # 「运镖」那一行右侧的「参加」按钮（按行匹配点它）
+                # 「参加」按钮统一用公共标定 join_button（tasks.shared，见 SHARED_TPL_KEYS），旧 escort_join 自动迁移
                 "escort_silver": None,   # 对话框「押送普通镖银」按钮
                 "escort_confirm": None,  # 点押送后再弹出的「确认」按钮
                 "escort_ongoing": None   # 运镖途中常驻的「运镖中」标志（在=还在运镖、不停）
@@ -662,7 +673,7 @@ DEFAULT_CONFIG = {
             },
             "templates": {               # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
                 "sr_entry": None,            # 活动列表里要点「参加」的那张卡片
-                "sr_join": None,             # 那张卡片右侧的「参加」按钮（按行匹配点它）
+                # 「参加」按钮统一用公共标定 join_button（tasks.shared，见 SHARED_TPL_KEYS），旧 sr_join 自动迁移
                 "sr_select": None,           # 对话框里「秘境降妖」选项
                 "sr_dungeon_enter": None,    # 「选择副本」界面左下角的「进入」按钮（可选）
                 "sr_confirm": None,          # 「确定」按钮
@@ -701,7 +712,7 @@ DEFAULT_CONFIG = {
             },
             "templates": {               # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
                 "qq_entry": None,            # 活动列表里要点「参加」的那张卡片
-                "qq_join": None,             # 那张卡片右侧的「参加」按钮（按行匹配点它）
+                # 「参加」按钮统一用公共标定 join_button（tasks.shared，见 SHARED_TPL_KEYS），旧 qq_join 自动迁移
                 "qq_option": None,           # 答题界面里任意一个选项按钮（脚本点它作答本道题）
                 "qq_done": None,             # 答题「完成」标志（今日已答完/次数用完等字样），识别到即停
                 "qq_close": None             # 答题结束后的「关闭」按钮（可选）
@@ -739,7 +750,7 @@ DEFAULT_CONFIG = {
             },
             "templates": {               # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
                 "appr_entry": None,          # 活动列表里要点「参加」的那张「趣味鉴赏」卡片
-                "appr_join": None,           # 那张卡片右侧的「参加」按钮（按行匹配点它）
+                # 「参加」按钮统一用公共标定 join_button（tasks.shared，见 SHARED_TPL_KEYS），旧 appr_join 自动迁移
                 "appr_heart": None           # 鉴赏界面里要点击的「心形图案」（没它就在图文列表区域滚动找）
             }
         },
@@ -785,7 +796,7 @@ DEFAULT_CONFIG = {
             },
             "templates": {               # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
                 "gg_entry": None,            # 活动列表里「抓鬼」那张卡片
-                "gg_join": None,             # 那张卡片右侧的「参加」按钮（按行匹配点它）
+                # 「参加」按钮统一用公共标定 join_button（tasks.shared，见 SHARED_TPL_KEYS），旧 gg_join 自动迁移
                 "gg_claim": None,            # 寻路到任务 NPC 后「领取抓鬼任务」按钮（每轮点它领当前轮）
                 "clock": None,              # 小闹钟(寻路)：任务栏那个图标，点任务条目等价点它寻路；现由「任务配置」页
                                             #   公共标定注入（tasks.shared，见 SHARED_TPL_KEYS），此键仅兼容旧配置读取
@@ -815,6 +826,7 @@ DEFAULT_CONFIG = {
 "templates": {               # 跨任务共享模板，统一在「任务配置」页「全局共享标定」卡标定一次：
                 "battle_flag": None,     #   战斗界面标志（运镖/宝图必标，秘境仅日志诊断）
                 "clock": None,           #   小闹钟(寻路)（刷副本/抓鬼必标，点它寻路到当前目标）
+                "join_button": None,     #   「参加」按钮（全任务通用）：原各任务各自标一份（escort_join/flag_join/gg_join/sr_join/qq_join/appr_join/副本·周常 join），2026-11-04 统一迁此，标一次全通用
                 "join_done": None,       #   活动卡片右侧「完成」标识（可选；认出卡片但无「参加」时用于判定今日已完成）
                 "shop_icon": None,       #   商城图标（可选，主界面判定用）
                 "activity_icon": None,   #   活动图标（可选，供后续界面判定复用）
@@ -1101,6 +1113,8 @@ def load_config():
     if _migrate_shared_zhuagui_next(cfg):
         save_config(cfg)
     if _migrate_shared_buy_button(cfg):
+        save_config(cfg)
+    if _migrate_shared_join_button(cfg):
         save_config(cfg)
     if _migrate_login_account_slots(cfg):
         save_config(cfg)
@@ -1411,6 +1425,70 @@ def _migrate_shared_zhuagui_next(cfg):
             changed = True
         if old and key in zt:
             zt.pop(key, None)
+            changed = True
+    return changed
+
+
+def _migrate_shared_join_button(cfg):
+    """全任务通用「参加」按钮标定迁「任务配置」页全局共享标定（tasks.shared.join_button）的一次性迁移
+    （2026-11-04）：原每个任务各标一份参加按钮——
+      运镖 escort_join / 宝图 flag_join / 抓鬼 gg_join / 秘境 sr_join / 三界 qq_join /
+      趣味鉴赏 appr_join / 刷副本 tasks.dungeon.join / 周常(门派闯关/海底世界/迷魂塔) join
+    ——其实是同一个按钮，现统一搬到 tasks.shared.templates.join_button。
+
+    取【第一个标定了真指针】的旧值作为公共图（各任务图都是同一枚按钮的截图，谁标过就用谁），
+    随后清掉所有任务命名空间里的旧指针键。图片文件原地不动：非周常任务与 shared 的落盘路径
+    同为 templates/tm_<key>.png，shared 指向新键 tm_join_button.png 会与旧文件不同名——故把采用的
+    那张旧图 best-effort 复制成 templates/tm_join_button.png（原文件保留不删）；周常旧图带任务名前缀
+    （tm_<task>_join.png），同样复制一份。返回是否改动（改动由 load_config 存盘）。"""
+    tasks = cfg.get("tasks") or {}
+    shared = tasks.get("shared") or {}
+    st = shared.setdefault("templates", {})
+    # (任务命名空间, 旧参加按钮键)
+    sources = [
+        ("escort", "escort_join"),
+        ("treasure_map", "flag_join"),
+        ("zhuagui", "gg_join"),
+        ("secret_realm", "sr_join"),
+        ("sanjie", "qq_join"),
+        ("appreciation", "appr_join"),
+        ("dungeon", "join"),
+        ("sect_gate", "join"),
+        ("underwater", "join"),
+        ("maze_tower", "join"),
+    ]
+    changed = False
+    chosen = st.get(JOIN_BUTTON_TPL_KEY)
+    # 1) 找第一张已标定的旧图作为公共按钮图
+    if not chosen:
+        for ns, old_key in sources:
+            tpl = (tasks.get(ns, {}) or {}).get("templates")
+            if isinstance(tpl, dict) and tpl.get(old_key):
+                chosen = tpl[old_key]
+                break
+        if chosen:
+            # best-effort 复制成统一落盘文件 tm_join_button.png（不删旧文件，失败也照旧用指针）
+            dst_rel = task_template_rel("shared", JOIN_BUTTON_TPL_KEY)
+            src = Path(chosen) if Path(chosen).is_absolute() else PROJECT_ROOT / str(chosen)
+            dst = PROJECT_ROOT / dst_rel
+            try:
+                if src.exists() and src.resolve() != dst.resolve():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(src), str(dst))
+                chosen = dst_rel
+            except OSError:
+                chosen = chosen  # 复制失败就直接沿用旧指针，功能不丢
+            st[JOIN_BUTTON_TPL_KEY] = chosen
+            shared["templates"] = st
+            changed = True
+    # 2) 清掉各任务命名空间里的旧指针键（无论是否取到它）
+    for ns, old_key in sources:
+        tblock = tasks.get(ns)
+        if not isinstance(tblock, dict):
+            continue
+        tpl = tblock.get("templates")
+        if isinstance(tpl, dict) and old_key in tpl:
+            tpl.pop(old_key, None)
             changed = True
     return changed
 

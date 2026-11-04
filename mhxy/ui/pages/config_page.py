@@ -14,7 +14,8 @@ from ...core import config as cfg_mod
 from ...core.runner import TaskRunner
 from ...core.config import (ACTIVITY_UI_TPL_KEY, BATTLE_FLAG_TPL_KEY, BUY_BUTTON_TPL_KEY,
                              CLOCK_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
-                             GG_CANCEL_TPL_KEY, GG_NEXT_TPL_KEY, HPMP_POPUP_TPL_KEY, JOIN_DONE_TPL_KEY,
+                             GG_CANCEL_TPL_KEY, GG_NEXT_TPL_KEY, HPMP_POPUP_TPL_KEY, JOIN_BUTTON_TPL_KEY,
+                             JOIN_DONE_TPL_KEY,
                              MAIN_ICON_TPL_KEYS, PANEL_CLOSE_TPL_KEY, POPUP_CLOSE_TPL_KEY,
                              SHARED_REGION_KEYS, SINGLE_TASK_ORDER)
 from ...core.teaming import TEAM_CALIB_TPL_KEYS, TEAM_REQUIRED_REGIONS
@@ -341,7 +342,7 @@ class SharedCalibrationCard(ctk.CTkFrame):
             req_regions = SHARED_REGION_KEYS
             opt_regions = ()
             req_tpl_keys = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
-                            GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY)
+                            GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, JOIN_BUTTON_TPL_KEY)
             opt_tpl_keys = ((HPMP_POPUP_TPL_KEY, GG_CANCEL_TPL_KEY) + (JOIN_DONE_TPL_KEY,) + MAIN_ICON_TPL_KEYS
                             + (POPUP_CLOSE_TPL_KEY, PANEL_CLOSE_TPL_KEY, ACTIVITY_UI_TPL_KEY,
                                DAILY_ACTIVITY_TAB_TPL_KEY))

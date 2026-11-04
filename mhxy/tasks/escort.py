@@ -43,14 +43,14 @@ S_ESCORTING = "ESCORTING"           # 运镖中：监控运镖中标志/对话�
 
 # 模板键（用 escort_ 前缀，避免和「宝图」任务的同名模板在磁盘上互相覆盖——
 #   标定存盘按 templates/tm_<key>.png 命名，只按 key 区分，不区分任务）。
-# 战斗标识走公共共享模板 tasks.shared.templates.battle_flag（「任务配置」页「全局共享标定」卡标定，全任务共用），
-# task_config 已把它叠加进本任务 templates，这里直接用同 key「battle_flag」读，不再各自标。
-_FLAG_KEYS = ["escort_entry", "escort_join", "escort_silver", "escort_confirm",
-              "escort_ongoing", "battle_flag"]
+# 战斗标识与「参加」按钮走公共共享模板 tasks.shared.templates（「任务配置」页「全局共享标定」卡标定，全任务共用），
+# task_config 已把它们叠加进本任务 templates，这里直接用同 key（battle_flag / join_button）读，不再各自标。
+_FLAG_KEYS = ["escort_entry", "escort_silver", "escort_confirm",
+              "escort_ongoing", "battle_flag", "join_button"]
 # 必备模板（缺失则 preflight 阻断）：battle_flag 虽不点它，但运镖结束判定要在战斗期暂停——
-# 不标它进战斗就被误判「运镖结束」，故必标（在公共标定里框）。
-_REQUIRED_FLAGS = ["escort_entry", "escort_join", "escort_silver", "escort_confirm",
-                   "escort_ongoing", "battle_flag"]
+# 不标它进战斗就被误判「运镖结束」，故必标（在公共标定里框）。参加按钮 join_button 同样在公共标定里框。
+_REQUIRED_FLAGS = ["escort_entry", "escort_silver", "escort_confirm",
+                   "escort_ongoing", "battle_flag", "join_button"]
 
 
 @register
@@ -67,7 +67,7 @@ class EscortTask(Task):
         ],
         "templates": [
             ("escort_entry", "运镖入口", "活动列表里「运镖」那一条，框图标+文字、要独特"),
-            ("escort_join", "参加按钮", "活动列表里「运镖」那一行右侧的「参加」按钮，框按钮本身、要独特"),
+            # 「参加」按钮已统一到「任务配置」页「全局共享标定」卡（join_button），这里不再单列，旧标定自动迁移
             ("escort_silver", "「押送普通镖银」按钮", "弹出对话框里要点的那个「押送普通镖银」按钮"),
             ("escort_confirm", "「确认」按钮", "点完「押送普通镖银」后再弹出的确认按钮，框按钮本身、要独特"),
             ("escort_ongoing", "「运镖中」标志", "运镖途中一直挂在屏幕上的标志（如镖银图标/运镖任务追踪条），"
@@ -94,6 +94,8 @@ class EscortTask(Task):
             if not path or vision.load_template(path) is None:
                 if tk == BATTLE_FLAG_TPL_KEY:
                     problems.append("『战斗界面标志』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
+                elif tk == "join_button":
+                    problems.append("『参加按钮』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
                 else:
                     problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
@@ -278,7 +280,7 @@ class EscortTask(Task):
             if r != "nudged":
                 if not rec["_join_warned"]:
                     rec["_join_warned"] = True
-                    ctx.log("认出「运镖」但「参加」按钮一直没出现（已自动微滚补全；检查 escort_join 模板/阈值），原地重试。", level="warn")
+                    ctx.log("认出「运镖」但「参加」按钮一直没出现（已自动微滚补全；检查公共标定 join_button 模板/阈值），原地重试。", level="warn")
             return scan.STAY, None
 
         res = scan.scroll_search(
@@ -504,9 +506,9 @@ class EscortTask(Task):
 
     def _find_join_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop):
         """统一实现见 base.Task._find_join_in_column（整列枚举取距离卡片行最近那枚「参加」）。
-        运镖的参加按钮模板为 escort_join；卡片为 escort_entry。"""
+        运镖卡片为 escort_entry；参加按钮用公共标定 join_button。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
-                                         self.flags.get("escort_join"),
+                                         self.flags.get("join_button"),
                                          self.flags.get("escort_entry"),
                                          max_follow_cap=loop.get("join_same_row_px", 55))
 
@@ -535,7 +537,7 @@ class EscortTask(Task):
 
     def _dry_run_selfcheck(self, ctx, contexts, multi, regions, threshold, switch_delay, deadline):
         """演练：周期性对【每个号】当前屏幕识别各标志，报告命中，便于用户验证模板/阈值。"""
-        keys = [("escort_entry", "运镖入口"), ("escort_join", "参加按钮"),
+        keys = [("escort_entry", "运镖入口"), ("join_button", "参加按钮"),
                 ("escort_silver", "押送普通镖银"), ("escort_confirm", "确认"),
                 ("escort_ongoing", "运镖中"), ("battle_flag", "战斗")]
         while not ctx.should_stop():

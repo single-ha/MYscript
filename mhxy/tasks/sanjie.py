@@ -35,9 +35,11 @@ S_ANSWER = "ANSWER"                 #   答题循环：任意点选项，自动�
 S_DONE = "DONE"                     # 收尾：点「关闭」(可选) → 本轮结束
 
 # 模板键（用 qq_ 前缀=奇缘，避免与运镖/宝图/秘境同名模板在磁盘互相覆盖——存盘按 templates/tm_<key>.png）。
-_FLAG_KEYS = ["qq_entry", "qq_join", "qq_option", "qq_done", "qq_close"]
+# 「参加」按钮已统一到公共标定 join_button（tasks.shared，task_config 叠加注入同键），这里不再单列。
+_FLAG_KEYS = ["qq_entry", "qq_option", "qq_done", "qq_close", "join_button"]
 # 必备：缺失则 preflight 阻断（其余为可选，缺失仅提示/降级）。答题选项另做「模板或固定点位」检查。
-_REQUIRED_FLAGS = ["qq_entry", "qq_join"]
+# 参加按钮 join_button 走共享注入，也列入此表让 preflight 一并拦截（缺失时指路到「全局共享标定」卡）。
+_REQUIRED_FLAGS = ["qq_entry", "join_button"]
 
 
 @register
@@ -55,7 +57,7 @@ class SanjieTask(Task):
         ],
         "templates": [
             ("qq_entry", "活动卡片入口", "活动列表里要点「参加」的那张卡片，框图标+文字、要独特"),
-            ("qq_join", "参加按钮", "那张卡片右侧的「参加」按钮，框按钮本身、要独特"),
+            # 「参加」按钮已统一到「任务配置」页「全局共享标定」卡（join_button），这里不再单列，旧标定自动迁移
             ("qq_option", "答题选项按钮(任选其一)", "答题界面里任意一个选项按钮，脚本就点它作答本题。"
                                               "不标则必须在运行参数 loop.answer_pos 里配一个固定点位", True),
             ("qq_done", "答题完成标志", "答完后出现的「今日已答完/次数已用完/结算」这类字样，识别到即停；不标时靠空闲兜底", True),
@@ -79,7 +81,10 @@ class SanjieTask(Task):
         for tk in _REQUIRED_FLAGS:
             path = templates.get(tk)
             if not path or vision.load_template(path) is None:
-                problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
+                if tk == "join_button":
+                    problems.append("『参加按钮』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
+                else:
+                    problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
         # 答题选项：模板或固定点位至少一个
         opt = templates.get("qq_option")
@@ -262,7 +267,7 @@ class SanjieTask(Task):
                 # 卡片完整显示仍没找到「参加」→ 告警一次+原地重试（走 scroll_search 的 STAY）。
                 if not rec["_join_warned"]:
                     rec["_join_warned"] = True
-                    ctx.log("认出卡片但「参加」按钮一直没出现（已自动微滚补全；检查 qq_join 模板/阈值），原地重试。", level="warn")
+                    ctx.log("认出卡片但「参加」按钮一直没出现（已自动微滚补全；检查公共标定 join_button 模板/阈值），原地重试。", level="warn")
             # 认出条目但没找到参加：不滚动（会滚走目标），原地重试
             return scan.STAY, None
 
@@ -361,9 +366,9 @@ class SanjieTask(Task):
 
     def _find_join_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop):
         """统一实现见 base.Task._find_join_in_column（整列枚举取距离卡片行最近那枚「参加」）。
-        三界奇缘的参加按钮模板为 qq_join；卡片为 qq_entry。"""
+        三界奇缘卡片为 qq_entry；参加按钮用公共标定 join_button。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
-                                         self.flags.get("qq_join"),
+                                         self.flags.get("join_button"),
                                          self.flags.get("qq_entry"),
                                          max_follow_cap=loop.get("join_same_row_px", 55))
 
@@ -393,7 +398,7 @@ class SanjieTask(Task):
     def _dry_run_selfcheck(self, ctx, contexts, multi, regions, threshold, switch_delay, deadline):
         """演练：先把每个号切到活动界面（发 open_activity 快捷键），再周期性识别各标志，报告命中。
         否则一开始屏上还是主界面、找不到任务入口卡片=误判（用户拍板：演练也要先开活动列表再识别）。"""
-        keys = [("qq_entry", "活动卡片"), ("qq_join", "参加"),
+        keys = [("qq_entry", "活动卡片"), ("join_button", "参加"),
                 ("qq_option", "选项按钮"), ("qq_done", "完成标志"), ("qq_close", "关闭")]
         # 先给每个号打开活动列表，再开始识别「任务入口」（否则屏上还是主界面，找不到卡片=误判）
         for wctx in contexts:

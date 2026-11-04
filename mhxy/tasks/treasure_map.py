@@ -63,16 +63,18 @@ _STILL_DIFF = 8.0   # 帧差低于此视为画面静止（人物不动）的默�
 #   运行时日志会实时打印真实帧差，照着把阈值设到「静止时帧差」之上、「走动时帧差」之下即可。
 
 # 必备模板（缺失则 preflight 阻断）与可选模板（缺失仅 warn）
-#   flag_join=活动列表里「宝图任务」那一行右侧的「参加」按钮——按行匹配点它（不是点条目本身）。
+#   「参加」按钮=活动列表里「宝图任务」那一行右侧的按钮，已统一到公共标定 join_button（按行匹配点它，
+#   不是点条目本身）。
 #   flag_next_map=「使用」按钮已迁 tasks.shared（公共标定叠加注入），键仍列此供 templates.get 读值。
-_FLAG_KEYS = ["flag_treasure_entry", "flag_join", "flag_tingting",
-              "battle_flag", "flag_next_map", "treasure_item", "flag_bag_arrange"]
+_FLAG_KEYS = ["flag_treasure_entry", "flag_tingting",
+              "battle_flag", "flag_next_map", "treasure_item", "flag_bag_arrange",
+              "join_button"]
 # 必备模板（缺失则 preflight 阻断）：flag_next_map=「使用」按钮（挖宝续挖必点）与 battle_flag
 # （虽不点它，但「静止判定」要在战斗期暂停——不标它一进战斗就被误判收集提前完成/挖完）都要标。
-# 两者都走公共共享模板 tasks.shared.templates（在「任务配置」页「全局共享标定」卡标定，全任务共用，
-# task_config 已把它们叠加进本任务 templates）。
-_REQUIRED_FLAGS = ["flag_treasure_entry", "flag_join", "flag_tingting",
-                   "flag_next_map", "battle_flag", "treasure_item"]
+# 它们与参加按钮 join_button 都走公共共享模板 tasks.shared.templates（在「任务配置」页「全局共享标定」卡
+# 标定，全任务共用，task_config 已把它们叠加进本任务 templates），均列入此表让 preflight 一并拦截。
+_REQUIRED_FLAGS = ["flag_treasure_entry", "flag_tingting",
+                   "flag_next_map", "battle_flag", "treasure_item", "join_button"]
 
 
 @register
@@ -90,7 +92,7 @@ class TreasureMapTask(TuoyingFlow, Task):
         ],
         "templates": [
             ("flag_treasure_entry", "宝图任务入口", "活动列表里「宝图任务」那一条，框图标+文字、要独特"),
-            ("flag_join", "参加按钮", "活动列表里「宝图任务」那一行右侧的「参加」按钮，框按钮本身、要独特"),
+            # 「参加」按钮已统一到「任务配置」页「全局共享标定」卡（join_button），这里不再单列，旧标定自动迁移
             ("flag_tingting", "「听听无妨」选项", "和 NPC 对话弹框里要点的那个选项"),
             ("treasure_item", "藏宝图道具", "背包里藏宝图那个图标的样子"),
             ("flag_bag_arrange", "背包「整理」按钮", "打开背包后那个「整理」按钮。每次回开背包确认前先点它让道具归位（可选，找不到就跳过）", True),
@@ -121,6 +123,8 @@ class TreasureMapTask(TuoyingFlow, Task):
                     problems.append("『战斗界面标志』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
                 elif tk == FLAG_NEXT_MAP_TPL_KEY:
                     problems.append("『使用』按钮未标定 —— 请到「任务配置」页「全局共享标定」卡框选（宝图挖宝续挖必标，标一次全通用）")
+                elif tk == "join_button":
+                    problems.append("『参加按钮』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
                 else:
                     problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
 
@@ -630,9 +634,9 @@ class TreasureMapTask(TuoyingFlow, Task):
 
     def _find_join_on_row(self, ctx, list_region, entry_screen_xy, threshold, loop):
         """统一实现见 base.Task._find_join_in_column（整列枚举取离卡片行最近那枚「参加」）。
-        宝图的参加按钮模板为 flag_join；卡片入口为 flag_treasure_entry。"""
+        宝图卡片入口为 flag_treasure_entry；参加按钮用公共标定 join_button。"""
         return self._find_join_in_column(ctx, list_region, entry_screen_xy, threshold, loop,
-                                          self.flags.get("flag_join"),
+                                          self.flags.get("join_button"),
                                           self.flags.get("flag_treasure_entry"),
                                           max_follow_cap=loop.get("join_same_row_px", 55))
 
@@ -722,7 +726,7 @@ class TreasureMapTask(TuoyingFlow, Task):
                            deadline):
         """演练：周期性对【每个号】当前屏幕识别各标志，报告命中，便于用户验证模板/阈值。
         是否已有宝图走运行期自动判，故阶段A(宝图入口/参加/听听无妨)与阶段B(下一张/藏宝图)标志全自检。"""
-        keys = [("flag_treasure_entry", "宝图入口"), ("flag_join", "参加按钮"),
+        keys = [("flag_treasure_entry", "宝图入口"), ("join_button", "参加按钮"),
                 ("flag_tingting", "听听无妨"), ("battle_flag", "战斗"),
                 ("flag_next_map", "使用"), ("treasure_item", "藏宝图"),
                 ("flag_bag_arrange", "整理按钮")]
