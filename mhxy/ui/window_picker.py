@@ -7,10 +7,10 @@
 
 每个窗口渲成一张卡片，带【实时缩略图】帮你认出哪个号（号按屏幕位置左→右编号，
 和 window.locate_all 的排序一致）。选择结果写入 cfg["targets"]：
-  multi_indices / selected_hwnds / multi（按选中数量派生：len>1 时 True）/ single_index
+  multi_indices / multi（按选中数量派生：len>1 时 True）/ single_index
 
-窗口身份优先用「HWND（会话内稳定）」，找不到回退「位置序号」——HWND 重启会变，
-但同一次会话内移动窗口不会变；重启后自动按位置重新匹配并更新 HWND 记录。
+选号纯按【屏幕位置序号】，不记 HWND：窗口移动/重排后按当前摆放的 号1/号2/号3… 认号，
+运行顺序与界面显示完全一致。
 """
 import time
 
@@ -290,23 +290,13 @@ class WindowPickerDialog(ctk.CTkToplevel):
     # ------------------------------------------------------------------
     def _confirm(self):
         captain_index = None
-        selected_hwnds = []
         idxs = sorted(i for i, v in self._multi_vars.items() if v.get())
         if not idxs:                       # 没勾任何号 → 视为「全部」
             idxs = list(range(len(self._wins)))
-        # 存所选绝对序号（运行时不再被 max_windows 截断）
+        # 存所选绝对序号（运行时不再被 max_windows 截断）。选号纯按屏幕位置序号，不记 HWND：
+        # 移动/重排窗口后按当前摆放位置认号，与界面显示的 号1/号2… 始终对应。
         self.targets["multi_indices"] = idxs
-        # 记录所选窗口的 HWND（会话内稳定标识）
-        for i in idxs:
-            if 0 <= i < len(self._wins):
-                w = self._wins[i][0]
-                try:
-                    hwnd = w._win._hWnd
-                except Exception:
-                    hwnd = None
-                if hwnd is not None:
-                    selected_hwnds.append(hwnd)
-        self.targets["selected_hwnds"] = selected_hwnds
+        self.targets.pop("selected_hwnds", None)
         # 派生：按选中数量决定是否多开
         self.targets["multi"] = len(idxs) > 1
         if len(idxs) == 1:

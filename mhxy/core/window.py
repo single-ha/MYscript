@@ -430,35 +430,48 @@ def global_no(w, fallback):
     return (gi + 1) if isinstance(gi, int) and gi >= 0 else fallback + 1
 
 
-def _hwnd_of(w):
-    """取 GameWindow / pygetwindow 窗口对象的句柄（int）；取不到返回 None。"""
+def _rect_sig(w):
+    """窗口的「几何身份」：屏幕矩形 (left, top, width, height) 整数元组；取不到返回 None。
+
+    登录认新窗口不再用 HWND（与选号一样按屏幕位置认窗口）。兼容 GameWindow 封装（走 rect()，
+    已叠加 offset）和原始 pygetwindow 对象（直接读 left/top/width/height，不叠加 offset——
+    快照与比对都在同一坐标系，保持一致即可）。"""
     try:
-        raw = getattr(w, "_win", None) or w
-        h = getattr(raw, "_hWnd", None)
-        return int(h) if h else None
+        r = w.rect() if hasattr(w, "rect") and callable(w.rect) else None
+        if r is not None:
+            return (int(r[0]), int(r[1]), int(r[2]), int(r[3]))
+        return (int(w.left), int(w.top), int(w.width), int(w.height))
     except Exception:
         return None
 
 
-def snapshot_hwnds():
-    """当前所有顶层窗口的句柄集合（启动客户端「前」拍一张）。
+def snapshot_windows():
+    """当前所有可见顶层窗口的【屏幕矩形】集合（启动客户端「前」拍一张）。
 
-    登录任务靠它认「哪个窗口是刚启动出来的」——多开时桌面上已有一堆号，按标题找最大那个
-    会挑到旧号的窗口上去。返回 set[int]（拿不到句柄的窗口忽略）。"""
+    登录任务靠它认「哪个窗口是刚启动出来的」——多开时桌面上已有一堆号，按标题找最大那个会挑到
+    旧号上去。纯几何、不看 HWND：返回 set[(left, top, width, height)]，最小化/取不到矩形的窗口忽略。
+    登录是串行逐个起客户端、一次只多一个窗口，启动后矩形不在这张快照里的那个就是新窗口。"""
     out = set()
     for w in gw.getAllWindows():
-        h = _hwnd_of(w)
-        if h:
-            out.add(h)
+        try:
+            if getattr(w, "isMinimized", False):
+                continue
+        except Exception:
+            continue
+        sig = _rect_sig(w)
+        if sig:
+            out.add(sig)
     return out
 
 
 def wait_new_game_window(before, title_substr, offset=(0, 0), timeout=60.0, poll=0.5,
                          accept_any=False, min_size=(400, 300), should_stop=None, sleep=None):
-    """等一个「启动前还不存在」的窗口出现（按 hwnd 差集认新窗口），返回 GameWindow 或 None。
+    """等一个「启动前还不存在」的窗口出现（按屏幕矩形差集认新窗口，不用 HWND），返回 GameWindow 或 None。
 
-    before: 启动前的 snapshot_hwnds()。
-    accept_any: True 时，只要出现一个「不在 before 里、非最小化、够大(≥min_size)」的窗口就认下它，
+    before: 启动前的 snapshot_windows()（已有窗口的矩形集合）。
+    判定：窗口当前矩形不在 before 里即视为新窗口——与选号「按屏幕位置认窗口」一致；登录串行逐个
+    起客户端、一次只新增一个窗口，旧号窗口位置在登录期间不动，几何差集稳定可认。
+    accept_any: True 时，只要出现一个「矩形不在 before 里、非最小化、够大(≥min_size)」的窗口就认下它，
         用于客户端登录窗标题与 window_title 不一致的情况；多个候选取面积最大的那个。
     should_stop: 可打断的回调（True=停止，立即返回 None）。sleep: 可打断的睡眠（默认 time.sleep）。"""
     end = time.time() + max(0.0, float(timeout))
@@ -466,12 +479,14 @@ def wait_new_game_window(before, title_substr, offset=(0, 0), timeout=60.0, poll
         if should_stop is not None and should_stop():
             return None
         for w in locate_all(title_substr, offset):
-            if _hwnd_of(w) not in before:
+            sig = _rect_sig(w)
+            if sig is not None and sig not in before:
                 return w
         if accept_any:
             cands = []
             for w in gw.getAllWindows():
-                if _hwnd_of(w) in before:
+                sig = _rect_sig(w)
+                if sig is None or sig in before:
                     continue
                 try:
                     if w.isMinimized or w.width < min_size[0] or w.height < min_size[1]:
@@ -490,22 +505,15 @@ def wait_new_game_window(before, title_substr, offset=(0, 0), timeout=60.0, poll
             time.sleep(poll)
 
 
-def _hwnd_of_win(w):
-    """取 GameWindow / pygetwindow 窗口对象的句柄（int）；取不到返回 None。"""
-    try:
-        raw = getattr(w, "_win", None) or w
-        h = getattr(raw, "_hWnd", None)
-        return int(h) if h else None
-    except Exception:
-        return None
-
-
 def resolve_targets(title_substr, offset, targets):
     """按 targets 配置从 locate_all 结果里选出要操作的窗口列表（纯函数，供任务与 GUI 共用）。
 
     统一选择模型：勾选几个窗口就操作几个窗口（选中 1 个 → 单号行为；选中 ≥ 2 个 → 多开号行为）。
-    优先按 selected_hwnds（会话内稳定 HWND）匹配；未命中回退位置索引。
-    返回的列表会按 selected_hwnds 的顺序排序；仅位置索引时按 locate_all 顺序。
+    【纯位置选号】窗口身份与先后都只看屏幕位置序号（locate_all 的 号1/号2…，即「选择窗口」对话框
+    的显示顺序），完全不再用 HWND 锁定——移动/重排窗口后按当前摆放的位置序号认号，所见即所得。
+      · 多开：按 multi_indices（勾选的位置序号）取号，再按位置序排好返回；
+      · 单开：取 single_index 指向的那一个号；
+      · 都没配：兜底取全部窗口（受 max_windows 上限）。
     找不到任何窗口返回 []。
     """
     targets = targets or {}
@@ -513,45 +521,30 @@ def resolve_targets(title_substr, offset, targets):
     if not wins:
         return []
 
-    hwnd_map = {}
-    for w in wins:
-        h = _hwnd_of_win(w)
-        if h:
-            hwnd_map[h] = w
-
-    stored_hwnds = targets.get("selected_hwnds") or []
-
-    def pick_by_hwnds():
-        out = []
-        for h in stored_hwnds:
-            w = hwnd_map.get(h)
-            if w:
-                out.append(w)
-        return out
-
-    sel = pick_by_hwnds()
-    if not sel:
-        idxs = targets.get("multi_indices") or []
-        if idxs:
-            for i in idxs:
-                if 0 <= i < len(wins):
-                    sel.append(wins[i])
-        else:
-            i = targets.get("single_index", 0)
-            if not (isinstance(i, int) and 0 <= i < len(wins)):
-                i = 0
-            sel = [wins[i]] if wins else []
+    idxs = targets.get("multi_indices") or []
+    if idxs:
+        sel = [wins[i] for i in idxs if 0 <= i < len(wins)]
+    elif not targets.get("multi", False):
+        i = targets.get("single_index", 0)
+        if not (isinstance(i, int) and 0 <= i < len(wins)):
+            i = 0
+        sel = [wins[i]] if wins else []
+    else:
+        sel = []
 
     if not sel:
         sel = wins
 
     cap = targets.get("max_windows", 0)
-    has_explicit = bool(stored_hwnds) or bool(targets.get("multi_indices"))
+    has_explicit = bool(targets.get("multi_indices"))
     if cap and cap > 0 and not has_explicit:
         sel = sel[:cap]
 
+    # locate_all 已按屏幕位置排好序；这里按位置索引统一重排并去重，保证运行/轮转顺序 == 界面显示顺序。
+    pos = {id(w): i for i, w in enumerate(wins)}
+    sel = sorted(set(sel), key=lambda w: pos.get(id(w), len(wins)))
+
     targets["multi"] = len(sel) > 1
-    targets["selected_hwnds"] = [_hwnd_of_win(w) for w in sel if _hwnd_of_win(w)]
     return sel
 
 def window_at_point(title_substr, offset, x, y):

@@ -169,7 +169,7 @@ class LoginTask(Task):
         → 切换账号 → 在账号列表区翻账号卡并点 → 进入游戏 → 更换角色（1 秒没见「已有角色」
         标签就再点一次，见 _role_tab_step）→ 在角色列表区翻角色卡并点。"""
         ctx.log(f"{name}：启动客户端…", level="hit")
-        before = win_mod.snapshot_hwnds()
+        before = win_mod.snapshot_windows()
         try:
             subprocess.Popen([client] + args, cwd=os.path.dirname(client) or None)
         except Exception as e:

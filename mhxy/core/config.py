@@ -421,7 +421,8 @@ DEFAULT_CONFIG = {
         "max_windows": 5,           # 仅「自动全部(multi_indices 为空)」时最多同时操作几个号(0=不限)；手动勾选不受限
         "switch_delay_sec": 0.15,   # 号与号之间切换的停顿(秒,带抖动)，别太机械
         "base_size": [907, 707],    # 基准窗口尺寸[w,h]；「还原尺寸/调整窗口」把号拉回/排成它。默认 907×707，可点「设为基准」改
-        "selected_hwnds": []        # 会话内稳定标识：按选中顺序存 HWND 列表；resolve 时优先按 HWND 匹配，找不到回退位置排序
+        # 选号纯按屏幕位置序号（multi_indices/single_index），不再存 HWND：移动/重排窗口后按当前摆放的
+        # 号1/号2… 认号（见 window.resolve_targets）。旧配置里的 targets.selected_hwnds 由 _migrate_drop_target_hwnds 清掉。
     },
 
     # 「调整窗口」排布：最左一列距屏幕/工作区左边缘的空白(像素)。想贴边留白改成 0，想更靠右调大。
@@ -1130,6 +1131,8 @@ def load_config():
         save_config(cfg)
     if _migrate_drop_daily_group_enabled(cfg):
         save_config(cfg)
+    if _migrate_drop_target_hwnds(cfg):
+        save_config(cfg)
     return cfg
 
 
@@ -1294,6 +1297,20 @@ def _migrate_drop_daily_group_enabled(cfg):
     if not isinstance(daily, dict) or "group_enabled" not in daily:
         return False
     daily.pop("group_enabled", None)
+    return True
+
+
+def _migrate_drop_target_hwnds(cfg):
+    """一次性迁移（2026-11-12 选号改为纯屏幕位置序号）：删除 targets.selected_hwnds。
+
+    旧版把所选窗口的 HWND 列表落进 config，运行时优先按 HWND 锁定「选了哪几个号」。现选号完全
+    按屏幕位置序号（multi_indices/single_index，对应选择窗口对话框的 号1/号2…），HWND 不再参与——
+    移动/重排窗口后按当前摆放位置认号，运行顺序与界面显示一致。旧 HWND 键已无任何代码读取，
+    保留只会让配置含义混乱，故直接删除。一次性：删掉后再次加载不再触发。"""
+    targets = cfg.get("targets")
+    if not isinstance(targets, dict) or "selected_hwnds" not in targets:
+        return False
+    targets.pop("selected_hwnds", None)
     return True
 
 
