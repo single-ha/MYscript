@@ -15,9 +15,11 @@
    → 没有「挑战」按钮、也不会自动战斗：点右侧任务栏的秘境任务条目（sr_nav）
      → 角色自动寻路到 NPC → 自动战斗开始（点完继续挑战后画面右侧出现的是该任务栏条目）
    → 难度关卡不再自动：实时盯「进入战斗」按钮，一出现就点它续战（累计点击数）。
-  → 结束判定（转「离开」）两条：
+  → 结束判定（转「离开」）三条：
      ①命中「失败」标志 → 先点掉失败结算，「离开」按钮才点得到；
-     ②累计点「进入战斗」达 N 次（N = 难度关卡战斗次数，配置卡可调）后、当前处于非战斗态
+     ②命中可选「通关」标志(sr_clear) → 一轮秘境已打完，立刻判本轮结束、去点「离开」
+       （不必等战斗次数凑满或非战斗计时；该模板未标则不启用这条，自动回退③）；
+     ③累计点「进入战斗」达 N 次（N = 难度关卡战斗次数，配置卡可调）后、当前处于非战斗态
        且**非战斗态已连续维持 10s 以上**（防止过场/切换动画被误判为战斗结束）
        （未匹配到共享「战斗界面标志」battle_flag）→ 点「离开」退出秘境。
         注意：每次点完「进入战斗」先等约 1s 再判战斗态，避免过场被误判为已结束。
@@ -60,8 +62,9 @@ S_LEAVE = "LEAVE"                   # 失败/超时后：点「离开」收尾�
 # task_config 已把它们叠加进本任务 templates，用同 key（battle_flag / join_button）读，不必各自标。
 _FLAG_KEYS = ["sr_entry", "sr_select", "sr_dungeon_enter", "sr_confirm",
               "sr_continue", "sr_nav", "sr_enter_battle", "sr_leave",
-              "sr_fail", "battle_flag", "join_button"]
+              "sr_fail", "sr_clear", "battle_flag", "join_button"]
 # 必备：缺失则 preflight 阻断。（结束判定改用「累计点进入战斗 N 次 + 非战斗态」，不再需要胜利标志。）
+# 通关标志 sr_clear 为【可选】：标了就多一条「识别到通关即判本轮打完」的结束路径，未标则回退战斗次数判定。
 # 参加按钮 join_button 走共享注入，也列入此表让 preflight 一并拦截（缺失时指路到「全局共享标定」卡）。
 _REQUIRED_FLAGS = ["sr_entry", "sr_select",
                    "sr_continue", "sr_nav", "sr_enter_battle", "sr_leave",
@@ -91,8 +94,10 @@ class SecretRealmTask(Task):
             ("sr_nav", "右侧任务栏·秘境任务条目", "点「继续挑战」后画面右侧任务栏里的当前秘境任务条目"
                                                    "（没有「挑战」按钮、不会自动战斗，点它会自动寻路到NPC开始战斗）"),
             ("sr_enter_battle", "「进入战斗」按钮", "难度关卡处不再自动、需要手动点的「进入战斗」按钮（监控期一出现就点）"),
-            ("sr_leave", "「离开」按钮", "失败/后点的「离开」按钮，点它退出秘境"),
+            ("sr_leave", "「离开」按钮", "失败/通关后点的「离开」按钮，点它退出秘境"),
             ("sr_fail", "「失败」标志", "战斗失败时屏幕上的「失败」字样/弹窗，判定该退出（先点它结算，离开才点得到）", True),
+            ("sr_clear", "「通关」标志", "一轮秘境全部打完时屏幕上的「通关/胜利」字样或结算画面（可选）。标了就多一条结束判定："
+                                         "识别到它立刻判本轮打完、去点离开，不必等战斗次数凑满；不标则只靠「战满N次+非战斗态」判定", True),
             # 战斗界面标志 battle_flag 走「任务配置」页「全局共享标定」卡统一标定（全任务共用），
             # 用于判「非战斗态」（结束判定）：未匹配到它=非战斗。
         ],
@@ -128,7 +133,8 @@ class SecretRealmTask(Task):
 
         # 可选模板缺失只提示
         for tk, label in [("sr_dungeon_enter", "选副本-进入"), ("sr_confirm", "确定(选副本后才有)"),
-                          ("sr_fail", "失败"), ("battle_flag", "战斗界面标志(判非战斗态/结束)")]:
+                          ("sr_fail", "失败"), ("sr_clear", "通关(识别到即判本轮打完)"),
+                          ("battle_flag", "战斗界面标志(判非战斗态/结束)")]:
             if not templates.get(tk) or vision.load_template(templates.get(tk)) is None:
                 ctx.log(f"提示：可选模板『{tk}』({label})未标定，将降级处理（可靠性略降）。", level="warn")
 
@@ -550,6 +556,14 @@ class SecretRealmTask(Task):
             self._goto(rec, S_LEAVE)
             return
 
+        # 1.5) 判定通关（可选 sr_clear）：识别到「通关」标志即判本轮秘境已打完，立刻转去点「离开」。
+        #   放在「进入战斗」续点之前，避免通关结算画面上还残留可点元素时被误续；模板未标(_match_scene 返回 None)则跳过、回退战斗次数判定。
+        clear = self._match_scene(cur, scene_rect, "sr_clear", threshold)
+        if clear is not None:
+            ctx.log(f"识别到「通关」标志（{clear[2]:.3f}）→ 判定本轮秘境已打完，去点「离开」。", level="hit")
+            self._goto(rec, S_LEAVE)
+            return
+
         # 2) 难度关卡：未战满 N 次时，出现「进入战斗」就点它续战（累计点击数）
         eb = self._match_scene(cur, scene_rect, "sr_enter_battle", threshold)
         if eb is not None and rec["eb_clicks"] < self.battle_rounds:
@@ -709,7 +723,7 @@ class SecretRealmTask(Task):
                 ("sr_dungeon_enter", "选副本-进入"), ("sr_confirm", "确定"),
                 ("sr_continue", "继续挑战"), ("sr_nav", "任务栏秘境条目"),
                 ("sr_enter_battle", "进入战斗"), ("sr_leave", "离开"),
-                ("sr_fail", "失败"), ("battle_flag", "战斗")]
+                ("sr_fail", "失败"), ("sr_clear", "通关"), ("battle_flag", "战斗")]
         while not ctx.should_stop():
             if deadline and time.time() >= deadline:
                 ctx.log("演练时间上限到，停止。")

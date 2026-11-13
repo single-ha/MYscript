@@ -30,7 +30,7 @@ class SecretRealmConfig(ctk.CTkFrame):
         txt = ctk.CTkFrame(head, fg_color="transparent")
         txt.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(txt, text="秘境降妖", font=self.fonts["h2"], text_color=T.TEXT).pack(anchor="w")
-        ctk.CTkLabel(txt, text="开活动→参加→挑战→盯「进入战斗」续战，战满即退", font=self.fonts["small"],
+        ctk.CTkLabel(txt, text="开活动→参加→挑战→盯「进入战斗」续战，识别到「通关」或战满即退", font=self.fonts["small"],
                      text_color=T.TEXT_DIM).pack(anchor="w", pady=(2, 0))
         btns = ctk.CTkFrame(head, fg_color="transparent")
         btns.grid(row=0, column=1, sticky="e")
