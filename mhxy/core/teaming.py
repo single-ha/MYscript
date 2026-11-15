@@ -510,6 +510,12 @@ class TeamFormation:
         # 约 1s 内没找到「退出队伍」→ 认为本就不在队，直接关面板收尾（也算成功，结果都是「不在队」）。
         if self._elapsed(rec) > self.loop.get("disband_quit_wait_sec", 1.0):
             ctx.log("解散：没找到「退出队伍」（可能本就不在队），直接关面板收尾。", level="warn")
+            # 留证：关面板前抓一张 team_panel 区域图 + 报 team_quit 最高匹配分，便于事后区分
+            # 「真不在队(分很低)」还是「在队但识别 miss/被挡/阈值太严(分接近阈值)」。失败不影响退队。
+            try:
+                self._diag_dump(ctx, "team_panel", "team_quit", "disband_no_quit")
+            except Exception as e:
+                ctx.log(f"解散：诊断截图保存失败（忽略，继续收尾）：{e}", level="warn")
             self._close_panel(ctx, "team_panel")
             rec["ok"] = True
             rec["done"] = True
