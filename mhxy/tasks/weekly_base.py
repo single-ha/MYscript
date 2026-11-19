@@ -59,6 +59,15 @@ def without_templates(spec, *drop_keys):
     return out
 
 
+def with_templates(spec, *add_rows):
+    """派生一份「追加模板行」的标定 spec，让某个周常多出专属步骤（当前只有海底世界的
+    「选择玩法」向导条目）。与 without_templates 对称，避免为单个任务复制整份 CALIBRATION。
+    追加行不带可选标记 = 必标，缺了 preflight 拦住（该任务确实用得到）。"""
+    out = dict(spec)
+    out["templates"] = list(spec.get("templates", [])) + list(add_rows)
+    return out
+
+
 class WeeklyBaseTask(Task):
     name = "weekly_base"
     title = "周常"
@@ -68,7 +77,7 @@ class WeeklyBaseTask(Task):
     # 本任务用到的模板键（子类可覆盖以删减步骤，如门派闯关去掉 confirm/enter/battle_flag）
     # 「参加」按钮已统一到公共标定 join_button（tasks.shared，task_config 叠加注入同键），这里不再单列。
     _FLAG_KEYS = ["card", "confirm", "enter", "battle_flag", "clock", "claim_task",
-                  "join_button"]
+                  "join_button", "select_play", "gg_next"]
 
     CALIBRATION = {
         "regions": [
@@ -93,6 +102,12 @@ class WeeklyBaseTask(Task):
     # 做成类属性开关而不是子类各自实现：三个周常共用同一份流程代码，只由这个开关决定走不走这一步，
     # 新增周常想加这步就置 True（再在标定向导里把「领取任务」模板标上，它随之成为必标）。
     NEEDS_CLAIM_TASK = False
+
+    # 点完 NPC「参加活动」后，是否还要再走「选择玩法 → 点公共确认」两步（user 2026-11-19：
+    # 海底世界专属）。confirm 模板 = NPC「参加活动」按钮（此前最后一步）；select_play=弹出的
+    # 「选择玩法」界面里要点的那个玩法；确认按钮复用全局共享 gg_next（「任务配置」页「全局
+    # 共享标定」卡里标一次，与抓鬼「确定按钮」同款）。其余周常不走这两步。
+    NEEDS_SELECT_PLAY = False
 
     def __init__(self):
         self.flags = None
@@ -143,11 +158,16 @@ class WeeklyBaseTask(Task):
             p = templates.get(tk)
             if not p or vision.load_template(p) is None:
                 problems.append(f"模板『{tk}』缺失或加载失败 —— 请在标定向导里框选裁图")
-        for sk in ("battle_flag", "clock", "join_button"):
+        shared_keys = ["battle_flag", "clock", "join_button"]
+        if self.NEEDS_SELECT_PLAY:
+            # 海底世界「选择玩法」后要点公共「确认」按钮：复用共享 gg_next（与抓鬼「确定按钮」同款）
+            shared_keys.append("gg_next")
+        for sk in shared_keys:
             p = templates.get(sk)
             if not p or vision.load_template(p) is None:
                 label = {"battle_flag": "战斗界面标志", "clock": "小闹钟(寻路)",
-                         "join_button": "参加按钮"}[sk]
+                         "join_button": "参加按钮",
+                         "gg_next": "确定按钮(海底世界选玩法后点它确认)"}[sk]
                 problems.append(f"『{label}』未标定 —— 请到「任务配置」页「全局共享标定」卡框选（全任务共用）")
 
         if not ctx.hotkeys.get("open_activity"):
@@ -382,6 +402,10 @@ class WeeklyBaseTask(Task):
         # 门派闯关：点完「参加活动」后还要点一下「领取任务」（只在开关打开时走，且不阻断流程）
         if self.NEEDS_CLAIM_TASK:
             self._do_claim_task(ctx, loop, regions, threshold)
+        # 海底世界：点完「参加活动」后弹「选择玩法」界面 → 点玩法 → 点公共「确认」（user 2026-11-19）
+        if self.NEEDS_SELECT_PLAY:
+            if not self._do_select_play(ctx, loop, regions, threshold):
+                return False
         enter_wait = loop.get("enter_wait_sec", 30)
         if not self._wait_task_enter(ctx, loop, regions, threshold, enter_wait):
             ctx.log(f"{enter_wait:.0f}s 内没等到任务迹象（战斗/进入战斗/小闹钟），中止。", level="error")
@@ -402,6 +426,25 @@ class WeeklyBaseTask(Task):
             return True
         ctx.log(f"{wait:.0f}s 内没看到「领取任务」按钮 → 跳过（可能已直接进任务场景）。")
         return False
+
+    def _do_select_play(self, ctx, loop, regions, threshold):
+        """海底世界：点完 NPC「参加活动」后弹「选择玩法」界面 → 点玩法 → 点公共「确认」按钮。
+
+        两步都用 _click_when（等按钮出现就点、超时返回 False）。任一步超时 = 中止整轮并截图存证
+        （和领任务其它步骤同规格——这两步是进任务场景的必经环节，缺了后面等不到任务迹象也是中止）。
+        确认按钮复用全局共享 gg_next（tasks.shared.templates.「确定按钮」，与抓鬼同款），不单独标。
+        """
+        sel_wait = float(loop.get("select_play_sec", 20))
+        if not self._click_when(ctx, "select_play", "选择玩法", regions, threshold, sel_wait):
+            ctx.log(f"等「选择玩法」界面超时（{sel_wait:.0f}s），中止。", level="error")
+            self._abort_capture(ctx, regions)
+            return False
+        ok_wait = float(loop.get("select_play_confirm_sec", 15))
+        if not self._click_when(ctx, "gg_next", "确认", regions, threshold, ok_wait):
+            ctx.log(f"点完「选择玩法」后等公共「确认」按钮超时（{ok_wait:.0f}s），中止。", level="error")
+            self._abort_capture(ctx, regions)
+            return False
+        return True
 
     # ---- 找卡片 → 点「参加」：返回 "join_clicked" / "completed" / "abort_no_card" / "abort_no_join" / "stopped" ----
     def _find_card_once(self, ctx, rec, list_region, loop, regions, threshold):

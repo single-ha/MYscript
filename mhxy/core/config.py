@@ -331,6 +331,8 @@ def _mk_weekly():
             "card_match_threshold": 0.9,   # 找活动卡片的专属阈值：卡片模板若框到多卡公共UI，镜像卡常拿 0.9x 分；
                                            # 真卡(标定原帧)≈0.99 稳过、镜像被挡，此处阈值作运行时兜底
             "npc_dialog_sec": 60,          # 点「参加」后等角色寻路到活动 NPC、弹出「参加活动」按钮的超时
+            "select_play_sec": 20,          # 海底世界专属：点完「参加活动」后等「选择玩法」界面出现的超时
+            "select_play_confirm_sec": 15,  # 海底世界专属：点完玩法后等公共「确认」按钮出现的超时
             "enter_wait_sec": 30,          # 点完「参加活动」后等「任务迹象」(战斗中/进入战斗/小闹钟任一)出现的超时
             "claim_task_sec": 5,           # 点完「参加活动」后再等「领取任务」按钮出现的超时（门派闯关用；
                                            # 其它周常不走这步）。模板本身是必标，缺了 preflight 拒跑；
@@ -362,9 +364,11 @@ def _mk_weekly():
         "templates": {                   # 状态标志模板路径（标定向导裁图写入，tm_ 前缀）
             "card": None,                # 活动列表里本任务那张「活动卡片」（框图标+文字、要独特）
             "confirm": None,             # 寻路到活动 NPC 后对话框里的「参加活动」按钮（每个活动图样文案不同）
+            "select_play": None,         # 海底世界专属：点完「参加活动」后「选择玩法」界面里要点的玩法（其余周常不用、可留空）
             "enter": None,               # 做任务场景里的「进入战斗」按钮（点它发起本场）
             "battle_flag": None,         # 战斗中标识（共享标定注入，此键仅兼容旧配置读取）
-            "clock": None                # 任务栏小闹钟(寻路)（共享标定注入，此键仅兼容旧配置读取）
+            "clock": None,               # 任务栏小闹钟(寻路)（共享标定注入，此键仅兼容旧配置读取）
+            "gg_next": None              # 公共「确定按钮」(海底世界「选择玩法」后点它确认；共享标定注入，此键仅兼容旧配置读取)
         }
     }
 
@@ -1039,7 +1043,7 @@ DEFAULT_CONFIG = {
                 "scratch_passes": 2,            # 刮奖区域来回扫几遍（不够干净就调大）
                 "scratch_line_gap": 10,         # 每行间距(px)：越小刮得越密、越慢
                 "scratch_sample_step": 8,       # 行内采样点间距(px)：越小越密、越慢
-                "scratch_speed": 1.6,           # 刮奖移动速度倍率
+                "scratch_speed": 2.2,           # 刮奖移动速度倍率（2026-11-19 提速：1.6→2.2，见 _migrate_guaguale_speed）
                 "close_tries": 3,               # 收尾最多关几层面板（领奖弹窗/刮奖界面/福利面板）
             },
             "regions": {"scene": None, "scratch_area": None},
@@ -1129,6 +1133,8 @@ def load_config():
     if _migrate_sr_rounds_and_victory(cfg):
         save_config(cfg)
     if _migrate_zhuagui_battle_gap(cfg):
+        save_config(cfg)
+    if _migrate_guaguale_speed(cfg):
         save_config(cfg)
     if _migrate_drop_daily_group_enabled(cfg):
         save_config(cfg)
@@ -1281,6 +1287,24 @@ def _migrate_zhuagui_battle_gap(cfg):
     if val < 100:
         return False
     loop["battle_timeout_sec"] = 10
+    return True
+
+
+def _migrate_guaguale_speed(cfg):
+    """一次性迁移（2026-11-19 刮奖提速 + 轨迹随机化）：scratch_speed 旧默认 1.6 提到 2.2。
+    只动「仍是旧默认值」的配置——用户手动改过的（≠1.6）一律保留。判据走值：load_config 已
+    _deep_merge 默认值，键在不在分辨不出新旧配置。再次加载值已是 2.2，天然一次性。
+    返回是否改动（改动由 load_config 存盘）。"""
+    loop = ((cfg.get("tasks") or {}).get("guaguale", {}) or {}).get("loop")
+    if not isinstance(loop, dict) or not loop:
+        return False
+    try:
+        val = float(loop.get("scratch_speed", 2.2))
+    except (TypeError, ValueError):
+        return False
+    if abs(val - 1.6) > 1e-6:
+        return False
+    loop["scratch_speed"] = 2.2
     return True
 
 

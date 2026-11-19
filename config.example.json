@@ -540,7 +540,7 @@
                 "scratch_passes": 2,
                 "scratch_line_gap": 10,
                 "scratch_sample_step": 8,
-                "scratch_speed": 1.6,
+                "scratch_speed": 2.2,
                 "close_tries": 3
             },
             "regions": {

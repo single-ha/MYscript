@@ -116,6 +116,14 @@ mhxy/
                       但某轮等不到该按钮仍只提示不阻断。另两个周常用 `without_templates()` 从标定 spec 里
                       剥掉该行（必标会被迫去标用不上的图），向导里不会出现该项。⚠ 加模板键必须同时登记进
                       `weekly_base._FLAG_KEYS`——`_load_flags` 只按该列表建字典，漏登记会静默失效。
+                       ★ 海底世界多两步「选择玩法→确认」（user 2026-11-19）：点完 NPC「参加活动」后弹「选择玩法」
+                       界面，先点玩法、再点公共「确定按钮」(gg_next)确认才进场景；由类属性 `NEEDS_SELECT_PLAY`
+                       （只有 underwater 置 True）＋**必标**模板 `select_play` 驱动，任一步超时=中止截图存证
+                       （与领任务其它步骤同规格，这两步是进场景必经）。确认按钮**复用全局共享 gg_next**
+                       （「任务配置」页「全局共享标定」卡的「确定按钮」，与抓鬼同款，不另标）；preflight
+                       在本任务开启时也校验它。海底世界 CALIBRATION 用 `with_templates()`（without 的对称）
+                       从共用 spec 追加 select_play 行（必标），另两个周常不受影响；超时键
+                       `select_play_sec`/`select_play_confirm_sec`（默认 20/15s）。
     dungeon.py       DungeonTask（组队/一键组队）：把所选多开窗口组成一队即停（通用页「一键组队」跑它，
                       角色参数存共享 tasks.teaming）。name 仍叫 "dungeon" 仅为兼容；刷副本页跑的是选中副本而非它。
     disband.py       DisbandTask（解散队伍/一键解散）：让所选各号都退出当前队伍（每号同一套流程，不分队长队员），
@@ -282,6 +290,13 @@ mhxy/
   主循环指定唯一持有者、`_drive_chain_until_yield(blocking=True)` 把它从头做完整再放行，排队的号跳过等待
   （不做跨号轮转）；窗口失效的号不占持有权（不会饿死别号）。任务单独跑（独立页/多开轮转）不受影响。
   多人步只走集体 `_run_collective`，不建独立链。
+  **刮刮乐刮奖手势的随机性/速度（user 2026-11-19）**：刮动不用严格直线 `Mouse.line_to`，改用专用
+  `Mouse.scratch_to`——每段固定一个垂直方向的正弦小弧线（两端归零、中段最大，摆幅 `wobble`≤0.9px）+
+  沿程 ±0.35px 微抖，每次调用重新随机；`GuagualeTask._row_points` 再叠加「行中心 y ±1.5px 整行抖动 +
+  两端 1~3px 随机内缩」，两层幅度都远小于行间距(10px)，不破坏区域覆盖。每行速度倍率独立随机
+  （基准 `scratch_speed` × 0.85~1.3）、行间距 sleep 0.03~0.08s 随机；默认 `scratch_speed` 1.6→2.2、
+  按住步长 5→7px 提速（空走仍 `line_to` step_px=24）。老配置的旧默认值由一次性迁移
+  `_migrate_guaguale_speed`（值==1.6 才改，手改值保留）压到 2.2。
   **「登录游戏」不在链里（user 拍板 2026-09-29）**：它自己起客户端（没有「已开好的号」可跑），
   故不在 daily.steps/GROUP_OF/SINGLE_TASK_ORDER，入口只有「日常」页顶部可折叠登录区——
   点「账号库」弹窗（`ui/account_gallery.py`，仿队长ID 库；数据/槽文件在 `core/account_history.py`）：

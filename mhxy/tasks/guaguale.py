@@ -155,7 +155,7 @@ class GuagualeTask(Task):
                 "regions": regions,
                 "area": area, "n_rows": n_rows,
                 "step": max(3, int(loop.get("scratch_sample_step", 8))),
-                "speed": max(0.5, float(loop.get("scratch_speed", 1.6))),
+                "speed": max(0.5, float(loop.get("scratch_speed", 2.2))),
                 "passes": max(1, int(loop.get("scratch_passes", 2))),
                 "close_tries": max(1, int(loop.get("close_tries", 3))),
                 "line": 0, "pass_no": 0,
@@ -262,12 +262,13 @@ class GuagualeTask(Task):
         self._goto(rec, S_SCRATCH)
 
     def _do_scratch_line(self, ctx, rec):
-        """刮奖：每次推进**一行**（按住→沿该行逐点直线移动→松开），行间可被停止打断。
+        """刮奖：每次推进**一行**（按住→沿该行逐点移动→松开），行间可被停止打断。
 
         区域坐标：标定存的是窗口内坐标，这里先换成屏幕绝对坐标（★2026-10-27 修：此前直接
         把窗口内坐标当屏幕坐标用，刮的位置整体偏到窗口左上角外面去了）。
-        移动一律用 mouse.line_to（严格直线、无随机落点/横向抖动）——glide 的 ±1.2px 抖动
-        会让笔画上下飘，刮不干净边角。
+        移动用 mouse.scratch_to（user 2026-11-19：要随机、别死板直线）——每段带固定方向的
+        正弦小弧线 + 沿程微抖，配合 _row_points 的行间 y 抖动/端点随机，每一遍路径都不一样；
+        摆幅远小于行间距，不会飘出本行、刮不干净边角。空走（没按住）仍用 line_to 大步长直达。
 
         Z 字来回（每行方向 = (行号 + 遍数) % 2），逐遍填满整块刮奖区域；
         行间用普通 sleep 而非 _interruptible_sleep——那会跑弹窗守卫，可能把刮奖界面上
@@ -294,7 +295,8 @@ class GuagualeTask(Task):
         pts = self._row_points(area, rec["line"], rec["n_rows"], rec["step"],
                                reverse=((rec["line"] + rec["pass_no"]) % 2 == 1))
         mouse = ctx.mouse
-        speed = rec["speed"] * random.uniform(0.9, 1.2)
+        # 每一行的速度倍率独立随机、区间放宽：行间快慢有别，不像匀速机器（基准 scratch_speed）
+        speed = rec["speed"] * random.uniform(0.85, 1.3)
         # 空走（没按住）用大步长：这段不需要刮到东西，跨半块区域只花 0.2s 左右
         mouse.line_to(pts[0][0], pts[0][1], speed=speed, step_px=24)
         mouse.hold()
@@ -302,11 +304,13 @@ class GuagualeTask(Task):
             for px, py in pts[1:]:
                 if ctx.should_stop():
                     break
-                mouse.line_to(px, py, speed=speed)   # 按住时 5px 一小步，严格贴该行
+                # 按住时 7px 一小步（原 5px）+ 正弦微摆弧线，比旧直线更快一点且每次轨迹不同
+                mouse.scratch_to(px, py, speed=speed)
         finally:
             mouse.release()
         rec["line"] += 1
-        time.sleep(self._jitter(0.05, ctx))   # 行间短暂抬笔（拟人；不跑弹窗守卫）
+        # 行间抬笔时长也带随机（0.03~0.08s），不跑弹窗守卫
+        time.sleep(random.uniform(0.03, 0.08))
 
     def _do_festival(self, ctx, rec):
         """等「节日奖励」按钮：三张可选模板没标齐 → 整段跳过；超时没出现 = 今天没得领 → 直接收尾。"""
@@ -463,10 +467,16 @@ class GuagualeTask(Task):
 
     @staticmethod
     def _row_points(area, row, n_rows, step, reverse=False):
-        """刮奖区域第 row 行的采样点（屏幕绝对坐标）：略微内缩 2px，避免扫出区域外。"""
+        """刮奖区域第 row 行的采样点（屏幕绝对坐标）。
+
+        带两层随机（user 2026-11-19：刮奖鼠标移动要随机、别是死板直线）：
+        ① 行中心 y 每次 ±1.5px 抖动（固定给整行，不是逐点白噪声）——同一行两次刮的路径不重合；
+        ② 两端内缩 1~3px 随机——起止点不再次次贴同一位置。
+        幅度都远小于行间距(10px)，不会飘出本行、不破坏区域覆盖；区域边界仍保证内缩、不刮出框外。"""
         x, y, w, h = area
-        cy = int(round(y + h * (row + 0.5) / n_rows))
-        x0, x1 = x + 2, x + max(4, w - 2)
+        cy = int(round(y + h * (row + 0.5) / n_rows + random.uniform(-1.5, 1.5)))
+        x0 = x + random.randint(1, 3)
+        x1 = x + max(x0 + 2, w - random.randint(1, 3))
         xs = list(range(x0, x1 + 1, max(1, int(step))))
         if xs[-1] < x1:
             xs.append(x1)

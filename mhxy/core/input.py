@@ -273,6 +273,35 @@ class Mouse:
             time.sleep(random.uniform(0.0025, 0.006) / spd)
         return x, y
 
+    def scratch_to(self, x, y, speed=None, step_px=7, wobble=0.9):
+        """按住刮奖时用的**带轻微随机摆动**的移动：整体沿当前点→(x,y) 的连线走，但每个采样点
+        沿垂直方向加一点小偏移（user 2026-11-19：刮奖鼠标移动要带随机性，别是死板直线）。
+
+        与 glide 的区别：glide 的 ±1.2px 抖动是逐子步独立白噪声，笔画会「上下抽搐」、边缘容易
+        飘出刮奖区；这里的摆动是**本次移动固定一个垂直方向 + 正弦包络**（两端归零、中段最大），
+        叠加沿程微抖，走出来是一条平滑小弧线而不是直线，且每调用一次重新随机 → 各行各段都不一样。
+        wobble=垂直摆幅上限(px)；行带本身已有 ±1.5px 的行间随机（见 GuagualeTask._row_points），
+        两层加起来仍远小于行间距(10px)，不会飘出本行、不破坏区域覆盖。
+        step_px 默认 7（line_to 是 5）：采样更稀、整体更快一点（用户要求稍微提速）。"""
+        sx, sy = get_cursor()
+        spd = self._speed(speed)
+        dx, dy = x - sx, y - sy
+        dist = math.hypot(dx, dy)
+        n = max(1, min(120, int(dist / max(0.5, float(step_px)))))
+        # 本次移动固定的垂直方向与幅度（正弦包络，首尾回到连线上）
+        nx, ny = (-dy / dist, dx / dist) if dist > 0 else (0.0, 0.0)
+        amp = random.uniform(0.35, 1.0) * float(wobble)
+        sign = random.choice((-1.0, 1.0))
+        for i in range(1, n + 1):
+            t = i / n
+            bend = math.sin(math.pi * t) * amp * sign
+            jx = random.uniform(-0.35, 0.35)
+            jy = random.uniform(-0.35, 0.35)
+            self._move(sx + dx * t + nx * bend + jx,
+                       sy + dy * t + ny * bend + jy)
+            time.sleep(random.uniform(0.002, 0.0055) / spd)
+        return x, y
+
     def click(self, x, y, speed=None):
         """拟人化移动并点击。speed 非空时整段按该倍率提速（命中下单的极速直击）；
         不传时用默认 CLICK_MOVE_SPEED（点击默认走快点，user 拍板 2026-10-20）。"""
