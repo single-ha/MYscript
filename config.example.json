@@ -537,7 +537,6 @@
                 "festival_wait_sec": 4,
                 "claim_wait_sec": 6,
                 "reward_icon_wait_sec": 6,
-                "scratch_passes": 2,
                 "scratch_line_gap": 10,
                 "scratch_sample_step": 8,
                 "scratch_speed": 2.2,

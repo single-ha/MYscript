@@ -5,8 +5,11 @@
 流程（每个所选窗口各刮一遍即完成今日刮刮乐）：
   先确认当前号在主界面（不在就用 ui_state.back_to_main_screen 逐层 Esc/右键带回主界面，
   最多 loop.ready_max 轮；判不了主界面时照旧开跑，别把没标的配置卡死）→
-  主界面点「福利」按钮 → 点「打开刮刮乐」按钮 → 在标定的「刮奖区域」里按住鼠标 Z 字
-  逐行来回扫、填满整块区域（loop.scratch_passes 遍） →
+  主界面点「福利」按钮 → 点「打开刮刮乐」按钮 → 在标定的「刮奖区域」里**一笔连贯斜蛇形**
+  逐段扫（按住一次不抬笔，方向逐段交替：左→右、右→左、左→右……，纵向下沉均摊在每次横向扫动里、
+  到边立即反向、没有独立的竖直下移段），整块区域**只刮一遍**即完成
+  （user 2026-11-20 拍板：不再刮完后从上到下再刮第二遍，折角也不要先向下挪再反向），
+  所有鼠标落点都硬钳在标定区域内、绝不刮出框外 →
   有「节日奖励」按钮（今天有得领）就点它 → 等「领取节日奖励」按钮出现再点 → 等领奖弹窗
   里的「奖励」图标出现再点（点了才真领奖）→ 等游戏弹出的「使用」按钮出现并点它
   （走公共共享模板 flag_next_map，「任务配置」页「全局共享标定」卡里标，宝图同款通用；
@@ -16,9 +19,11 @@
 没有「节日奖励」按钮（今天没有/已领过）→ 直接进收尾。
 
 实现：非阻塞轮转状态机（每号一份 record，_step_once 只推一小步），run() 逐号把状态机一直
-推到 done；make_chain_driver() 把同一套状态机交给「日常·多开每窗口独立链」。刮奖拆成
-「一行一步」，行与行之间可被停止打断。
-刮奖是几秒的长连续动作，频繁切前台反而低效，故 CHAIN_SEQUENTIAL=True（日常多开时逐号做完）。
+推到 done；make_chain_driver() 把同一套状态机交给「日常·多开每窗口独立链」。其中刮奖这一步
+（S_SCRATCH）在一次调用内**按住一笔连贯蛇形刮完整块区域、只刮一遍**——逐点移动间仍频繁查
+should_stop()，可随时停；其余状态步仍是「一步一小动作」的非阻塞推进。
+刮奖是几秒的长连续动作，频繁切前台反而低效，故 CHAIN_SEQUENTIAL=True（日常多开时逐号做完；
+日常链对它走 blocking 连推，这一步内不再回主循环，避免行间触发弹窗守卫/切台把笔抬起）。
 
 标定：`scratch_area`「刮奖区域」是唯一必标区域（scene 留空=整窗当识别区）；`welfare`「福利」
 按钮、`open_scratch`「打开刮刮乐」按钮两张模板必标；节日奖励三张模板
@@ -40,7 +45,7 @@ _NS = "guaguale"
 S_READY = "READY"                # 开刮前先确认在主界面（不在就逐层 Esc/右键兜底回来）
 S_WELFARE = "WELFARE"            # 主界面找「福利」按钮并点
 S_OPEN = "OPEN"                  # 等并点「打开刮刮乐」按钮
-S_SCRATCH = "SCRATCH"            # 在刮奖区域 Z 字逐行扫（rec["line"]/["pass_no"] 推进）
+S_SCRATCH = "SCRATCH"            # 一次调用内按住一笔连贯斜蛇形刮完整块区域、只刮一遍（折角立即反向、无竖直段）
 S_FESTIVAL = "FESTIVAL"          # 等「节日奖励」按钮（可选；超时=直接收尾）
 S_CLAIM_WAIT = "CLAIM_WAIT"      # 点完节日奖励，等「领取节日奖励」按钮出现
 S_CLAIM = "CLAIM"                # 点「领取节日奖励」
@@ -156,9 +161,7 @@ class GuagualeTask(Task):
                 "area": area, "n_rows": n_rows,
                 "step": max(3, int(loop.get("scratch_sample_step", 8))),
                 "speed": max(0.5, float(loop.get("scratch_speed", 2.2))),
-                "passes": max(1, int(loop.get("scratch_passes", 2))),
                 "close_tries": max(1, int(loop.get("close_tries", 3))),
-                "line": 0, "pass_no": 0,
                 "festival_ok": all(wctx.task_cfg(_NS).get("templates", {}).get(k)
                                    for k in _FESTIVAL_TPL),
                 "done": False}
@@ -178,7 +181,7 @@ class GuagualeTask(Task):
         elif st == S_OPEN:
             self._do_open(ctx, rec)
         elif st == S_SCRATCH:
-            self._do_scratch_line(ctx, rec)
+            self._do_scratch(ctx, rec)
         elif st == S_FESTIVAL:
             self._do_festival(ctx, rec)
         elif st == S_CLAIM_WAIT:
@@ -257,22 +260,30 @@ class GuagualeTask(Task):
         self.click_after_hit(ctx, hit[0], hit[1])
         ctx.log(f"点「打开刮刮乐」（{hit[2]:.3f}），开始刮奖…", level="hit")
         self._interruptible_sleep(ctx, self._jitter(1.0, ctx))
-        rec["line"] = 0
-        rec["pass_no"] = 0
         self._goto(rec, S_SCRATCH)
 
-    def _do_scratch_line(self, ctx, rec):
-        """刮奖：每次推进**一行**（按住→沿该行逐点移动→松开），行间可被停止打断。
+    def _do_scratch(self, ctx, rec):
+        """刮奖（user 2026-11-20 拍板）：**一次调用内按住一笔连贯蛇形刮完整块区域、只刮一遍**。
 
-        区域坐标：标定存的是窗口内坐标，这里先换成屏幕绝对坐标（★2026-10-27 修：此前直接
-        把窗口内坐标当屏幕坐标用，刮的位置整体偏到窗口左上角外面去了）。
-        移动用 mouse.scratch_to（user 2026-11-19：要随机、别死板直线）——每段带固定方向的
-        正弦小弧线 + 沿程微抖，配合 _row_points 的行间 y 抖动/端点随机，每一遍路径都不一样；
-        摆幅远小于行间距，不会飘出本行、刮不干净边角。空走（没按住）仍用 line_to 大步长直达。
+        与旧实现的区别：旧版每行「空走→按住→松开」、整块还按 scratch_passes 反复扫多遍；新版全程
+        只 hold() 一次、release() 一次，行与行之间不抬笔——上一行的终点直接 scratch_to 到下一行
+        （蛇形相邻行的端点正好在同一侧），形成一笔连贯的 S 形；行数走完即结束，绝不再从头刮第二遍。
 
-        Z 字来回（每行方向 = (行号 + 遍数) % 2），逐遍填满整块刮奖区域；
-        行间用普通 sleep 而非 _interruptible_sleep——那会跑弹窗守卫，可能把刮奖界面上
-        同款样式的「×」误当弹窗点掉、中途把界面关了（同拓印挂起守卫的理由，这里直接不调）。
+        区域坐标：标定存的是窗口内坐标，这里先换成屏幕绝对坐标（★2026-10-27 修：此前直接把窗口内
+        坐标当屏幕坐标用，刮的位置整体偏到窗口左上角外面去了）。
+        移动用 mouse.scratch_to（user 2026-11-19：要随机、别死板直线）——每段带固定方向的正弦小弧线
+        + 沿程微抖，配合 _serpentine_points 的连续斜蛇形采样，每次路径都不一样；摆幅远小于行间距，
+        不会飘出本行、刮不干净边角。
+        ★ 折角无竖直段（user 2026-11-20 两轮反馈：到边后不要先向下移一段再反向，要立刻向反方向走）：
+        _serpentine_points 把纵向下沉均摊到每次横向扫动里（每半程只平缓下沉一个行间距、水平跨整块宽，
+        斜率极小），折角端点去重、x 立即反向，整条路径没有任何「x 不变只变 y」的纯竖直段；整笔恒定
+        速度（不在折角重新随机变速），沿点列统一节奏按住连续走，走出从上到下、左右来回的连续斜蛇形。
+        ★ 蛇形走线：半程方向逐次交替——第 1 段左→右、第 2 段右→左、第 3 段左→右……（k%2）。
+        ★ 硬边界（user 2026-11-19）：line_to/scratch_to 都传 bounds=本屏刮奖区，无论正弦摆动、随机
+        抖动还是斜向移动，任何落点都被钳在标定区域内、绝不刮出框外。
+        ★ 可停：逐点移动间都查 ctx.should_stop()，急停会在 finally 里 release() 后退出。
+        全程不调 _interruptible_sleep——那会跑弹窗守卫，可能把刮奖界面上同款样式的「×」误当弹窗
+        点掉、中途把界面关了（同拓印挂起守卫的理由）。
         """
         area_rel = rec["area"]
         if not area_rel or rec["n_rows"] <= 0:
@@ -284,33 +295,37 @@ class GuagualeTask(Task):
             ctx.log("取不到窗口位置（窗口可能已关），刮奖跳过该号。", level="error")
             rec["done"] = True
             return
-        if rec["pass_no"] >= rec["passes"]:
-            ctx.log(f"刮奖完成（扫了 {rec['pass_no']} 遍区域）。", level="hit")
-            self._goto(rec, S_FESTIVAL)
+        n_rows = rec["n_rows"]
+        # 一次性生成整块区域的【连续斜蛇形】点列：纵向下沉均摊到每次横向扫动，折角无纯竖直段、
+        # 到边 x 立即反向（user 2026-11-20：不要到边后先向下挪再反向）。
+        path = self._serpentine_points(area, n_rows, rec["step"])
+        if len(path) < 2:
+            ctx.log("刮奖区域过小（采样点不足），跳过该号。", level="error")
+            rec["done"] = True
             return
-        if rec["line"] >= rec["n_rows"]:
-            rec["pass_no"] += 1
-            rec["line"] = 0
-            return
-        pts = self._row_points(area, rec["line"], rec["n_rows"], rec["step"],
-                               reverse=((rec["line"] + rec["pass_no"]) % 2 == 1))
         mouse = ctx.mouse
-        # 每一行的速度倍率独立随机、区间放宽：行间快慢有别，不像匀速机器（基准 scratch_speed）
+        ctx.log(f"开始刮奖：一笔连贯斜蛇形刮 {n_rows} 段、只刮一遍（共 {len(path)} 个落点，全程不出框）。",
+                level="hit")
+        # 整笔用同一个速度倍率：折角处不再重新随机变速，避免「走到边缘顿一下再反向」。
         speed = rec["speed"] * random.uniform(0.85, 1.3)
-        # 空走（没按住）用大步长：这段不需要刮到东西，跨半块区域只花 0.2s 左右
-        mouse.line_to(pts[0][0], pts[0][1], speed=speed, step_px=24)
+        # 空走到第一行起点（没按住，用大步长直达），同样钳在刮奖区内。
+        mouse.line_to(path[0][0], path[0][1], speed=speed, step_px=24, bounds=area)
+        # 全程只按住一次：沿折线点列连续走（行内水平段 + 行间竖直折角都在内），不抬笔、不停顿，走完才松开。
         mouse.hold()
         try:
-            for px, py in pts[1:]:
+            for px, py in path[1:]:
                 if ctx.should_stop():
                     break
-                # 按住时 7px 一小步（原 5px）+ 正弦微摆弧线，比旧直线更快一点且每次轨迹不同
-                mouse.scratch_to(px, py, speed=speed)
+                # 按住时 7px 一小步 + 正弦微摆弧线；bounds=area 保证摆幅/抖动后的实际落点也不出框。
+                mouse.scratch_to(px, py, speed=speed, bounds=area)
         finally:
             mouse.release()
-        rec["line"] += 1
-        # 行间抬笔时长也带随机（0.03~0.08s），不跑弹窗守卫
-        time.sleep(random.uniform(0.03, 0.08))
+        if ctx.should_stop():
+            ctx.log("刮奖途中收到停止，已松开鼠标、结束该号。", level="warn")
+            rec["done"] = True
+            return
+        ctx.log("刮奖完成（整块区域一笔连贯蛇形折线、只刮了一遍）。", level="hit")
+        self._goto(rec, S_FESTIVAL)
 
     def _do_festival(self, ctx, rec):
         """等「节日奖励」按钮：三张可选模板没标齐 → 整段跳过；超时没出现 = 今天没得领 → 直接收尾。"""
@@ -466,20 +481,49 @@ class GuagualeTask(Task):
         return (scene_rect[0] + m[0], scene_rect[1] + m[1], m[2])
 
     @staticmethod
-    def _row_points(area, row, n_rows, step, reverse=False):
-        """刮奖区域第 row 行的采样点（屏幕绝对坐标）。
+    def _serpentine_points(area, n_rows, step):
+        """整块刮奖区域的【连续斜蛇形】一笔采样点（屏幕绝对坐标），按实际移动顺序返回扁平点列。
 
-        带两层随机（user 2026-11-19：刮奖鼠标移动要随机、别是死板直线）：
-        ① 行中心 y 每次 ±1.5px 抖动（固定给整行，不是逐点白噪声）——同一行两次刮的路径不重合；
-        ② 两端内缩 1~3px 随机——起止点不再次次贴同一位置。
-        幅度都远小于行间距(10px)，不会飘出本行、不破坏区域覆盖；区域边界仍保证内缩、不刮出框外。"""
+        user 2026-11-20（两轮反馈后的最终形态）：
+          · 不要折角处的【独立竖直下移段】——上一版到右边缘后先垂直挪到下一行、再向左，看起来像
+            「先向下移一段再向左」。本版把整列下沉**均摊到每次横向扫动里**：每个左→右 / 右→左半程
+            只平缓下沉一个行间距，而水平跨整块宽 → 斜率极小（观感几乎是横移），到边后 x 立刻反向，
+            整条路径里没有任何「x 不变、只变 y」的竖直段。
+          · 左右转折列对整笔只随机一次、所有半程共享；相邻半程在边缘的端点数学上是同一个点（去重），
+            不会左右微调、也不会顿挫。
+          · 半程方向逐次交替（左→右、右→左……），共 n_rows 个半程从上到下连续刮完、只刮一遍。
+          · 随机性：左/右列各内缩 1~3px（整笔一次）+ mouse.scratch_to 的正弦弧线与沿程微抖；为保证
+            折角同点、不产生竖直碎段，y 走确定性线性插值（不再逐行白噪声抖动）。纵向往复也内缩 1px，
+            叠加 bounds 硬钳制，任何落点都不出标定框。"""
         x, y, w, h = area
-        cy = int(round(y + h * (row + 0.5) / n_rows + random.uniform(-1.5, 1.5)))
-        x0 = x + random.randint(1, 3)
-        x1 = x + max(x0 + 2, w - random.randint(1, 3))
-        xs = list(range(x0, x1 + 1, max(1, int(step))))
-        if xs[-1] < x1:
-            xs.append(x1)
-        if reverse:
-            xs.reverse()
-        return [(px, cy) for px in xs]
+        # 左右转折列都用【相对区域左边的内缩量】再转绝对坐标——旧版误把相对宽度 w-inset 与绝对
+        # x_left 直接 max，真实屏幕坐标下会把 x_right 算到约 2x、整列越界（靠 clamp 堆在右边缘）。
+        inset_l = random.randint(1, 3)
+        inset_r = random.randint(1, 3)
+        x_left = x + inset_l                                      # 整笔共享的左转折列（绝对）
+        x_right = x + w - inset_r                                 # 整笔共享的右转折列（绝对）
+        if x_right - x_left < 2:                                  # 极窄区域保底：至少留 2px 宽
+            x_right = min(x + w - 1, x_left + 2)
+        xs = list(range(x_left, x_right + 1, max(1, int(step))))
+        if xs[-1] < x_right:
+            xs.append(x_right)
+        # 纵向行程上下各内缩 1px；高度不足时退化到中线，避免除零/贴边。
+        y_lo, y_hi = y + 1, y + h - 1
+        if y_hi <= y_lo:
+            y_lo = y_hi = y + h // 2
+        row_gap = (y_hi - y_lo) / max(1, n_rows)
+        path = []
+        for k in range(max(1, n_rows)):
+            ya = int(round(y_lo + k * row_gap))                   # 本半程起 y
+            yb = int(round(y_lo + (k + 1) * row_gap))             # 本半程止 y（下沉一个行间距）
+            half_xs = xs if k % 2 == 0 else list(reversed(xs))   # 半程方向逐次交替
+            m = len(half_xs)
+            for i, px in enumerate(half_xs):
+                t = 0.0 if m == 1 else i / (m - 1)
+                py = int(round(ya + (yb - ya) * t))               # 下沉均摊到每个横向采样点
+                if path and path[-1] == (px, py):
+                    # 折角端点与上一半程共享：去重 → 到边后 x 立即反向，杜绝零长度/纯竖直碎段。
+                    continue
+                path.append((px, py))
+        return path
+

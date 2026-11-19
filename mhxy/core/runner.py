@@ -12,6 +12,7 @@ import queue
 import threading
 
 from .context import TaskContext
+from . import recorder
 
 # 互斥拒绝时的 GUI 通知回调：由 GUI 注册（App.__init__），起始失败被全局唯一锁拒绝时回调，
 # 用于弹醒目 toast。None=未注册。调用方只在自己（GUI 线程）调用 start() 时才可能拒绝，
@@ -101,11 +102,14 @@ class TaskRunner:
             self._ACTIVE.append(self)
 
         def _wrap():
+            # 一次「运行」的录屏归组：任务单跑/日常任务链都从这里进，begin/end 包出一个 run_时间戳 文件夹。
+            recorder.begin_run(self.cfg)
             try:
                 self.task.run(ctx)
             except Exception as e:  # 任务里任何异常都不该让线程静默死掉
                 self._log(f"任务异常：{e}", "error")
             finally:
+                recorder.end_run()
                 with self._LOCK:
                     try:
                         self._ACTIVE.remove(self)

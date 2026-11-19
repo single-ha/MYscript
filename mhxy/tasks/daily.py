@@ -43,6 +43,7 @@ import time
 from .base import (Task, register, get_task, dungeon_tasks, dungeon_display_names,
                    enter_target_for)
 from .dungeon_base import DUNGEON_NS
+from ..core import recorder
 from ..core.config import SINGLE_TASK_ORDER
 from ..core import window as win_mod
 from ..core.teaming import TeamFormation
@@ -228,6 +229,10 @@ class DailyTask(Task):
     # 本任务没有自己的标定（全部沿用各子任务）；calibrate_dialog 据此不渲染任何标定项。
     CALIBRATION = {"regions": [], "templates": [], "watchlist": False}
 
+    # 编排器自身不录屏：日常整龙由 TaskRunner 开了一个 run 文件夹，但录屏按【子任务】各录一个，
+    # 不能再给本编排器录一个把整条龙包进去的大文件（其内部子任务/集体步会各自 acquire/release）。
+    RECORD_RUN = False
+
     # ------------------------------------------------------------------
     def preflight(self, ctx):
         problems = []
@@ -390,7 +395,8 @@ class DailyTask(Task):
         return {"wctx": wctx, "idx": 0, "sub_rec": None, "sub_step": None,
                 "sub_seq": False, "seq_wait_logged": False,
                 "cur_title": None, "done": False,
-                "gone_warned": False, "fg_warned": False, "park_logged": False}
+                "gone_warned": False, "fg_warned": False, "park_logged": False,
+                "sub_record": False, "rec_name": None}
 
     @staticmethod
     def _at_barrier(c, steps):
@@ -457,6 +463,14 @@ class DailyTask(Task):
 
     @staticmethod
     def _end_step(c):
+        # 录屏收尾：与 _begin_step 的 acquire 配对（计数归零才真正停录落盘）。异常/跳过也会走到这里。
+        if c.get("sub_record") and c.get("rec_name"):
+            try:
+                recorder.release(c["rec_name"])
+            except Exception:
+                pass
+        c["sub_record"] = False
+        c["rec_name"] = None
         c["sub_rec"] = None
         c["sub_step"] = None
         c["sub_seq"] = False
@@ -547,6 +561,15 @@ class DailyTask(Task):
         rec, step_fn = task.make_chain_driver(wctx)
         c["sub_rec"], c["sub_step"] = rec, step_fn
         self._any_real_run = True        # 真正开跑了（非演练）
+        # 录屏（record_screen 开）：链任务绕过 task.run()，在这里按任务名 acquire；多窗口做同一
+        # 子任务时注册表引用计数去重，只录一路。release 统一在 _end_step（done/异常/跳过都汇聚于此）。
+        c["rec_name"] = task.name if getattr(task, "RECORD_RUN", True) else None
+        if c["rec_name"]:
+            try:
+                c["sub_record"] = recorder.acquire(wctx.cfg, task.name, title)
+            except Exception as e:
+                wctx.log(f"录屏启动异常（已忽略，继续任务）：{e}", level="warn")
+                c["sub_record"] = False
         wctx.log(f"───── 开始「{title}」 ─────", level="hit")
         return "ready"
 

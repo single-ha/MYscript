@@ -27,6 +27,7 @@ CONFIG_PATH = DATA_ROOT / "config.json"
 TEMPLATES_DIR = DATA_ROOT / "templates"
 CAPTURES_DIR = DATA_ROOT / "captures"
 CAPTURES_DEBUG_DIR = DATA_ROOT / "captures_debug"
+RECORDINGS_DIR = DATA_ROOT / "recordings"
 LOGS_DIR = DATA_ROOT / "logs"
 
 # 跨任务【共用】的区域键（见 tasks.shared.regions）：在任意任务页标定一次全任务通用。
@@ -408,6 +409,11 @@ DEFAULT_CONFIG = {
                                          #   top_right/top_left/bottom_right/bottom_left/off(关闭)。设置里可改。
     "appearance": "dark",                # 界面外观：dark(夜间) / light(白天)，侧栏可切换
     "debug_log": False,                  # 调试日志开关：开启后 level="debug" 的日志才进全局面板（设置页可勾）
+    "record_screen": False,              # 录屏开关（类似调试日志，设置页可勾）：开启后每个任务自动录整个虚拟屏，
+                                         #   每次「运行」（任务单跑 / 日常任务链）归一个 run_时间戳 文件夹、每任务一个视频，
+                                         #   只保留最近 record_keep_runs 次运行（见 core/recorder）。关时零线程零抓帧。
+    "record_fps": 5,                     # 录屏帧率：屏幕录像对帧率不敏感，5fps 已够排查流程且文件小（user 2026-11-19 拍板）
+    "record_keep_runs": 3,               # 录屏自动清理：recordings/ 下只保留最近这么多次「运行」的文件夹，更早的整轮删除
     "log_to_file": True,                 # 日志同步落盘：每条日志写入 logs/日志-YYYYMMDD_HHMMSS.log（每次启动一个）并 flush，崩溃/强杀不丢
     "log_keep_files": 20,                # 自动清理：logs/ 里只保留最近 N 个日志文件（按启动时间），0/负数=不清理（设置页可调）
     "grab_auto_activate": True,          # 任务识别抓图前若窗口不在前台先激活再抓（用户拍板 2026-09-26）：
@@ -1040,7 +1046,6 @@ DEFAULT_CONFIG = {
                 "claim_wait_sec": 6,            # 点完节日奖励后等「领取节日奖励」按钮出现多久
                 "reward_icon_wait_sec": 6,      # 等领奖弹窗里的「奖励」图标出现多久
                 "use_wait_sec": 6,              # 点完「奖励」图标后等游戏弹「使用」按钮多久（超时=没弹，直接收尾）
-                "scratch_passes": 2,            # 刮奖区域来回扫几遍（不够干净就调大）
                 "scratch_line_gap": 10,         # 每行间距(px)：越小刮得越密、越慢
                 "scratch_sample_step": 8,       # 行内采样点间距(px)：越小越密、越慢
                 "scratch_speed": 2.2,           # 刮奖移动速度倍率（2026-11-19 提速：1.6→2.2，见 _migrate_guaguale_speed）
@@ -1135,6 +1140,8 @@ def load_config():
     if _migrate_zhuagui_battle_gap(cfg):
         save_config(cfg)
     if _migrate_guaguale_speed(cfg):
+        save_config(cfg)
+    if _migrate_drop_guaguale_passes(cfg):
         save_config(cfg)
     if _migrate_drop_daily_group_enabled(cfg):
         save_config(cfg)
@@ -1305,6 +1312,20 @@ def _migrate_guaguale_speed(cfg):
     if abs(val - 1.6) > 1e-6:
         return False
     loop["scratch_speed"] = 2.2
+    return True
+
+
+def _migrate_drop_guaguale_passes(cfg):
+    """一次性迁移（2026-11-20 刮奖改为一笔连贯蛇形、只刮一遍）：删除 tasks.guaguale.loop.scratch_passes。
+
+    旧版刮奖按该值整块区域反复扫多遍（默认 2），且每行都抬笔空走、再按住。新版改为全程只按住一次、
+    蛇形连贯刮完整块区域、只刮一遍，遍数概念已不存在，UI 上的「刮奖遍数」入口也一并移除。旧 config
+    （含真实 config.json）里仍存着 scratch_passes，已无任何代码读取，保留只会让配置含义混乱，故直接
+    删除。一次性：删掉后再次加载不再触发。"""
+    loop = ((cfg.get("tasks") or {}).get("guaguale", {}) or {}).get("loop")
+    if not isinstance(loop, dict) or "scratch_passes" not in loop:
+        return False
+    loop.pop("scratch_passes", None)
     return True
 
 

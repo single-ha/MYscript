@@ -162,6 +162,21 @@ def _bezier(p0, p1, p2, p3, t):
     return x, y
 
 
+def _clamp_bounds(x, y, bounds, margin=1):
+    """把 (x,y) 硬钳制在 bounds=[left,top,w,h] 矩形内（含 margin 像素安全内缩）。
+
+    刮奖专用：无论正弦摆幅/随机抖动/空走直线怎么算，最终落点绝不超出标定的刮奖区域
+    （user 2026-11-19：鼠标移动不能飘出标定刮奖区）。bounds 为 None/非法时原样返回。"""
+    if not bounds or len(bounds) < 4:
+        return x, y
+    left, top, w, h = bounds
+    if w <= 2 * margin or h <= 2 * margin:
+        return x, y
+    lo_x, hi_x = left + margin, left + w - margin
+    lo_y, hi_y = top + margin, top + h - margin
+    return (min(hi_x, max(lo_x, x)), min(hi_y, max(lo_y, y)))
+
+
 class Mouse:
     """拟人化鼠标。backend: sendinput(默认) / pyautogui / pydirectinput。"""
 
@@ -254,37 +269,46 @@ class Mouse:
             time.sleep(random.uniform(0.003, 0.009) / spd)
         return tx, ty
 
-    def line_to(self, x, y, speed=None, step_px=5):
+    def line_to(self, x, y, speed=None, step_px=5, bounds=None):
         """从当前光标**直线**移到 (x,y)：落点精确、**没有随机偏移、没有横向抖动**。
 
         专给刮奖这类必须严格贴着标定区域走的连续动作——glide 会加 ±1.2px 的横向抖动，
         按住拖动时会让笔画上下飘、边缘刮不干净/刮出框外（★2026-10-27 用户要求刮奖不带抖动）。
         只保留一点点时延抖动（路径本身是严格直线），并在移动中保持按下状态即可连成笔画。
 
+        bounds=[left,top,w,h] 非空时，逐点连同终点一起硬钳制在该矩形内（user 2026-11-19：
+        连不按住的空走段也不许飘出标定刮奖区）；起点在区外时先在边界上、再沿区内走到终点。
+
         步长默认 5px：本机 Python/Windows 的 time.sleep 精度只有 15.6ms 一格，比这更密的
         步长只是白等（约 320px/s，游戏按帧采样够用）；不按住的空走可以传大 step_px 提速。"""
-        sx, sy = get_cursor()
         spd = self._speed(speed)
+        sx, sy = get_cursor()
+        x, y = _clamp_bounds(x, y, bounds)
+        sx, sy = _clamp_bounds(sx, sy, bounds)
         dx, dy = x - sx, y - sy
         n = max(1, min(120, int(math.hypot(dx, dy) / max(0.5, float(step_px)))))
         for i in range(1, n + 1):
             t = i / n
-            self._move(sx + dx * t, sy + dy * t)
+            cx, cy = _clamp_bounds(sx + dx * t, sy + dy * t, bounds)
+            self._move(cx, cy)
             time.sleep(random.uniform(0.0025, 0.006) / spd)
         return x, y
 
-    def scratch_to(self, x, y, speed=None, step_px=7, wobble=0.9):
+    def scratch_to(self, x, y, speed=None, step_px=7, wobble=0.9, bounds=None):
         """按住刮奖时用的**带轻微随机摆动**的移动：整体沿当前点→(x,y) 的连线走，但每个采样点
         沿垂直方向加一点小偏移（user 2026-11-19：刮奖鼠标移动要带随机性，别是死板直线）。
 
         与 glide 的区别：glide 的 ±1.2px 抖动是逐子步独立白噪声，笔画会「上下抽搐」、边缘容易
         飘出刮奖区；这里的摆动是**本次移动固定一个垂直方向 + 正弦包络**（两端归零、中段最大），
-        叠加沿程微抖，走出来是一条平滑小弧线而不是直线，且每调用一次重新随机 → 各行各段都不一样。
-        wobble=垂直摆幅上限(px)；行带本身已有 ±1.5px 的行间随机（见 GuagualeTask._row_points），
-        两层加起来仍远小于行间距(10px)，不会飘出本行、不破坏区域覆盖。
+        叠加沿程微抖，走出来是一条平滑小弧线而不是直线，且每调用一次重新随机 → 各段都不一样。
+        wobble=垂直摆幅上限(px)；刮刮乐的连续斜蛇形采样（见 GuagualeTask._serpentine_points）本身
+        已把纵向下沉均摊到各横向段，这里的摆动叠加后仍远小于行间距(10px)，不破坏区域覆盖。
+        bounds=[left,top,w,h] 非空时，每个采样点（含正弦摆动/抖动后的实际落点）都硬钳制在标定
+        刮奖区内——随机性只在区内发挥，绝不出框（user 2026-11-19）。
         step_px 默认 7（line_to 是 5）：采样更稀、整体更快一点（用户要求稍微提速）。"""
-        sx, sy = get_cursor()
         spd = self._speed(speed)
+        x, y = _clamp_bounds(x, y, bounds)
+        sx, sy = _clamp_bounds(*get_cursor(), bounds)
         dx, dy = x - sx, y - sy
         dist = math.hypot(dx, dy)
         n = max(1, min(120, int(dist / max(0.5, float(step_px)))))
@@ -297,8 +321,9 @@ class Mouse:
             bend = math.sin(math.pi * t) * amp * sign
             jx = random.uniform(-0.35, 0.35)
             jy = random.uniform(-0.35, 0.35)
-            self._move(sx + dx * t + nx * bend + jx,
-                       sy + dy * t + ny * bend + jy)
+            cx, cy = _clamp_bounds(sx + dx * t + nx * bend + jx,
+                                   sy + dy * t + ny * bend + jy, bounds)
+            self._move(cx, cy)
             time.sleep(random.uniform(0.002, 0.0055) / spd)
         return x, y
 

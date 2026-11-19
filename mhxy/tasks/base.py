@@ -21,6 +21,7 @@ import numpy as np
 from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
+from ..core import recorder
 from ..core.config import (CAPTURES_DIR, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY,
                           GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
                           HPMP_POPUP_TPL_KEY, JOIN_BUTTON_TPL_KEY)
@@ -126,6 +127,10 @@ class Task:
     # True=挂起弹窗守卫（_defuse_popup 直接跳过）：任务的主画面本身就是「带×的弹窗式界面」
     #   （如抢关注停在商城/摆摊，右上角就有「×」），守卫会把界面自带的×误当弹窗点掉。该类任务置 True。
     POPUP_GUARD_OFF = False
+    # True=本任务作为「叶子任务」参与自动录屏（config.record_screen 开时在 run() 里按任务名各录一个视频）。
+    #   日常编排器 DailyTask 覆盖为 False——它本身只是串联各子任务，不该再录一个把整条龙包进去的大文件
+    #   （日常的每个子任务各自录）。日常链里绕过 run() 的单步任务由 daily._begin_step/_end_step 单独接线。
+    RECORD_RUN = True
 
     # 标定向导（calibrate_dialog）按此 spec 驱动渲染。子类覆盖：
     #   {"regions":  [(key, 显示名, 说明), ...],     # 框选区域，写入 tc["regions"][key]
@@ -135,13 +140,32 @@ class Task:
 
     def run(self, ctx):
         """任务入口（子类不要覆盖它）：开跑前先把目标窗口带回主界面（ENSURE_MAIN_ON_START=False 除外），
-        再进 self._run(ctx) 干正事。子类实现 _run 而不是 run。"""
-        if self.ENSURE_MAIN_ON_START:
+        再进 self._run(ctx) 干正事。子类实现 _run 而不是 run。
+
+        录屏（config.record_screen 开且本类 RECORD_RUN）：按 self.name 引用计数录一个视频，
+        多窗口/重复进入同一任务只录一路（见 core.recorder）；编排器 DailyTask 置 RECORD_RUN=False 跳过。"""
+        recording = False
+        if self.RECORD_RUN:
             try:
-                self._ensure_main_screen(ctx)
+                recording = recorder.acquire(ctx.cfg, self.name, self.title)
+                if recording:
+                    ctx.log(f"录屏开启：{self.title}（整个屏幕，存 recordings/ 本次运行文件夹）", level="info")
             except Exception as e:
-                ctx.log(f"启动前确保主界面异常（已忽略，继续）：{e}", level="warn")
-        return self._run(ctx)
+                ctx.log(f"录屏启动异常（已忽略，继续任务）：{e}", level="warn")
+        try:
+            if self.ENSURE_MAIN_ON_START:
+                try:
+                    self._ensure_main_screen(ctx)
+                except Exception as e:
+                    ctx.log(f"启动前确保主界面异常（已忽略，继续）：{e}", level="warn")
+            return self._run(ctx)
+        finally:
+            if recording:
+                try:
+                    recorder.release(self.name)
+                    ctx.log(f"录屏结束：{self.title}", level="info")
+                except Exception:
+                    pass
 
     def _run(self, ctx):
         """任务主体。会在后台线程里执行；需自行在循环中检查 ctx.should_stop()。"""

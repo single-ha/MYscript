@@ -51,8 +51,6 @@ class GuagualeConfig(ctk.CTkFrame):
 
         self.var_timeout, _ = param_entry(card, self.fonts, "等待超时（秒）", "20", self._on_timeout,
                                           tooltip="等「福利」/「打开刮刮乐」按钮超过这么久就没认到（会跳过该号）")
-        self.var_passes, _ = param_entry(card, self.fonts, "刮奖遍数", "2", self._on_passes,
-                                         tooltip="刮奖区域来回扫几遍；刮不干净就调大（每多一遍多几秒）")
 
         ctk.CTkFrame(card, fg_color="transparent", height=14).pack()
 
@@ -64,7 +62,6 @@ class GuagualeConfig(ctk.CTkFrame):
         tc = cfg_mod.task_config(self.app.cfg, self.TASK_NAME)
         loop = tc.get("loop", {})
         self.var_timeout.set(str(loop.get("step_timeout_sec", 20)))
-        self.var_passes.set(str(loop.get("scratch_passes", 2)))
         templates = tc.get("templates", {})
         spec = getattr(get_task(self.TASK_NAME), "CALIBRATION", None) or {}
         need_t = required_templates(spec)
@@ -76,9 +73,6 @@ class GuagualeConfig(ctk.CTkFrame):
     # ---- 参数保存（改动即保存）----
     def _on_timeout(self, raw):
         self._save_loop("step_timeout_sec", raw, default=20, minimum=1, cast=round, var=self.var_timeout)
-
-    def _on_passes(self, raw):
-        self._save_loop("scratch_passes", raw, default=2, minimum=1, cast=round, var=self.var_passes)
 
     def _save_loop(self, key, raw, default, minimum, cast, var):
         try:

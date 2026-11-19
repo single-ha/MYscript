@@ -118,6 +118,8 @@ class SettingsPage(ctk.CTkFrame):
         self.var_failsafe = ctk.StringVar(value=FAILSAFE_CORNERS.get(fc, "右上角"))
         self.var_threshold = ctk.DoubleVar(value=self._get_threshold())
         self.var_debug = ctk.BooleanVar(value=bool(cfg.get("debug_log", False)))
+        self.var_record = ctk.BooleanVar(value=bool(cfg.get("record_screen", False)))
+        self.var_record_fps = ctk.StringVar(value=str(cfg.get("record_fps", 5)))
         self.var_logfile = ctk.BooleanVar(value=bool(cfg.get("log_to_file", True)))
         self.var_keepfiles = ctk.StringVar(value=str(cfg.get("log_keep_files", 20)))
 
@@ -141,23 +143,37 @@ class SettingsPage(ctk.CTkFrame):
                                           command=self._sync_debug_text)
         self._row(card, 6, "调试日志", self.var_debug_sw)
         self._sync_debug_text()
+        # 录屏开关：开启后每个任务自动录整个屏幕；每次「运行」归一个 run_时间戳 文件夹，仅留最近 3 次运行
+        rec_box = ctk.CTkFrame(card, fg_color="transparent")
+        self.var_record_sw = ctk.CTkSwitch(rec_box, text="", variable=self.var_record,
+                                           font=self.fonts["body"], text_color=T.TEXT,
+                                           progress_color=T.ACCENT, fg_color=T.BTN,
+                                           button_color=T.ON_ACCENT,
+                                           command=self._sync_record_text)
+        self.var_record_sw.pack(side="left")
+        ctk.CTkEntry(rec_box, textvariable=self.var_record_fps, font=self.fonts["body"],
+                     fg_color=T.SURFACE_2, border_color=T.BORDER, width=64).pack(side="left", padx=(12, 6))
+        ctk.CTkLabel(rec_box, text="fps（屏幕录像 5 已够，越大越占空间）", font=self.fonts["small"],
+                     text_color=T.TEXT_DIM).pack(side="left")
+        self._row(card, 7, "任务录屏", rec_box)
+        self._sync_record_text()
         self.var_logfile_sw = ctk.CTkSwitch(card, text="", variable=self.var_logfile,
                                             font=self.fonts["body"], text_color=T.TEXT,
                                             progress_color=T.ACCENT, fg_color=T.BTN,
                                             button_color=T.ON_ACCENT,
                                             command=self._sync_logfile_text)
-        self._row(card, 7, "日志写入文件", self.var_logfile_sw)
+        self._row(card, 8, "日志写入文件", self.var_logfile_sw)
         self._sync_logfile_text()
         keep_box = ctk.CTkFrame(card, fg_color="transparent")
         ctk.CTkEntry(keep_box, textvariable=self.var_keepfiles, font=self.fonts["body"],
                      fg_color=T.SURFACE_2, border_color=T.BORDER, width=72).pack(side="left")
         ctk.CTkLabel(keep_box, text="个（0=不清理）", font=self.fonts["small"],
                      text_color=T.TEXT_DIM).pack(side="left", padx=(6, 0))
-        self._row(card, 8, "日志保留份数", keep_box)
+        self._row(card, 9, "日志保留份数", keep_box)
 
         # 配置迁移：导出 / 导入（zip 打包 config.json + templates/，换机/换号搬标定）——用户拍板 2026-09-20。
         box = ctk.CTkFrame(card, fg_color="transparent")
-        box.grid(row=9, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 14))
+        box.grid(row=10, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 14))
         box.grid_columnconfigure(0, weight=1)
         btns = ctk.CTkFrame(box, fg_color="transparent")
         btns.grid(row=0, column=0, sticky="w")
@@ -179,6 +195,12 @@ class SettingsPage(ctk.CTkFrame):
         """把调试开关右侧文字同步成当前状态（开/关），toggle 时即时更新。"""
         state = "已开启" if bool(self.var_debug.get()) else "已关闭"
         self.var_debug_sw.configure(text=f"{state}（显示 debug 级日志）")
+
+    def _sync_record_text(self):
+        """把「任务录屏」开关右侧文字同步成当前状态（开/关），toggle 时即时更新。"""
+        state = "已开启" if bool(self.var_record.get()) else "已关闭"
+        self.var_record_sw.configure(
+            text=f"{state}（每任务一个视频，仅留最近 3 次运行，存 recordings/）")
 
     def _sync_logfile_text(self):
         """把「日志写入文件」开关右侧文字同步成当前状态，toggle 时即时更新。"""
@@ -485,6 +507,11 @@ class SettingsPage(ctk.CTkFrame):
             self.var_hk_shift.get(), self.var_hk_key.get())
         cfg["failsafe_corner"] = FAILSAFE_VALUE_OF.get(self.var_failsafe.get(), DEFAULT_FAILSAFE)
         cfg["debug_log"] = bool(self.var_debug.get())
+        cfg["record_screen"] = bool(self.var_record.get())
+        try:
+            cfg["record_fps"] = max(1, min(30, int(str(self.var_record_fps.get()).strip() or "5")))
+        except (TypeError, ValueError):
+            cfg["record_fps"] = 5
         cfg["log_to_file"] = bool(self.var_logfile.get())
         try:
             keep = int(str(self.var_keepfiles.get()).strip() or "0")
@@ -532,6 +559,9 @@ class SettingsPage(ctk.CTkFrame):
         self.var_failsafe.set(FAILSAFE_CORNERS.get(fc, "右上角"))
         self.var_debug.set(bool(self.app.cfg.get("debug_log", False)))
         self._sync_debug_text()
+        self.var_record.set(bool(self.app.cfg.get("record_screen", False)))
+        self.var_record_fps.set(str(self.app.cfg.get("record_fps", 5)))
+        self._sync_record_text()
         self.var_logfile.set(bool(self.app.cfg.get("log_to_file", True)))
         self.var_keepfiles.set(str(self.app.cfg.get("log_keep_files", 20)))
         self._sync_logfile_text()

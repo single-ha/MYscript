@@ -290,13 +290,17 @@ mhxy/
   主循环指定唯一持有者、`_drive_chain_until_yield(blocking=True)` 把它从头做完整再放行，排队的号跳过等待
   （不做跨号轮转）；窗口失效的号不占持有权（不会饿死别号）。任务单独跑（独立页/多开轮转）不受影响。
   多人步只走集体 `_run_collective`，不建独立链。
-  **刮刮乐刮奖手势的随机性/速度（user 2026-11-19）**：刮动不用严格直线 `Mouse.line_to`，改用专用
-  `Mouse.scratch_to`——每段固定一个垂直方向的正弦小弧线（两端归零、中段最大，摆幅 `wobble`≤0.9px）+
-  沿程 ±0.35px 微抖，每次调用重新随机；`GuagualeTask._row_points` 再叠加「行中心 y ±1.5px 整行抖动 +
-  两端 1~3px 随机内缩」，两层幅度都远小于行间距(10px)，不破坏区域覆盖。每行速度倍率独立随机
-  （基准 `scratch_speed` × 0.85~1.3）、行间距 sleep 0.03~0.08s 随机；默认 `scratch_speed` 1.6→2.2、
-  按住步长 5→7px 提速（空走仍 `line_to` step_px=24）。老配置的旧默认值由一次性迁移
-  `_migrate_guaguale_speed`（值==1.6 才改，手改值保留）压到 2.2。
+  **刮刮乐刮奖手势（user 2026-11-19 随机化、2026-11-20 改一笔连贯斜蛇形/只刮一遍/折角无竖直段）**：刮动不用
+  严格直线 `Mouse.line_to`，改用专用 `Mouse.scratch_to`——每段固定一个垂直方向的正弦小弧线（两端归零、
+  中段最大，摆幅 `wobble`≤0.9px）+ 沿程 ±0.35px 微抖，每次调用重新随机。整块区域由
+  `GuagualeTask._serpentine_points` 一次性生成一条**连续斜蛇形**点列：左右转折列对整笔只随机一次、
+  所有半程共享；纵向下沉**均摊到每次横向扫动**（每段左→右/右→左只平缓下沉一个行间距、水平跨整块宽，
+  斜率极小），相邻半程在边缘共享端点并去重——到边后 x 立即反向，**整条路径没有「x 不变只变 y」的纯
+  竖直段**（user 明确不要到边后先向下挪再反向）。`_do_scratch` 全程只 `hold()`/`release()` 各一次、
+  整笔恒定速度（`scratch_speed` × 0.85~1.3，不在折角重新变速），沿点列统一节奏按住走到底，**只刮一遍**
+  （旧 `scratch_passes` 多遍与逐行抬笔已废弃，由 `_migrate_drop_guaguale_passes` 清键）；空走仍
+  `line_to` step_px=24，默认 `scratch_speed` 2.2、按住步长 7px，bounds 硬钳制全程不出框。老配置的旧默认
+  速度由一次性迁移 `_migrate_guaguale_speed`（值==1.6 才改，手改值保留）压到 2.2。
   **「登录游戏」不在链里（user 拍板 2026-09-29）**：它自己起客户端（没有「已开好的号」可跑），
   故不在 daily.steps/GROUP_OF/SINGLE_TASK_ORDER，入口只有「日常」页顶部可折叠登录区——
   点「账号库」弹窗（`ui/account_gallery.py`，仿队长ID 库；数据/槽文件在 `core/account_history.py`）：
