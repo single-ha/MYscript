@@ -20,11 +20,21 @@ import customtkinter as ctk
 from . import theme as T
 from ..core import config as cfg_mod
 from ..core.runner import TaskRunner
+from ..core.teaming import (TEAM_CALIBRATION, TEAM_REQUIRED_REGIONS,
+                            TEAM_REQUIRED_TEMPLATES, DISBAND_REQUIRED_TEMPLATES)
 from ..tasks import get_task
 from ..tasks.daily import (CHAINABLE, TEAM_STEPS, TEAM_STEP_TITLES,
                            ORGANIZE_STEP, FLOW_TIMING_STEP, FLOW_SHUTDOWN_STEP,
+                           DUNGEON_SUB_TASKS, MULTI_BARRIER,
                            get_selected_dungeon_titles, normalize_flow_steps)
-from .common import Tooltip
+from ..tasks.dungeon_base import DUNGEON_CALIBRATION
+from .common import (Tooltip, required_regions, required_templates,
+                     optional_templates)
+
+# 流程摘要节点的三态（user 2026-11-25）：必标项缺=红、必标齐但可选未标=黄、全标=绿；无标定概念=中性。
+NODE_RED, NODE_YELLOW, NODE_GREEN, NODE_NEUTRAL = "red", "yellow", "green", "neutral"
+_NODE_TAG = {NODE_RED: "node_red", NODE_YELLOW: "node_yellow",
+             NODE_GREEN: "node_green", NODE_NEUTRAL: "node_neutral"}
 
 # 摘要/执行链的顺序一律以流程控制弹窗口径为准（tasks.daily.normalize_flow_steps），
 # 起始页、弹窗、引擎共用同一来源；这里不再另算「多人在前」的按区展示序。
@@ -129,6 +139,111 @@ def enabled_flow_tags(cfg):
     return [tag for key, tag in _FLOW_TAGS if on[key]]
 
 
+# ----------------------------------------------------------------------
+# 流程节点标定三态（user 2026-11-25）：红=有必标项未标 / 黄=必标齐但可选【模板】未全标 / 绿=全标
+# 必选/可选集合一律从任务 CALIBRATION spec 推导（与各配置页 calib_status、日常页 _calib_done 同源），
+# 再叠加该任务的共享必选区域/模板（TASK_SHARED_*）。无标定概念的流程动作（定时/关机）= 中性。
+# 注意：可选【区域】（如 scene 主识别区，留空=整窗当识别区是推荐用法）不参与黄/绿——只有可选
+# 模板没标才显黄，避免「按推荐留空 scene」这种健康状态被误染成黄（user 2026-11-25 拍板）。
+# ----------------------------------------------------------------------
+def _state_from_spec(spec, regions, templates, task_name, cfg, *, team_gate=False):
+    """按一份 CALIBRATION spec + 已叠加共享的 regions/templates 算红/黄/绿。
+
+    team_gate=True 时（抓鬼/副本这类多人步），未勾「已组队」还要把组队必标项算进必选，
+    口径与 DailyPage._barrier_step_status/_dungeon_calib_ok 保持一致。"""
+    # 自身必选 + 该任务的共享必选（共享区域/模板都按必选处理，缺了跑不起来 → 红）
+    req_r = list(required_regions(spec)) + list(cfg_mod.TASK_SHARED_REQ.get(task_name, ()))
+    req_t = list(required_templates(spec)) + list(cfg_mod.TASK_SHARED_TPL_REQ.get(task_name, ()))
+    if team_gate:
+        team = cfg_mod.task_config(cfg, "teaming")
+        if not team.get("skip_team", False):      # 没勾「已组队」：组队标定也是必选
+            treg, ttpl = team.get("regions", {}), team.get("templates", {})
+            if any(not treg.get(k) for k in TEAM_REQUIRED_REGIONS) or \
+               any(not ttpl.get(k) for k in TEAM_REQUIRED_TEMPLATES):
+                return NODE_RED
+    if any(not regions.get(k) for k in req_r) or any(not templates.get(k) for k in req_t):
+        return NODE_RED
+    # 必选齐了：还有可选【模板】没标 → 黄；全标 → 绿。
+    # 可选区域（scene/listing 等，留空有推荐默认行为）不计入，避免推荐用法被误判为未就绪。
+    opt_t = optional_templates(spec)
+    if any(not templates.get(k) for k in opt_t):
+        return NODE_YELLOW
+    return NODE_GREEN
+
+
+def _task_node_state(name, cfg):
+    """普通 CHAINABLE 任务 / 抓鬼 / 副本子任务的三态。"""
+    # 副本（5 个子任务 + 聚合 dungeon）共用共享 tasks.dungeon 与 DUNGEON_CALIBRATION
+    if name == "dungeon" or name in DUNGEON_SUB_TASKS:
+        sub = cfg_mod.task_config(cfg, "dungeon")
+        return _state_from_spec(DUNGEON_CALIBRATION, sub.get("regions", {}), sub.get("templates", {}),
+                                "dungeon", cfg, team_gate=True)
+    cls = get_task(name)
+    if cls is None:
+        return NODE_NEUTRAL                 # 未知/已下线任务名：无标定可判，中性，不误导成绿色
+    spec = getattr(cls, "CALIBRATION", None) or {"regions": [], "templates": []}
+    sub = cfg_mod.task_config(cfg, name)
+    multi_barrier = name in MULTI_BARRIER     # 抓鬼等多人步：未勾已组队时查组队标定
+    return _state_from_spec(spec, sub.get("regions", {}), sub.get("templates", {}),
+                            name, cfg, team_gate=multi_barrier)
+
+
+def _team_node_state(name, cfg):
+    """组队/解散伪步骤的三态（标定都在共享 tasks.teaming）。"""
+    team = cfg_mod.task_config(cfg, "teaming")
+    treg, ttpl = team.get("regions", {}), team.get("templates", {})
+    if name == "team_disband":
+        # 解散只依赖「退出队伍」按钮这一个必选模板
+        return NODE_RED if any(not ttpl.get(k) for k in DISBAND_REQUIRED_TEMPLATES) else NODE_GREEN
+    # 组队：必选区域 + 必选模板齐了才算过；TEAM_CALIBRATION 里其余（team_arrow 可选/team_quit 解散用等）
+    # 没标 → 黄。leader_id 在「标定队长ID」单独维护，不计入这里的可选计数。
+    if any(not treg.get(k) for k in TEAM_REQUIRED_REGIONS) or \
+       any(not ttpl.get(k) for k in TEAM_REQUIRED_TEMPLATES):
+        return NODE_RED
+    opt_t = [it[0] for it in TEAM_CALIBRATION["templates"]
+             if it[0] not in TEAM_REQUIRED_TEMPLATES and it[0] != "leader_id"]
+    return NODE_YELLOW if any(not ttpl.get(k) for k in opt_t) else NODE_GREEN
+
+
+def _organize_node_state(cfg):
+    """整理背包伪步骤三态：必选模板取决于已配置物品用到的动作（与 OrganizeBagTask.preflight 同口径）。"""
+    from ..core.inventory import required_templates as inv_required
+    ob = cfg_mod.task_config(cfg, "organize_bag")
+    items = [it for it in ob.get("items", []) if it.get("template")]
+    if not items:
+        return NODE_RED                    # 一个要整理的物品都没有 → 跑了也白跑，按未就绪（红）
+    templates = ob.get("templates", {})
+    seen, missing_req = set(), False
+    for act in {it.get("action", "use") for it in items}:
+        for key, _lbl in inv_required(act):
+            if key in seen:
+                continue
+            seen.add(key)
+            if not templates.get(key):
+                missing_req = True
+    if missing_req:
+        return NODE_RED
+    # 必选齐：CALIBRATION 里标了可选的动作按钮（如 more_button）没标 → 黄，否则绿
+    spec = getattr(get_task("organize_bag"), "CALIBRATION", None) or {}
+    opt_t = optional_templates(spec)
+    return NODE_YELLOW if any(not templates.get(k) for k in opt_t) else NODE_GREEN
+
+
+def node_calib_state(kind, name, cfg):
+    """链上单个节点 → NODE_RED / NODE_YELLOW / NODE_GREEN / NODE_NEUTRAL。
+
+    kind 与 enabled_chain_entries 的输出对齐：task/team/organize；定时/关机由调用方按中性处理。"""
+    try:
+        if kind == "team":
+            return _team_node_state(name, cfg)
+        if kind == "organize":
+            return _organize_node_state(cfg)
+        return _task_node_state(name, cfg)
+    except Exception:
+        # 判定异常绝不阻断摘要渲染：退回中性，避免单个任务配置问题让整张卡空白
+        return NODE_NEUTRAL
+
+
 class DailyRunCard(ctk.CTkFrame):
     """日常运行控制卡（起始页用）。构造后由宿主页 refresh()/pump() 驱动。"""
 
@@ -231,34 +346,82 @@ class DailyRunCard(ctk.CTkFrame):
                       text_color=T.TEXT, border_width=1, border_color=T.BORDER,
                       command=self._edit_flow).grid(row=0, column=2, sticky="e")
 
-        self.lbl_chain = ctk.CTkLabel(box, text="", font=self.fonts["body"], text_color=T.ACCENT,
-                                      anchor="w", justify="left")
-        self.lbl_chain.grid(row=1, column=0, sticky="ew", pady=(4, 0))
-        T.bind_wraplength(self.lbl_chain)
-        Tooltip(self.lbl_chain, "点「开始日常」会依次跑的任务，按流程控制弹窗里设置的实际执行先后拼接"
-                                "（含定时/关机/组队/解散/整理背包等流程动作）。调整顺序或这些流程设置，"
-                                "点右上角「修改」。", self.fonts)
+        # 执行链：用只读 CTkTextbox 承载，按节点三态分段着色（单色 CTkLabel 无法一段内多色）。
+        # wrap=word 自动折行；state=disabled 只读；高度随内容在 _render_flow 里按行数自适应。
+        self.txt_chain = ctk.CTkTextbox(box, font=self.fonts["body"], fg_color="transparent",
+                                        text_color=T.TEXT, corner_radius=0, wrap="word",
+                                        activate_scrollbars=False, height=24)
+        self.txt_chain.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self._apply_chain_tags()
+        Tooltip(self.txt_chain, "点「开始日常」会依次跑的任务，按流程控制弹窗里设置的实际执行先后拼接"
+                                "（含定时/关机/组队/解散/整理背包等流程动作）。颜色：红=有必标项未标，"
+                                "黄=必标齐但可选未标，绿=全部标定。调整顺序或这些流程设置，点右上角「修改」。",
+                self.fonts)
 
         self.lbl_ready = ctk.CTkLabel(box, text="", font=self.fonts["small"], text_color=T.TEXT_DIM,
                                       anchor="w", justify="left")
         self.lbl_ready.grid(row=2, column=0, sticky="ew", pady=(3, 0))
         T.bind_wraplength(self.lbl_ready)
 
-    def _render_flow(self):
-        """重绘执行链 + 就绪摘要（就地改文本，不重建控件）。
+    # 三态 → 底层 tk Text 的 tag 配色（只收单值颜色，按当前外观解析；明暗切换后重跑本方法）。
+    _CHAIN_TAG_COLOR = {
+        "node_red": T.DANGER, "node_yellow": T.WARN,
+        "node_green": T.SUCCESS, "node_neutral": T.TEXT_DIM,
+        "sep": T.TEXT_DIM, "count": T.TEXT_DIM,
+    }
 
-        执行链片段由 chain_parts 统一生成（镜像引擎执行序）：定时固定链首、关机固定链尾，
-        组队/解散/每个「自动整理背包」按各自在弹窗里被拖到的位置显示（整条链可重复出现）。
-        「共N项」= 真实执行步骤总数（len(parts)，含定时/整理/关机），与弹窗行前最大序号同口径。"""
-        names = chain_task_names(self.app.cfg)
-        parts = chain_parts(self.app.cfg)
-        total = len(parts)
-        if parts:
-            chain_text = " -> ".join(parts) + f" (共{total}项)"
-            self.lbl_chain.configure(text=chain_text, text_color=T.ACCENT)
+    def _apply_chain_tags(self):
+        """给执行链 Textbox 的各 tag 配前景色（随当前外观模式解析）。失败静默，不影响主流程。"""
+        tb = getattr(self, "txt_chain", None)
+        if tb is None:
+            return
+        for tag, token in self._CHAIN_TAG_COLOR.items():
+            try:
+                tb._textbox.tag_config(tag, foreground=T.resolve(token))
+            except Exception:
+                pass
+
+    def _render_flow(self):
+        """重绘执行链（按节点三态分段着色）+ 就绪摘要（就地改文本，不重建控件）。
+
+        执行链节点由 enabled_chain_entries 统一生成（镜像引擎执行序）：普通任务/副本/抓鬼按
+        node_calib_state 着红/黄/绿，组队/解散/整理背包各查各自标定，定时/关机无标定概念走中性色；
+        「->」分隔符与「(共N项)」用次要色。「共N项」= 真实执行步骤总数，与弹窗行前最大序号同口径。"""
+        cfg = self.app.cfg
+        entries = enabled_chain_entries(cfg)
+        total = self._chain_total(cfg)
+        tb = self.txt_chain
+        tb.configure(state="normal")
+        tb._textbox.delete("1.0", "end")
+        if not entries and total <= 0:
+            tb._textbox.insert("end", "（无，开始日常只会空转）", "node_neutral")
         else:
-            self.lbl_chain.configure(text="（无，开始日常只会空转）", text_color=T.TEXT_DIM)
-        not_ready = [task_title(n, self.app.cfg) for n in names if not self._ready_bool(n)]
+            # 定时固定链首、关机固定链尾（无标定概念 → 中性色）；口径与旧 chain_parts 完全一致，
+            # 中段 entries 才按各自标定三态着色。这样显示节点数与「共N项」始终对得上。
+            schedule = ((((cfg.get("tasks", {}) or {}).get("daily", {}) or {}).get("loop", {}) or {})
+                        .get("schedule", "") or "").strip()
+            flow_on = set(enabled_flow_tags(cfg))
+            timing_tag = dict(_FLOW_TAGS)["timing"]
+            shutdown_tag = dict(_FLOW_TAGS)["shutdown"]
+            seg = []        # (文本, tag)
+            if timing_tag in flow_on:
+                seg.append((f"⏰{schedule}开始执行" if schedule else timing_tag, "node_neutral"))
+            for kind, name in entries:
+                seg.append((self._entry_label(kind, name, cfg),
+                            _NODE_TAG[node_calib_state(kind, name, cfg)]))
+            if shutdown_tag in flow_on:
+                seg.append((shutdown_tag, "node_neutral"))
+            for idx, (text, tag) in enumerate(seg):
+                if idx:
+                    tb._textbox.insert("end", " -> ", "sep")
+                tb._textbox.insert("end", text, tag)
+            # 「共N项」= chain_parts 长度（含定时/关机），与弹窗行前最大序号同口径
+            tb._textbox.insert("end", f" (共{total}项)", "count")
+        tb.configure(state="disabled")
+        self._fit_chain_height()
+
+        names = chain_task_names(cfg)
+        not_ready = [task_title(n, cfg) for n in names if not self._ready_bool(n)]
         if not names:
             self.lbl_ready.configure(text="")
         elif not_ready:
@@ -277,6 +440,32 @@ class DailyRunCard(ctk.CTkFrame):
             except Exception:
                 return True
         return True
+
+    def _entry_label(self, kind, name, cfg):
+        """单个链节点的显示文案（与旧 chain_parts 中段口径一致）。"""
+        if kind == "organize":
+            return dict(_FLOW_TAGS)["organize"]
+        if kind == "team":
+            return TEAM_STEP_TITLES.get(name, name)
+        return task_title(name, cfg)
+
+    def _chain_total(self, cfg):
+        """「共N项」口径 = chain_parts 长度（含贴链首/链尾的定时、关机），与旧实现 len(parts) 一致。"""
+        return len(chain_parts(cfg))
+
+    def _fit_chain_height(self):
+        """按 Textbox 实际折行行数自适应高度（透明底、无滚动条，避免固定高度留白或裁切）。
+
+        先 update_idletasks 让 Tk 重排文本，再用 count 取显示行数；行高取字体度量，留出上下内边距。"""
+        try:
+            tb = self.txt_chain
+            tb.update_idletasks()
+            # count -displaylines 给出折行后的实际显示行数（Tk 8.5+ 支持）
+            n_lines = max(1, int(tb._textbox.count("1.0", "end", "displaylines")[0]))
+            line_h = int(self.fonts["body"].metrics("linespace"))
+            tb.configure(height=max(24, n_lines * line_h + 8))
+        except Exception:
+            pass
 
     def _refresh_badge(self):
         # 徽标数本趟真正会跑的【普通任务】（执行序，不含组队/解散/整理/定时/关机等伪步骤）

@@ -774,6 +774,14 @@ class App(ctk.CTk):
                 T.apply_log_tags(log._textbox)
             except Exception:
                 pass
+        # 起始页日常卡的执行链三态着色同样走底层 tag_config，切明暗后手动重刷（页面可能尚未懒加载）
+        start_page = self.pages.get("start")
+        card = getattr(start_page, "daily_card", None) if start_page is not None else None
+        if card is not None and hasattr(card, "_apply_chain_tags"):
+            try:
+                card._apply_chain_tags()
+            except Exception:
+                pass
 
     def toast(self, msg, color=None):
         """右下角浮层提示；color 指定背景色（默认主色），传 T.DANGER 显红。"""
