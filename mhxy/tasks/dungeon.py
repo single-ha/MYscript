@@ -43,7 +43,7 @@ class DungeonTask(Task):
         dc = ctx.task_cfg(_PARAM_NS)
         cap = dc.get("captain_index", 0)
         if wins and not (0 <= cap < len(wins)):
-            problems.append(f"队长序号 号{cap + 1} 越界（共 {len(wins)} 个号），请在下拉框重选队长")
+            problems.append(f"队长序号 号{cap + 1} 越界（共 {len(wins)} 个号），请在「选择窗口」对话框重选队长")
 
         # 组队模板/区域（共享 teaming 命名空间）
         team_tc = ctx.task_cfg("teaming")

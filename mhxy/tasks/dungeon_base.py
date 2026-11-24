@@ -173,7 +173,7 @@ class DungeonBaseTask(TuoyingFlow, Task):
         cap = team_tc.get("captain_index", 0)
         # 队长序号只在有多个窗口时才有意义：单开（1 个号）不校验，run 里自动把唯一的号当队长
         if len(wins) > 1 and not (0 <= cap < len(wins)):
-            problems.append(f"队长序号 号{cap + 1} 越界（共 {len(wins)} 个号），请在「组队设置」重选队长")
+            problems.append(f"队长序号 号{cap + 1} 越界（共 {len(wins)} 个号），请在「选择窗口」对话框重选队长")
 
         if not skip_team:
             for rk in TEAM_REQUIRED_REGIONS:

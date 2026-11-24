@@ -51,6 +51,12 @@ class WindowPickerDialog(ctk.CTkToplevel):
         self._all_switch = None   # 「全选」toggle 控件（构建后赋值）
         self._captain_var = ctk.IntVar(value=0)   # 队长的【绝对窗口序号】(0起)；仅 captain_ns 时用
         self._captain_inited = False
+        # 队长ID 按钮（仅 captain_ns）：每卡一个，只有「被选为队长且多开」的那张卡显示。
+        # 已标定队长ID 时按钮显示 tm_leader_id.png 缩略图，否则显示「选择队长ID」文字，点开队长ID 库。
+        self._cap_radios = {}          # 绝对窗口序号 -> 「队长」单选控件
+        self._captain_buttons = {}     # 绝对窗口序号 -> 队长ID 按钮
+        self._leader_thumbs = []       # 队长ID 缩略图防 GC
+        self._leader_poll_id = None    # 轮询队长ID 库是否关闭的 after 句柄
 
         self.title("选择窗口")
         self.geometry("560x600")
@@ -81,7 +87,8 @@ class WindowPickerDialog(ctk.CTkToplevel):
         base_hint = ("勾选要操作的窗口（可多选），选中几个就操作几个。号按屏幕从左到右编号。"
                      "检测区可在「标定」里留空＝整窗，无需框大区域。")
         if self.captain_ns:
-            base_hint += "  组队请在要当队长的那个号上勾「队长」。"
+            base_hint += ("  多开（选≥2个号）时在要当队长的号上选「队长」，该卡会出现「选择队长ID」按钮："
+                          "已标定则显示队长ID缩略图，点击可打开队长ID库管理。")
         sub = ctk.CTkLabel(top, text=base_hint,
                            font=self.fonts["small"], text_color=T.TEXT_DIM, justify="left")
         sub.pack(fill="x", pady=(4, 0))
@@ -173,6 +180,10 @@ class WindowPickerDialog(ctk.CTkToplevel):
         for c in self.body.winfo_children():
             c.destroy()
         self._multi_vars = {}
+        # 队长控件随卡片整体重建，旧引用一并清空（点「刷新」重枚举也走这里）
+        self._cap_radios = {}
+        self._captain_buttons = {}
+        self._leader_thumbs.clear()
 
         if not self._wins:
             empty = ctk.CTkLabel(self.body, text=f"没检测到标题含「{self.title_substr}」的窗口。\n"
@@ -253,16 +264,32 @@ class WindowPickerDialog(ctk.CTkToplevel):
                 ttl_lbl.pack(fill="x")
                 T.bind_wraplength(ttl_lbl)
 
-            # 队长单选（仅 captain_ns 时）
+            # 队长区（仅 captain_ns 且多开时显示）：「队长」单选 + 选中队长卡上的「选择队长ID」按钮。
+            # 单开（只选 1 个号）整个队长区隐藏——唯一的号天然是队长。显隐由 _update_captain_visibility 统一管。
             if self.captain_ns:
-                ctk.CTkRadioButton(card, text="队长", width=24, variable=self._captain_var, value=i,
-                                   font=self.fonts["small"], fg_color=T.ACCENT,
-                                   hover_color=T.ACCENT_HOVER).grid(row=0, column=3, padx=(6, 12))
+                cap_box = ctk.CTkFrame(card, fg_color="transparent")
+                cap_box.grid(row=0, column=3, padx=(6, 12))
+                radio = ctk.CTkRadioButton(cap_box, text="队长", width=24, variable=self._captain_var,
+                                           value=i, font=self.fonts["small"], fg_color=T.ACCENT,
+                                           hover_color=T.ACCENT_HOVER,
+                                           command=self._update_captain_visibility)
+                radio.pack(anchor="e")
+                self._cap_radios[i] = radio
+                leader_btn = ctk.CTkButton(
+                    cap_box, text="选择队长ID", font=self.fonts["small"], height=30, width=108,
+                    corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER,
+                    text_color=T.TEXT, border_width=1, border_color=T.BORDER,
+                    command=self._open_leader_gallery)
+                leader_btn.pack(anchor="e", pady=(6, 0))
+                self._captain_buttons[i] = leader_btn
 
         # 走到这必有窗口 → 启用「全选」toggle，并按当前勾选状态同步它
         if self._all_switch is not None:
             self._all_switch.configure(state="normal")
         self._sync_all_toggle()
+        # 队长区（单选+队长ID按钮）的显隐/缩略图按当前勾选与队长选择刷新（单开整体隐藏）
+        if self.captain_ns:
+            self._update_captain_visibility()
 
         # 尺寸一致性提示（多开共用一套标定要求同尺寸）
         sizes = {(r[2], r[3]) for _, r, _ in self._wins if r}
@@ -286,6 +313,98 @@ class WindowPickerDialog(ctk.CTkToplevel):
         """按各窗口复选框的实际状态同步「全选」toggle：全部勾选→选中，否则未勾选。"""
         vals = [v.get() for v in self._multi_vars.values()]
         self._all_var.set(bool(vals) and all(vals))
+        if self.captain_ns:
+            self._update_captain_visibility()
+
+    # ------------------------------------------------------------------
+    # 队长区（仅 captain_ns）：单选显隐 + 队长ID 按钮显隐/缩略图
+    # ------------------------------------------------------------------
+    def _selected_idxs(self):
+        """当前勾选窗口的绝对序号（升序）。"""
+        return sorted(i for i, v in self._multi_vars.items() if v.get())
+
+    def _update_captain_visibility(self):
+        """按「勾选数量 + 当前队长选择」刷新队长区：
+        · 只选 ≤1 个号（单开）→ 整个队长区隐藏（唯一的号天然是队长）；
+        · 多开（≥2）→ 各卡显示「队长」单选；仅被选为队长的那张卡再显示「选择队长ID」按钮。
+        顺带把越界/未勾选的队长选择纠正到第一个所选号，并刷新队长ID按钮的缩略图。"""
+        if not self.captain_ns:
+            return
+        idxs = self._selected_idxs()
+        multi = len(idxs) >= 2
+        cap_abs = self._captain_var.get()
+        # 队长必须落在所选号里；不在（取消勾选/越界）则回退到第一个所选号
+        if idxs and cap_abs not in idxs:
+            cap_abs = idxs[0]
+            self._captain_var.set(cap_abs)
+        for i, radio in self._cap_radios.items():
+            try:
+                # 单开隐藏所有队长单选；多开时全部可见（让用户能改选队长）
+                radio.grid_remove() if not multi else radio.grid()
+            except Exception:
+                pass
+        for i, btn in self._captain_buttons.items():
+            try:
+                if multi and i == cap_abs:
+                    btn.grid()
+                else:
+                    btn.grid_remove()
+            except Exception:
+                pass
+        self._refresh_leader_button()
+
+    def _refresh_leader_button(self):
+        """给当前队长卡上的「选择队长ID」按钮套缩略图（已标定）或文字（未标定）。
+        队长ID 是全局共享的一张激活图 tm_leader_id.png，所有窗口共用，故只需刷新显示中的那个按钮。"""
+        from .common import load_thumb   # 延迟导入，避免循环依赖
+        cap_abs = self._captain_var.get()
+        btn = self._captain_buttons.get(cap_abs)
+        if btn is None:
+            return
+        self._leader_thumbs.clear()
+        img = load_thumb("templates/tm_leader_id.png", self._leader_thumbs, max_h=26)
+        try:
+            if img is not None:
+                # 有图：只显示缩略图（compound 默认 text 在图旁，这里清空文字让按钮就是一张图）
+                btn.configure(image=img, text="", width=58, height=34)
+            else:
+                btn.configure(image=None, text="选择队长ID", width=108, height=30)
+        except Exception:
+            pass
+
+    def _open_leader_gallery(self):
+        """打开队长ID 库弹窗（复用 LeaderIdGallery 的去重单例）。关闭后轮询刷新本窗按钮缩略图——
+        库的 on_done 回调固定广播 App.refresh_leader_thumb，触达不到本弹窗，故用 after 轮询其存在性。"""
+        from .leader_gallery import LeaderIdGallery
+        try:
+            LeaderIdGallery.open(self.app)
+        except Exception as e:
+            try:
+                self.app.toast(f"打开队长ID库失败：{e}")
+            except Exception:
+                pass
+            return
+        self._poll_leader_gallery()
+
+    def _poll_leader_gallery(self):
+        """轮询队长ID库是否已关闭：关闭（单例被置空/窗口失效）后刷新一次缩略图并停止轮询。"""
+        gal = getattr(self.app, "_leader_gallery", None)
+        alive = False
+        if gal is not None:
+            try:
+                alive = bool(gal.winfo_exists())
+            except Exception:
+                alive = False
+        if alive:
+            self._leader_poll_id = self.after(300, self._poll_leader_gallery)
+        else:
+            self._leader_poll_id = None
+            # 库可能改了激活图，reload 配置后再刷新按钮
+            try:
+                self.cfg = cfg_mod.load_config()
+            except Exception:
+                pass
+            self._refresh_leader_button()
 
     # ------------------------------------------------------------------
     def _confirm(self):
@@ -325,6 +444,12 @@ class WindowPickerDialog(ctk.CTkToplevel):
         self._close()
 
     def _close(self):
+        if self._leader_poll_id is not None:
+            try:
+                self.after_cancel(self._leader_poll_id)
+            except Exception:
+                pass
+            self._leader_poll_id = None
         if callable(self.on_done):
             try:
                 self.on_done()

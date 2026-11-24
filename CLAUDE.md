@@ -151,6 +151,11 @@ mhxy/
     roi_overlay.py      全屏框选组件（纯 tk，冻结截图上拖框，返回屏幕绝对 ROI）
     calibrate_dialog.py GUI 内标定对话框（区域 + 模板缩略图画廊 + 加装备），按任务 CALIBRATION spec 驱动
     leader_gallery.py   队长ID 库画廊（见下「队长ID 库」约束）
+    window_picker.py    「选择窗口」对话框（唯一入口 app.open_window_picker，左下连接状态按钮以 captain_ns="teaming" 打开）：
+                        多开时每卡「队长」单选选谁当队长（写 tasks.teaming.captain_index），**单开（只选 1 个号）整个队长区隐藏**；
+                        被选为队长的卡再出「选择队长ID」按钮——已标定显示 tm_leader_id.png 缩略图、未标定显示文字，点开
+                        LeaderIdGallery。库的 on_done 固定广播 App.refresh_leader_thumb、触达不到本弹窗，故用 self.after(300)
+                        轮询 app._leader_gallery 存在性，关闭后 reload 配置刷新一次缩略图并停轮询（_close 里 after_cancel）。
     account_gallery.py  账号库弹窗（登录游戏用）：每号框**两张图**（账号卡片 + 角色卡片）入库 + 挑最多 5 个进登录队列，
                       仿队长ID 库；数据/槽文件见 core/account_history.py
     inventory_items_dialog.py 整理背包「物品清单」管理弹窗（缩略图+名字+动作下拉+框选添加，写 tasks.organize_bag.items）
@@ -224,7 +229,11 @@ mhxy/
   auto_disband）统一存共享 `tasks.teaming`**，各多人任务（蹈海去/抓鬼等）的 preflight/run 都读这份共享配置；
   **「跑完解散」开关在「日常」页设置区（`DailyPage.var_disband`）；「已组队」开关（`skip_team`）2026-09-23
   起在「日常」页设置区也新增一份（`DailyPage.var_skip_team`）**，与「跑完解散」并排、写同一份共享配置；
-  队长/队长ID 在「通用」页「选择窗口/队长」里选。⚠ **拍板脉络**：2026-09-23「已组队」先迁出「任务配置」页
+  **队长选号与队长ID 入口都收口在「选择窗口」对话框**（左下连接状态按钮打开，`captain_ns="teaming"`）：多开（≥2 个号）时
+  每张窗口卡有「队长」单选指定谁当队长（写 `captain_index`），被选为队长的卡再出「选择队长ID」按钮（已标定显示
+  `tm_leader_id.png` 缩略图、未标定显示文字，点击开 `LeaderIdGallery`）；**单开（只选 1 个号）整个队长区隐藏**——唯一的号天然是队长。
+  配置页组队卡的队长ID 图库按钮保留作第二入口。任务 preflight 的队长越界报错统一指向「在『选择窗口』对话框重选队长」。
+  ⚠ **拍板脉络**：2026-09-23「已组队」先迁出「任务配置」页
   （该页顶部组队卡已删），同日落定「不涉及周常/工具页」——周常页的 `common.TeamSettingsCard`（含已组队开关）
   原样保留作第二入口，任务子页（刷副本/抓鬼）仍不放组队控件。
   - **「已组队」开关（skip_team）**：勾上=已自行组好队，副本跳过组队握手、直接由队长开刷；preflight 随之放宽
@@ -367,7 +376,9 @@ mhxy/
   **激活图路径永远是 `templates/tm_leader_id.png`**（teaming 与 calibrate 都写死读它），切换当前队长 = 把选中历史图
   **字节复制覆盖**该文件、**绝不改 config 路径串**，故 `TeamFormation` 零改、零回归。⚠ 就绪度判定只看
   `templates.leader_id` 是否**非空**（不看文件存在），故历史空时 `leader_history` 把它置 None。画廊/槽位/广播刷新等
-  细节见 memory `leader-id-gallery`。
+  细节见 memory `leader-id-gallery`。**入口有两处**：配置页组队卡按钮（`TeamingCalibrationCard._refresh_leader_btn`）
+  与「选择窗口」对话框队长卡上的「选择队长ID」按钮（`window_picker`，after 轮询库关闭后刷新缩略图）；两处都调
+  `LeaderIdGallery.open(app)` 同一个去重单例、读同一张激活图，故缩略图加载都复用 `common.load_thumb(max_h=26)`。
 
 > 改动历史不在本文件——查 `git log`（commit 正文写了改了什么、为什么）和 memory 目录
 > （treasure-map-task / escort-task / secret-realm-task / daily-chain-task / teaming-and-dungeon-task 等）。
