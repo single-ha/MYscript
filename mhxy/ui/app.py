@@ -872,7 +872,8 @@ class App(ctk.CTk):
 
     def open_window_picker(self, after=None, captain_ns=None):
         """打开「选择窗口」对话框（各任务页共用）。关闭后刷新配置并强制刷新药丸。
-        captain_ns: 传入则多开模式下可在卡片上直接指定队长，写入 tasks.<captain_ns>.captain_index。"""
+        captain_ns: 传入则卡片常驻「队长」单选、被选为队长的卡显示「选择队长ID」按钮，
+        写入 tasks.<captain_ns>.captain_index。"""
         from .window_picker import WindowPickerDialog
 
         def _done():
