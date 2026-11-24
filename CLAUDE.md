@@ -89,6 +89,9 @@ mhxy/
     tuoying_flow.py TuoyingFlow mixin：拓印临摹弹窗的共享编排（探测「拓印」界面→沿图案描→点「上传」→
                     轮询「未完成态/拓印标题」判定是否续描或完成，直到界面消失）；刷副本(dungeon_base)与宝图(treasure_map)共用，
                     资产/参数只读 tasks.tuoying；详见文件 docstring
+    updater.py  检查更新（仅源码 git 仓库环境）：check_for_update() 先 fetch 再校验工作区干净+可快进才 merge --ff-only，
+                    有未提交改动(DIRTY)/分歧(DIVERGED)/无 .git 或无 git(UNSUPPORTED)/报错(FAILED) 一律中止不覆盖、不自动重启，
+                    返回 UpdateResult；阻塞 subprocess，UI 必须后台线程调用（设置页「关于」tab 的检查更新按钮）
   tasks/  可插拔任务
     base.py     Task 基类 + 注册表（register/get_task/all_tasks）+ _make_rotation()（包多开轮转）+ dungeon_tasks()
     sniper.py   SniperTask（抢关注；内部名仍叫 sniper，tasks.sniper 不改名）：preflight() 自检 + run() 主循环；刷新=每轮重进货架 _enter_shelf()
@@ -367,6 +370,11 @@ mhxy/
 
 ## 怎么跑
 - 用户侧：双击 `启动.bat`，界面里「标定/加装备」→ 看 captures/ 或跑一遍 → 就绪后直接点「运行」实跑。
+- **检查更新（user 2026-11-24 拍板，仅源码环境）**：设置页「关于」tab 有「检查更新」按钮，后台线程跑
+  `core/updater.check_for_update()` 用 git 拉取。流程是 fetch → 比较上游 → 工作区干净且可快进才 `merge --ff-only`；
+  本地有未提交改动/与远端分歧/无 `.git`（exe 分发目录）/找不到 git 都**中止并提示、绝不强制覆盖**；成功后只提示
+  **手动重启**（不自动拉起进程，避免中断正在跑的任务）。git 输出 `GIT_TERMINAL_PROMPT=0` 防凭据弹窗、
+  `core.quotepath=false` 保中文文件名、Windows 下 `CREATE_NO_WINDOW` 隐藏黑窗。
 - 停止：界面「停止」按钮，或**急停热键**（默认 Ctrl+Alt+F12，设置里可改），或**鼠标甩到屏幕角**
   （默认右上角，设置 `failsafe_corner` 可改/可关）。
   ⚠ 甩角急停由 **GUI 轮询真实光标位置**实现（`app._poll_hotkey` + `_in_failsafe_corner`），不是 pyautogui

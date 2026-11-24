@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """设置页：基础项 + 「速度与节奏（手速）」一组滑块。独立页面类，由 App 统一导入（App.PAGE_CLASSES）。"""
 
+import threading
+
 import customtkinter as ctk
 
 from .. import theme as T
+from ... import __version__ as APP_VERSION
 from ...core import config as cfg_mod
+from ...core import updater
 from ..common import (
     Card, bind_wraplength,
     HOTKEY_NAMES, FAILSAFE_CORNERS, FAILSAFE_LABELS, FAILSAFE_VALUE_OF,
@@ -261,6 +265,80 @@ class SettingsPage(ctk.CTkFrame):
                            justify="left")
         lbl.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 16))
         bind_wraplength(lbl, padding=32)
+
+        self._build_update_card(card, row=2)
+
+    # ---- 检查更新（源码环境 git 拉取；阻塞操作放后台线程）----
+    def _build_update_card(self, parent, row):
+        """关于卡里的「检查更新」区：版本号 + 按钮 + 状态文字。git 操作慢，点击后禁用按钮、
+        后台线程跑 updater.check_for_update，结果经 app.after(0,...) 回主线程刷新。"""
+        box = ctk.CTkFrame(parent, fg_color=T.SURFACE_2, corner_radius=T.RADIUS_SM)
+        box.grid(row=row, column=0, sticky="ew", padx=16, pady=(0, 16))
+        box.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(box, text=f"当前版本：v{APP_VERSION}", font=self.fonts["body"],
+                     text_color=T.TEXT).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 6))
+
+        # 按钮与状态同一行：按钮固定宽，状态文字占满余下宽度并自动换行
+        self.btn_update = ctk.CTkButton(
+            box, text="检查更新", font=self.fonts["btn"], height=36, width=120,
+            corner_radius=T.RADIUS_SM, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+            text_color=T.ON_ACCENT, command=self._check_update)
+        self.btn_update.grid(row=1, column=0, sticky="w", padx=14, pady=(0, 12))
+
+        self.lbl_update_status = ctk.CTkLabel(
+            box, text="源码环境点击后用 git 拉取最新代码。", font=self.fonts["small"],
+            text_color=T.TEXT_DIM, justify="left", anchor="w")
+        self.lbl_update_status.grid(row=1, column=1, sticky="ew", padx=(4, 14), pady=(0, 12))
+        bind_wraplength(self.lbl_update_status, padding=48)
+
+        self._updating = False
+
+    def _check_update(self):
+        """点击「检查更新」：防重入 + 后台线程跑 git，绝不在 Tk 主线程做阻塞 subprocess。"""
+        if self._updating:
+            return
+        self._updating = True
+        self.btn_update.configure(state="disabled", text="检查中…")
+        self._set_update_status("正在用 git 检查并拉取更新，请稍候…", T.TEXT_DIM)
+
+        def work():
+            result = updater.check_for_update()
+            # 回主线程刷新 UI（after 由 Tk 在主线程执行，线程安全）
+            try:
+                self.app.after(0, lambda: self._on_update_done(result))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_update_done(self, result):
+        """更新检查结束（主线程）：恢复按钮、按状态着色展示，并 toast 提醒。"""
+        self._updating = False
+        try:
+            self.btn_update.configure(state="normal", text="检查更新")
+        except Exception:
+            pass
+        color = {
+            updater.UPDATED: T.SUCCESS,
+            updater.UP_TO_DATE: T.TEXT,
+            updater.DIRTY: T.DANGER,
+            updater.DIVERGED: T.DANGER,
+            updater.FAILED: T.DANGER,
+            updater.UNSUPPORTED: T.TEXT_DIM,
+        }.get(result.status, T.TEXT)
+        shown = result.message if not result.detail else f"{result.message}\n{result.detail}"
+        self._set_update_status(shown, color)
+        # toast 只放结论一行（detail 较长，完整内容看按钮旁状态文字）
+        toast_color = T.DANGER if result.status in (updater.DIRTY, updater.DIVERGED,
+                                                     updater.FAILED) else None
+        self.app.toast(result.message, toast_color)
+
+    def _set_update_status(self, text, color):
+        try:
+            self.lbl_update_status.configure(text=text, text_color=color)
+        except Exception:
+            pass
 
     # ---- 速度与节奏卡片 ----
     def _build_speed_card(self, parent):
