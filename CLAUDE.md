@@ -154,9 +154,12 @@ mhxy/
     account_gallery.py  账号库弹窗（登录游戏用）：每号框**两张图**（账号卡片 + 角色卡片）入库 + 挑最多 5 个进登录队列，
                       仿队长ID 库；数据/槽文件见 core/account_history.py
     inventory_items_dialog.py 整理背包「物品清单」管理弹窗（缩略图+名字+动作下拉+框选添加，写 tasks.organize_bag.items）
-    daily_card.py       起始页「日常任务卡」：把「日常」页的运行控制（开始/停止 · 调整窗口/刷新 · 各设置开关）
+    daily_card.py       起始页「日常任务卡」：把「日常」页的运行控制（开始/停止 · 调整窗口/刷新 · 一键组队/一键解散 · 各设置开关）
                         +「已勾选任务」只读清单搬到起始页；整卡可折叠；设置各写自己的命名空间、与「日常」页同源，
-                        运行由 DailyPage 单例 runner 承载（本卡只是入口 + 状态镜像，见文件 docstring）
+                        日常链运行由 DailyPage 单例 runner 承载（本卡只是入口 + 状态镜像，见文件 docstring）。
+                        「一键组队/解散」的 runner 则挂在本卡自身（组队=get_task("dungeon")、解散=get_task("disband")，
+                        与配置页组队卡同源），_start_utility 统一启动、_pump_utility 抽日志+复位、stop_pending 供急停；
+                        并发由 TaskRunner 全局唯一运行锁拦截。本卡是 StartPage 子组件，急停靠 StartPage.stop_pending 转发
     pages/organize_bag.py  OrganizeBagPage：整理背包独立页（工具分类页「整理背包」tab）——一键整理/标定/管理物品；
                           原在通用页卡片，迁到工具页；共享命名空间 tasks.organize_bag。「自动整理背包」开关
                           已迁到「日常」页控制区（影响日常运行中自动清背包）
@@ -317,8 +320,9 @@ mhxy/
   不触发「自动整理背包」；「已组队」是会话条件属共享组队设置、不动。实现= `DailyPage._single_build_cfg` 内存覆盖。
   ⚠ 单跑时该内存覆盖还置 `tasks.daily.explicit_steps=True`：引擎 `_enabled_steps` 据此**跳过「缺行补到末尾」**
   （否则单跑 steps 只含一个任务，其它 CHAINABLE 会被补回来 → 单跑跑成整条日常链）。
-- **组队是共享能力、单独可一键触发**：握手在 `core/teaming.TeamFormation`；通用页有「选队长 + 一键组队」
-  （跑 `DungeonTask`），角色参数存共享 `tasks.teaming`。副本/抓鬼各自单跑时都先自动组队；**但「日常」一趟里的多个多人步只组一次**——
+- **组队是共享能力、单独可一键触发**：握手在 `core/teaming.TeamFormation`；触发入口有两处且同源——
+  任务配置页组队卡（含「选队长 + 一键组队」）与**起始页日常任务卡头部的「一键组队/一键解散」按钮**（user 2026-11-24 加），
+  都跑 `DungeonTask`（组队）/`DisbandTask`（解散），角色参数存共享 `tasks.teaming`。副本/抓鬼各自单跑时都先自动组队；**但「日常」一趟里的多个多人步只组一次**——
   队伍要活到最后一个多人步跑完才解散（`daily._disband_after_multi`），故 `daily` 用 `_team_ready` 记「本趟已组好队」，
   经 `_collective_run` 临时把 `tasks.teaming.skip_team` 置 True 让后续多人步（副本 2..N、抓鬼）复用（`finally` 恢复、只改内存不落盘），
   任务侧用 `self._team_formed` 回报队伍可用。手动单跑各任务不受影响。

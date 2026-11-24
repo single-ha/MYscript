@@ -248,3 +248,13 @@ class StartPage(ctk.CTkFrame):
             self.app.log_line(msg, level, self.LOG_SOURCE)
         if not self.login_runner.is_running():
             self._sync_login_btn()
+
+    def stop_pending(self):
+        """急停/关窗钩子：daily_card 是子组件，其组队/解散 runner 不在 App 的页面属性扫描里，
+        在此转发给卡片（同 config 页转发组队卡的模式），保证急停能停掉一键组队/解散。"""
+        dc = getattr(self, "daily_card", None)
+        if dc is not None and hasattr(dc, "stop_pending"):
+            try:
+                dc.stop_pending()
+            except Exception:
+                pass

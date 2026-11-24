@@ -19,6 +19,7 @@ import customtkinter as ctk
 
 from . import theme as T
 from ..core import config as cfg_mod
+from ..core.runner import TaskRunner
 from ..tasks import get_task
 from ..tasks.daily import (CHAINABLE, TEAM_STEPS, TEAM_STEP_TITLES,
                            ORGANIZE_STEP, FLOW_TIMING_STEP, FLOW_SHUTDOWN_STEP,
@@ -140,6 +141,9 @@ class DailyRunCard(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self._open = True        # 内容（执行链清单）是否展开
         self._run_sig = None     # 上一次套到按钮上的 (文字, 风格) 签名，用于去抖（见 sync_run）
+        # 一键组队/一键解散各自的后台 runner（全局唯一运行锁由 TaskRunner 保证，不会与日常链并发）
+        self.runner_team = None
+        self.runner_disband = None
 
         self._build_head()
         self._body = ctk.CTkFrame(self, fg_color="transparent")
@@ -169,8 +173,9 @@ class DailyRunCard(ctk.CTkFrame):
         self.lbl_badge = ctk.CTkLabel(head, text="", font=self.fonts["small"], text_color=T.TEXT_DIM, anchor="w")
         self.lbl_badge.grid(row=0, column=2, sticky="w", padx=(10, 0))
 
+        # 按钮另起一行（user 2026-11-24：不再挤在标题同一行），左对齐排开，窄窗口也不压标题。
         btns = ctk.CTkFrame(head, fg_color="transparent")
-        btns.grid(row=0, column=3, sticky="e")
+        btns.grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
         ctk.CTkButton(btns, text="调整窗口", font=self.fonts["body"], height=36, width=104,
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
@@ -179,6 +184,22 @@ class DailyRunCard(ctk.CTkFrame):
                       corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
                       border_width=1, border_color=T.BORDER,
                       command=self.refresh).pack(side="left", padx=(8, 0))
+        # 一键组队/解散（与任务配置页组队卡同源：组队=get_task("dungeon")，解散=get_task("disband")）。
+        # 放在起始页日常卡，省得为单独组队切到配置页；标定/队长ID 仍在配置页组队卡维护。
+        self.btn_team = ctk.CTkButton(
+            btns, text="👥  一键组队", font=self.fonts["body"], height=36, width=104,
+            corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
+            border_width=1, border_color=T.BORDER, command=self._toggle_team)
+        self.btn_team.pack(side="left", padx=(8, 0))
+        Tooltip(self.btn_team, "让所选多开窗口自动握手组队（队长建队→队员申请→队长接受）。"
+                               "组队标定/队长ID 在「任务配置→组队（共享）」卡维护。", self.fonts)
+        self.btn_disband = ctk.CTkButton(
+            btns, text="✖  一键解散", font=self.fonts["body"], height=36, width=104,
+            corner_radius=T.RADIUS_SM, fg_color=T.BTN, hover_color=T.BTN_HOVER, text_color=T.TEXT,
+            border_width=1, border_color=T.BORDER, command=self._toggle_disband)
+        self.btn_disband.pack(side="left", padx=(8, 0))
+        Tooltip(self.btn_disband, "让所选多开窗口里的每个号都退出当前队伍（所有人退队）。"
+                                  "退队模板（退出队伍按钮）在「任务配置→组队（共享）」卡里标定。", self.fonts)
         self.btn_run = ctk.CTkButton(btns, text=self.RUN_LABEL, font=self.fonts["btn"], height=36, width=150,
                                      corner_radius=T.RADIUS_SM, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
                                      text_color=T.ON_ACCENT, command=self._toggle_run)
@@ -305,6 +326,61 @@ class DailyRunCard(ctk.CTkFrame):
         page._toggle_run(save=False)
         self.sync_run()
 
+    # ------------------------------------------------------------------
+    # 一键组队 / 一键解散（与任务配置页组队卡同源，runner 挂在本卡上）
+    # ------------------------------------------------------------------
+    def _start_utility(self, task_name, runner_attr, btn, busy_text, log_tag):
+        """通用：启动一个工具型任务（组队=dungeon / 解散=disband）。返回 runner；启动失败返回 None。
+        全局唯一运行锁在 TaskRunner.start 内拦截并发（日常链在跑时这里会被拒绝并 toast）。"""
+        task_cls = get_task(task_name)
+        if task_cls is None:
+            self.app.log_line(f"找不到{log_tag}任务。", "error", log_tag)
+            return None
+        runner = TaskRunner(task_cls(), cfg_mod.load_config())
+        ok, problems = runner.start()
+        if not ok:
+            for p in problems:
+                self.app.log_line(f"无法开始{log_tag}：" + p, "error", log_tag)
+            return None
+        setattr(self, runner_attr, runner)
+        btn.configure(text=busy_text, fg_color=T.DANGER, hover_color=T.DANGER_HOVER,
+                      text_color=T.ON_ACCENT, border_width=0, state="normal")
+        return runner
+
+    def _toggle_team(self):
+        # 运行中再点 = 停止（与配置页组队卡一致）
+        if self.runner_team and self.runner_team.is_running():
+            self.runner_team.stop()
+            self.btn_team.configure(text="停止中…", state="disabled")
+            return
+        self._start_utility("dungeon", "runner_team", self.btn_team,
+                            "■  停止组队", "组队")
+
+    def _toggle_disband(self):
+        if self.runner_disband and self.runner_disband.is_running():
+            self.runner_disband.stop()
+            self.btn_disband.configure(text="停止中…", state="disabled")
+            return
+        self._start_utility("disband", "runner_disband", self.btn_disband,
+                            "■  停止解散", "解散")
+
+    def _pump_utility(self, runner, btn, normal_text, log_tag):
+        """抽干一个工具 runner 的日志到全局面板，跑完把按钮复位。"""
+        if not runner:
+            return
+        for level, msg, _src in runner.drain_logs():
+            self.app.log_line(msg, level, log_tag)
+        if not runner.is_running() and btn.cget("text") != normal_text:
+            btn.configure(text=normal_text, fg_color=T.BTN, hover_color=T.BTN_HOVER,
+                          text_color=T.TEXT, border_width=1, border_color=T.BORDER, state="normal")
+
+    def stop_pending(self):
+        """急停/关窗钩子：停掉本卡正在跑的组队/解散（App.stop_all_tasks 对每个页面调）。"""
+        for attr in ("runner_team", "runner_disband"):
+            runner = getattr(self, attr, None)
+            if runner and runner.is_running():
+                runner.stop()
+
     def sync_run(self):
         """按钮状态镜像：读「日常」页 runner 的状态，套到本卡按钮上（每 tick 调）。
 
@@ -346,3 +422,6 @@ class DailyRunCard(ctk.CTkFrame):
 
     def pump(self):
         self.sync_run()
+        # 一键组队/解散的日志与按钮复位（runner 挂在本卡，自己轮询；与日常链 runner 互不影响）
+        self._pump_utility(self.runner_team, self.btn_team, "👥  一键组队", "组队")
+        self._pump_utility(self.runner_disband, self.btn_disband, "✖  一键解散", "解散")
