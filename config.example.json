@@ -204,7 +204,10 @@
                 "clock": "templates/tm_clock.png",
                 "flag_next_map": "templates/tm_flag_next_map.png",
                 "shop_icon": "templates/tm_shop_icon.png",
-                "activity_icon": "templates/tm_activity_icon.png"
+                "activity_icon": "templates/tm_activity_icon.png",
+                "hpmp_shop_flag": null,
+                "hp_potion": null,
+                "mp_potion": null
             }
         },
         "sniper": {

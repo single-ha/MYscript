@@ -22,9 +22,12 @@ from ..core import vision
 from ..core import window as win_mod
 from ..core import rotation
 from ..core import recorder
+from ..core import scan
 from ..core.config import (CAPTURES_DIR, ACTIVITY_UI_TPL_KEY, DAILY_ACTIVITY_TAB_TPL_KEY,
-                          GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
-                          HPMP_POPUP_TPL_KEY, JOIN_BUTTON_TPL_KEY)
+                          GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY,
+                          HPMP_POPUP_TPL_KEY, HPMP_SHOP_FLAG_TPL_KEY,
+                          HP_POTION_TPL_KEY, MP_POTION_TPL_KEY,
+                          HPMP_POTION_TPL_KEYS, JOIN_BUTTON_TPL_KEY)
 from ..core.input import CLICK_DELAY, TEAM_CLICK_DELAY
 
 _REGISTRY = {}
@@ -342,8 +345,8 @@ class Task:
         # 任务画面本身是「带×的弹窗式界面」时整个挂起（见 POPUP_GUARD_OFF 类属性）。
         if getattr(self, "POPUP_GUARD_OFF", False):
             return
-        # 红/蓝不足「补充」弹窗（确定→购买→使用→关窗）优先处理：它是有序多步流程，处理期间直接返回，
-        # 免得下面的「点×」守卫把补充弹窗/购买窗口当普通公告弹窗关掉。该守卫有独立开关与节流（hpmp_guard）。
+        # 红/蓝不足「补充」弹窗（确定→购买→关商城→开背包找药双击→关背包）优先处理：它是有序多步流程，
+        # 处理期间直接返回，免得下面的「点×」守卫把补充弹窗/购买窗口当普通公告弹窗关掉。该守卫有独立开关与节流（hpmp_guard）。
         if self._handle_hpmp_purchase(ctx):
             return
         cfg = ctx.cfg or {}
@@ -394,7 +397,9 @@ class Task:
                     level="warn")
 
     # ------------------------------------------------------------------
-    # 红/蓝不足「补充」弹窗：确定 → 购买 → 使用 → 关闭购买窗口（有序四步，全任务等待期共用）
+    # 红/蓝不足「补充」弹窗：确定 → 购买 → 关商城 → 开背包找红/蓝药双击 → 关背包（全任务等待期共用）
+    #   user 2026-11-24 改：点「购买」后不再点购买窗里的「使用」，改为关掉商城、开背包在背包列表区
+    #   翻找药水图标（hp_potion 红药 / mp_potion 蓝药），各双击一瓶，找不到的那种跳过，最后关背包。
     # ------------------------------------------------------------------
     def _hpmp_sleep(self, ctx, seconds):
         """红/蓝补充流程内部用的可中断短睡（不回调守卫，避免递归）。"""
@@ -423,15 +428,113 @@ class Task:
             self._hpmp_sleep(ctx, 0.25)
         return None
 
+    def _hpmp_close_shop(self, ctx, cfg, window, threshold, settle):
+        """点「购买」后关掉商城/购买窗口，给开背包让出干净画面。优先点面板「×」(panel_close)；
+        没找到「×」时，仅当购买窗口仍在（还能识别到「购买」按钮）才按一次 Esc 兜底；
+        已自动关掉就不盲按 Esc，避免误关任务正在用的背包/活动面板。"""
+        from ..ui import ui_state
+        self._hpmp_sleep(ctx, settle)
+        close_pt = ui_state.find_panel_close(cfg, window, threshold)
+        if close_pt is not None:
+            self._hpmp_click(ctx, close_pt, "关闭购买窗口(×)")
+            self._hpmp_sleep(ctx, settle)
+            return
+        if ui_state.find_shared_template(cfg, window, BUY_BUTTON_TPL_KEY, threshold) is not None:
+            ctx.mouse.press_key("esc")
+            ctx.log("红/蓝补充：没找到面板「×」，按 Esc 关闭购买窗口。", level="hit")
+            self._hpmp_sleep(ctx, settle)
+        else:
+            ctx.log("红/蓝补充：购买窗口已自动关闭，无需再关。", level="info")
+
+    def _hpmp_open_bag_and_use(self, ctx, cfg, hg, stpl, threshold):
+        """开背包 → 在背包列表区滚轮翻找红/蓝药水图标，各双击一瓶 → 关背包。
+        返回 True=流程跑完（哪怕一瓶都没找到，也算本拍归它处理）；False=打不开背包/被急停。
+        药水图标至少要标一个（启用条件已在调用方保证），找不到的那种静默跳过、不报错。"""
+        window = ctx.window
+        # 开背包前先确保目标窗口在前台（键盘快捷键只发给前台窗口）
+        try:
+            window.activate()
+        except Exception:
+            pass
+        if not ctx.send_hotkey("open_bag"):
+            ctx.log("红/蓝补充：打不开背包（缺 open_bag 快捷键），放弃本次用药。", level="warn")
+            return False
+        ctx.log("红/蓝补充：已打开背包，翻找红/蓝药水…", level="hit")
+        self._hpmp_sleep(ctx, float(hg.get("bag_open_settle_sec", 0.8)))
+        if ctx.should_stop():
+            return False
+
+        shared_regions = (cfg.get("tasks", {}) or {}).get("shared", {}).get("regions") or {}
+        bag_region = shared_regions.get("bag_list")
+
+        def grab_rect():
+            return window.region_to_screen_rect(bag_region) if bag_region else window.rect()
+
+        used_any = False
+        for key in HPMP_POTION_TPL_KEYS:
+            if ctx.should_stop():
+                break
+            tpl_path = stpl.get(key)
+            tpl = vision.load_template(tpl_path) if tpl_path else None
+            if tpl is None:
+                continue   # 这种药水没标定 → 跳过（另一种标了仍会处理）
+            label = "红药" if key == HP_POTION_TPL_KEY else "蓝药"
+
+            def probe(scene, rect, _tpl=tpl, _label=label):
+                if scene is None:
+                    return scan.SCROLL, None
+                hit = vision.match(scene, _tpl, threshold)
+                if hit is None:
+                    return scan.SCROLL, None
+                sx, sy, score = rect[0] + hit[0], rect[1] + hit[1], hit[2]
+                # 识别命中后拟人停顿再双击（双击一次=用掉一瓶），与宝图双击藏宝图同款
+                self._hpmp_sleep(ctx, random.uniform(*CLICK_DELAY))
+                if ctx.should_stop():
+                    return scan.ACCEPT, (sx, sy, score)
+                ctx.mouse.double_click(sx, sy)
+                ctx.log(f"红/蓝补充：背包里双击使用{_label}（{score:.3f}）。", level="hit")
+                self._hpmp_sleep(ctx, float(hg.get("double_click_gap_sec", 0.3)))
+                return scan.ACCEPT, (sx, sy, score)
+
+            res = scan.scroll_search(
+                grab_rect=grab_rect, probe=probe, mouse=ctx.mouse,
+                grab_fn=window.grab_screen, should_stop=ctx.should_stop,
+                sleep=lambda s: self._hpmp_sleep(ctx, s),
+                scroll_step=hg.get("scroll_step", -3),
+                max_tries=max(1, int(hg.get("scroll_max_tries", 12))),
+                settle_sec=hg.get("scroll_settle_sec", 0.35),
+                reset_to_top=True,
+                end_diff=hg.get("scroll_end_diff", 2.0),
+                reset_max=hg.get("scroll_reset_max", 20),
+                log=ctx.log, label=f"{label}背包")
+            if res.found:
+                used_any = True
+            elif res.stopped:
+                break
+            else:
+                ctx.log(f"红/蓝补充：背包翻完没找到{label}，跳过。", level="info")
+
+        # 关背包：优先点面板「×」；没标/找不到则发 close_panel(Esc) 兜底
+        from ..ui import ui_state
+        close_pt = ui_state.find_panel_close(cfg, window, threshold)
+        if close_pt is not None:
+            self._hpmp_click(ctx, close_pt, "关闭背包(×)")
+        else:
+            ctx.send_hotkey("close_panel")
+            ctx.log("红/蓝补充：没找到面板「×」，按 Esc 关闭背包。", level="hit")
+        if not used_any:
+            ctx.log("红/蓝补充：背包里两种药水都没找到（请检查红/蓝药图标标定）。", level="warn")
+        return True
+
     def _handle_hpmp_purchase(self, ctx):
         """红/蓝不足补充守卫。返回 True=本拍已归它处理（无论成功/失败，调用方应跳过「点×」守卫）；
         False=当前没有补充弹窗、也没在处理，交回普通「点×」守卫。
 
-        触发与节流独立于 popup_guard（hpmp_guard 块）：开关开 + 复用的公共模板
-        （弹窗标识 hpmp_popup / 确定 gg_next / 购买 buy_button / 使用 flag_next_map）都标定 +
-        目标窗口在前台，才会动手；多开绝不在后台号点。必须【先认出弹窗标识 hpmp_popup】才走流程，
+        触发与节流独立于 popup_guard（hpmp_guard 块）：开关开 + 公共模板
+        （弹窗标识 hpmp_popup / 确定 gg_next / 购买 buy_button / 红药 hp_potion 或蓝药 mp_potion 至少一个）
+        都标定 + 目标窗口在前台，才会动手；多开绝不在后台号点。必须【先认出弹窗标识 hpmp_popup】才走流程，
         不能只看「确定」——那是抓鬼每轮结束都会出现的按钮，单凭它会把正常画面误当补充弹窗。
-        认出后串行跑四步，任一步等不到目标按钮就放弃本次（告警一次），下次扫描重新从标识开始。"""
+        认出后串行：确定→购买→关商城→开背包找药水双击→关背包；购买按钮等不到就放弃本次，下次扫描重来。"""
         # 重入保护：处理流程内部的短睡不再触发守卫
         if getattr(self, "_hpmp_busy", False):
             return False
@@ -453,64 +556,73 @@ class Task:
 
         from ..ui import ui_state
         threshold = float(hg.get("match_threshold", 0.85))
-        # 先确认弹窗标识 + 三步按钮模板都标定（标识=hpmp_popup、确定=gg_next、购买=buy_button、
-        # 使用=flag_next_map，缺一静默交回普通守卫）。关窗 panel_close 不在此硬卡：没标就退回 Esc 兜底。
+        # 公共前提：购买按钮 + 红/蓝药水至少一个要标定（药水是最终双击目标）。
+        # 入口标识 hpmp_popup（补充提示框）/ hpmp_shop_flag（直接弹购买界面）至少要一个有效，
+        # 走提示框老形态才额外需要 gg_next「确定」。
         shared = (cfg.get("tasks", {}) or {}).get("shared", {}) or {}
         stpl = shared.get("templates") or {}
-        for k in (HPMP_POPUP_TPL_KEY, GG_NEXT_TPL_KEY, BUY_BUTTON_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY):
-            if not stpl.get(k) or vision.load_template(stpl.get(k)) is None:
+
+        def _tpl_ok(k):
+            p = stpl.get(k)
+            return bool(p) and vision.load_template(p) is not None
+        if not _tpl_ok(BUY_BUTTON_TPL_KEY):
+            return False
+        potion_ready = any(_tpl_ok(k) for k in HPMP_POTION_TPL_KEYS)
+        if not potion_ready:
+            return False
+        popup_ok = _tpl_ok(HPMP_POPUP_TPL_KEY)
+        shop_flag_ok = _tpl_ok(HPMP_SHOP_FLAG_TPL_KEY)
+        if not (popup_ok or shop_flag_ok):
+            return False   # 两个红/蓝场景标识都没有 → 无法安全识别，整个守卫静默
+
+        # 分流（user 2026-11-24）：两种红/蓝不足形态都要接。
+        #   形态① 先认「补充」提示框标识 hpmp_popup → 点确定(gg_next) 进购买界面；
+        #   形态② 没有提示框、直接弹购买界面 → 认 hpmp_shop_flag，跳过确定直接买。
+        # 绝不只凭通用 gg_next/buy_button 触发（它们也是抓鬼/抢关注的按钮，会误点正常画面）。
+        direct_shop = False
+        confirm = None
+        if popup_ok and ui_state.find_shared_template(cfg, window, HPMP_POPUP_TPL_KEY, threshold) is not None:
+            confirm = ui_state.find_shared_template(cfg, window, GG_NEXT_TPL_KEY, threshold)
+            if confirm is None:
+                # 提示框标识在、但「确定」还没渲染出来：本拍不动，下次扫描再看
                 return False
-
-        # 关键：先认「补充红/蓝」弹窗专属标识，认不出就不动——只看到「确定按钮」不算
-        # （抓鬼每轮结束都弹它，单凭确定会把正常画面误当补充弹窗、乱点购买/使用）。
-        if ui_state.find_shared_template(cfg, window, HPMP_POPUP_TPL_KEY, threshold) is None:
-            return False
-        confirm = ui_state.find_shared_template(cfg, window, GG_NEXT_TPL_KEY, threshold)
-        if confirm is None:
-            # 标识在、但「确定」还没匹配上（可能刚弹出还没渲染完）：本拍不动，下次扫描再看
+        elif shop_flag_ok and ui_state.find_shared_template(
+                cfg, window, HPMP_SHOP_FLAG_TPL_KEY, threshold) is not None:
+            direct_shop = True
+        else:
+            # 当前画面两个红/蓝标识都没认到 → 不是补充场景，交回普通守卫
             return False
 
-        # 命中补充弹窗：本拍起归红/蓝流程处理
+        # 命中红/蓝场景：本拍起归红/蓝流程处理
         self._hpmp_busy = True
         settle = float(hg.get("step_settle_sec", 0.8))
         timeout = float(hg.get("step_timeout_sec", 12.0))
         try:
-            ctx.log("检测到红/蓝不足「补充」弹窗 → 自动 确定→购买→使用→关窗。", level="hit")
-            # 第 1 步：点「确定」(gg_next)，打开购买（商城）窗口
-            self._hpmp_click(ctx, confirm, "确定")
-            self._hpmp_last_action = time.time()
-            buy = self._hpmp_wait(ctx, window, cfg, BUY_BUTTON_TPL_KEY, threshold, timeout, settle)
+            if direct_shop:
+                ctx.log("检测到红/蓝不足购买界面（无提示弹窗）→ 直接购买→开背包找药双击。", level="hit")
+            else:
+                ctx.log("检测到红/蓝不足「补充」弹窗 → 自动 确定→购买→开背包找药双击。", level="hit")
+                # 形态①第 1 步：点「确定」(gg_next)，打开购买（商城）窗口
+                self._hpmp_click(ctx, confirm, "确定")
+                self._hpmp_last_action = time.time()
+            # 等购买界面的「购买」按钮出现（形态①刚点完确定要等界面切换；形态②界面已在，通常一拍即中）
+            buy = self._hpmp_wait(ctx, window, cfg, BUY_BUTTON_TPL_KEY, threshold, timeout,
+                                  0.0 if direct_shop else settle)
             if buy is None:
-                ctx.log("红/蓝补充：点「确定」后未出现「购买」按钮，放弃本次（下次扫描重来）。", level="warn")
+                ctx.log("红/蓝补充：未出现「购买」按钮，放弃本次（下次扫描重来）。", level="warn")
                 return True
-            # 第 2 步：点「购买」(buy_button)，道具进背包
+            # 点「购买」(buy_button)，道具进背包
             self._hpmp_click(ctx, buy, "购买")
             self._hpmp_last_action = time.time()
-            use = self._hpmp_wait(ctx, window, cfg, FLAG_NEXT_MAP_TPL_KEY, threshold, timeout, settle)
-            if use is None:
-                ctx.log("红/蓝补充：点「购买」后未出现「使用」按钮，放弃本次（下次扫描重来）。", level="warn")
-                return True
-            # 第 3 步：点「使用」(flag_next_map)，把刚买的药用上
-            self._hpmp_click(ctx, use, "使用")
-            self._hpmp_last_action = time.time()
-            self._hpmp_sleep(ctx, float(hg.get("use_settle_sec", 1.0)))
+            self._hpmp_sleep(ctx, settle)
             if ctx.should_stop():
                 return True
-            # 第 4 步：关闭购买窗口——优先点通用面板「×」(panel_close)；没找到「×」时，
-            # 仅当购买窗口仍在（还能识别到「购买」或「使用」按钮）才按一次 Esc 兜底；
-            # 两个都看不到=窗口已自动关掉，直接跳过，绝不盲按 Esc 误关任务正在用的背包/活动面板。
-            self._hpmp_sleep(ctx, settle)
-            close_pt = ui_state.find_panel_close(cfg, window, threshold)
-            if close_pt is not None:
-                self._hpmp_click(ctx, close_pt, "关闭购买窗口(×)")
-            else:
-                still_open = (ui_state.find_shared_template(cfg, window, BUY_BUTTON_TPL_KEY, threshold) is not None
-                              or ui_state.find_shared_template(cfg, window, FLAG_NEXT_MAP_TPL_KEY, threshold) is not None)
-                if still_open:
-                    ctx.mouse.press_key("esc")
-                    ctx.log("红/蓝补充：没找到面板「×」，按 Esc 关闭购买窗口。", level="hit")
-                else:
-                    ctx.log("红/蓝补充：购买窗口已自动关闭，无需再关。", level="info")
+            # 关掉商城购买窗口（背包列表区标定的是纯背包画面，不能让商城叠在上面）
+            self._hpmp_close_shop(ctx, cfg, window, threshold, settle)
+            if ctx.should_stop():
+                return True
+            # 开背包 → 找红/蓝药水各双击一瓶 → 关背包
+            self._hpmp_open_bag_and_use(ctx, cfg, hg, stpl, threshold)
             self._hpmp_last_action = time.time()
             ctx.log("红/蓝补充处理完成。", level="hit")
         finally:

@@ -339,6 +339,20 @@ mhxy/
   守卫挂在 `base.Task._interruptible_sleep`（节流 `popup_guard.interval_sec`，顶层配置），对**当前前台**窗口截图找 `×`→拟人点掉；
   同一弹窗连点 `max_clicks` 次不消失 → Esc 兜底（`esc_fallback`+`max_esc` 封顶）→ 告警放弃。多开绝不在后台号点（`window.is_foreground` 门控）；
   拓印阶段 `_trace_active` 置位挂起守卫（`dungeon_base._handle_tuoying` 包了 try/finally）。
+  **红/蓝不足补充守卫（`base.Task._handle_hpmp_purchase`，节流块 `hpmp_guard`，与弹窗守卫同节拍但优先执行）**：
+  只在目标窗口前台动手，且**必须先认出红/蓝专属标识**——支持两种弹窗形态（user 2026-11-24 起）：
+  ① 先弹「补充」提示框：认 `hpmp_popup` → 点「确定」`gg_next` 进购买界面；
+  ② **直接弹购买界面（无提示框）**：认 `hpmp_shop_flag` → 跳过确定、直接点「购买」。
+  两个标识**至少标一个**，绝不只凭通用 `gg_next`/`buy_button` 触发（它们也是抓鬼/抢关注的按钮，会误点正常画面）。
+  **点「购买」(`buy_button`) 后不再点购买窗里的「使用」(`flag_next_map`)**，改为
+  关商城（面板 `panel_close` 的×，找不到且购买窗仍开才 Esc）→ `open_bag` 开背包 → 在共享 `bag_list` 区用
+  `scan.scroll_search` 滚轮翻找红药 `hp_potion`/蓝药 `mp_potion` 图标，**各双击一瓶**（`mouse.double_click`，
+  双击一次=用一瓶；找不到的那种静默跳过）→ 关背包（×或 `close_panel` Esc）。启用条件：`buy_button` +
+  (`hpmp_popup` 或 `hpmp_shop_flag` 至少一个有效) + **红/蓝药水至少标一个**；走形态①才额外需要 `gg_next`，
+  缺一按可用形态静默降级。这些键都是公共标定里的**可选**行（不参与就绪计数），常量 `HPMP_POPUP_TPL_KEY`/
+  `HPMP_SHOP_FLAG_TPL_KEY`/`HP_POTION_TPL_KEY`/`MP_POTION_TPL_KEY`/`HPMP_POTION_TPL_KEYS` 在 config.py，
+  均不进 `SHARED_TPL_KEYS`（守卫直接读 `tasks.shared.templates`）。背包滚动参数走 `hpmp_guard.scroll_*`，
+  内部等待一律 `_hpmp_sleep`（不回调守卫、可急停），`_hpmp_busy` 重入保护。
   **活动界面就绪确认（user 2026-09-26 拍板）**：可选共享模板 `activity_ui_flag`（活动面板打开后独有的元素，同在公共标定、不叠加不参与就绪）。
   各任务发完 `open_activity` 快捷键后走 `base.Task._wait_activity_ui`（轮询整窗找该模板，默认 3s）——**确认活动界面真弹好了才开始滚轮翻卡片**，
   避免界面延迟/被公告弹窗挡时在空画面上白翻。**未标定/超时→退回原固定 sleep(0.6s)**，故不标也能照常跑；阈值/等待秒数 `loop.activity_ui_wait_sec`。

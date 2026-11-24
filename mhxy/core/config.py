@@ -82,10 +82,24 @@ FLAG_NEXT_MAP_TPL_KEY = "flag_next_map"
 # 抢关注与守卫都像读 shop_icon 那样直接读 tasks.shared.templates（旧 sniper 值保留兼容兜底）。
 BUY_BUTTON_TPL_KEY = "buy_button"
 # 红/蓝不足「补充」弹窗的专属标识（存 tasks.shared.templates.hpmp_popup，公共标定，可选）：
-# 弹窗上独有的一块画面元素（标题/图标等）。守卫必须【先认出这个标识】才走补充流程——
-# 只看到「确定按钮」gg_next 不再误触发（那本是抓鬼每轮结束都出现的按钮）。
-# 与 gg_next / buy_button / flag_next_map 都标齐才启用。不进 SHARED_TPL_KEYS（守卫直接读 shared）。
+# 弹窗上独有的一块画面元素（标题/图标等）。守卫认出它 = 走「点确定(gg_next)→进购买界面」老形态——
+# 只看到「确定按钮」gg_next 不会误触发（那本是抓鬼每轮结束都出现的按钮）。
+# 与 hpmp_shop_flag 二选一即可（至少标一个守卫才认得出红/蓝场景）。不进 SHARED_TPL_KEYS（守卫直接读 shared）。
 HPMP_POPUP_TPL_KEY = "hpmp_popup"
+# 红/蓝不足【直接弹出购买界面】的专属标识（存 tasks.shared.templates.hpmp_shop_flag，公共标定，可选）：
+# user 2026-11-24：有时不弹「补充」提示框、直接弹购买（商城）界面。框该购买界面上独有的元素（标题/
+# 药水图标等一小块）。守卫认出它 = 跳过「点确定」、直接在购买界面点「购买」(buy_button)。
+# 不能只凭通用 buy_button 触发——它也是抢关注/普通商城的按钮，单凭它会在无关商城界面误买，故要求专属标识。
+# 不进 SHARED_TPL_KEYS（守卫直接读 shared）。
+HPMP_SHOP_FLAG_TPL_KEY = "hpmp_shop_flag"
+# 红/蓝药图标（存 tasks.shared.templates.hp_potion / mp_potion，公共标定）：点「购买」后改走
+# 「关商城→开背包→在背包列表区翻找药水→双击使用」（user 2026-11-24 拍板，不再点购买窗里的「使用」）。
+# 守卫开背包后两种药水各找一次、找到就双击一瓶，找不到的那种跳过（不强行区分本次缺血还是缺蓝）。
+# 至少标一个；守卫启用还需 buy_button + (hpmp_popup 或 hpmp_shop_flag 至少一个)。不进 SHARED_TPL_KEYS（守卫直接读 shared）。
+HP_POTION_TPL_KEY = "hp_potion"
+MP_POTION_TPL_KEY = "mp_potion"
+# 红/蓝补充守卫开背包后要找的药水键（顺序即处理顺序）
+HPMP_POTION_TPL_KEYS = (HP_POTION_TPL_KEY, MP_POTION_TPL_KEY)
 # 全任务通用的活动卡片「参加」按钮（存 tasks.shared.templates.join_button，在「任务配置」页
 # 「全局共享标定」卡里标定）：原来每个任务各标一份（运镖 escort_join / 宝图 flag_join / 抓鬼 gg_join /
 # 秘境 sr_join / 三界 qq_join / 鉴赏 appr_join / 副本 join / 周常 join），其实是同一个按钮，
@@ -107,6 +121,9 @@ SHARED_TPL_LABELS = {"battle_flag": "战斗界面标志", "clock": "小闹钟(�
                       FLAG_NEXT_MAP_TPL_KEY: "「使用」按钮",
                       BUY_BUTTON_TPL_KEY: "购买按钮",
                       HPMP_POPUP_TPL_KEY: "补充红/蓝弹窗标识",
+                      HPMP_SHOP_FLAG_TPL_KEY: "红/蓝购买界面标识",
+                      HP_POTION_TPL_KEY: "红药图标(背包双击)",
+                      MP_POTION_TPL_KEY: "蓝药图标(背包双击)",
                       GG_NEXT_TPL_KEY: "确定按钮",
                       GG_CANCEL_TPL_KEY: "提醒弹窗取消按钮",
                       "activity_ui_flag": "活动界面标志",
@@ -463,19 +480,29 @@ DEFAULT_CONFIG = {
         "max_esc": 2               # 同一弹窗 Esc 次数封顶，超限告警一次后放弃（避免死循环）
     },
 
-    # ---- 红/蓝不足补充守卫：日常任务等待期检测「补充红/蓝」弹窗，按 确定→购买→使用→关窗 自动处理 ----
-    #   挂在 base._interruptible_sleep 的节流守卫里（和弹窗守卫同节拍）。必须先认出弹窗专属标识
-    #   hpmp_popup 才动手（只看「确定按钮」不会误触发——那是抓鬼每轮都有的按钮）。三步按钮全部复用
-    #   公共标定：确定=gg_next、购买=buy_button（原抢关注，已迁公共）、使用=flag_next_map（宝图），
-    #   关窗复用 panel_close（可选，没标则在确认购买窗口仍开时按 Esc 兜底）。四张（标识+三按钮）都标定
-    #   守卫才启用，缺一静默；只在目标窗口已在前台时点击（多开不乱点）。
+    # ---- 红/蓝不足补充守卫：任务等待期自动买药+开背包双击用药，支持两种弹窗形态 ----
+    #   挂在 base._interruptible_sleep 的节流守卫里（和弹窗守卫同节拍）。两种红/蓝不足形态（user 2026-11-24）：
+    #     ① 先弹「补充」提示框：认出 hpmp_popup → 点确定(gg_next) → 进购买界面 → 点购买(buy_button)；
+    #     ② 直接弹购买界面（无提示框）：认出 hpmp_shop_flag → 跳过确定、直接点购买(buy_button)。
+    #   两个标识至少标一个才认得出红/蓝场景，绝不只凭通用 buy_button/gg_next 触发（它们也是抢关注/抓鬼的按钮）。
+    #   点完购买后不再点购买窗里的「使用」，而是：关掉购买窗口 → open_bag 开背包 → 在背包列表区
+    #   （shared.regions.bag_list）滚轮翻找红药 hp_potion / 蓝药 mp_potion 图标，各双击一瓶，找不到的跳过，
+    #   最后关背包。启用条件：buy_button + (hpmp_popup 或 hpmp_shop_flag 至少一个有效) + 药水至少标一个；
+    #   走形态①还需 gg_next。缺一按可用形态静默降级。关窗复用 panel_close（可选，没标则窗口仍开时按 Esc 兜底）。
+    #   只在目标窗口已在前台时点击（多开不乱点）。
     "hpmp_guard": {
-        "enabled": True,           # 总开关。默认开；标识+三按钮模板没标齐时自动无效
+        "enabled": True,           # 总开关。默认开；购买按钮/红或蓝标识/药水图标没标齐时自动无效
         "interval_sec": 2.0,       # 两次扫描的最小间隔秒数（节流）
-        "match_threshold": 0.85,   # 弹窗标识与三张按钮模板的匹配阈值
-        "step_settle_sec": 0.8,    # 每点一步后等界面切换的秒数（确定→商城、购买→背包/使用提示）
-        "step_timeout_sec": 12.0,  # 每一步等目标按钮出现的超时；超时放弃本次处理（避免死循环），下次扫描重来
-        "use_settle_sec": 1.0      # 点完「使用」到去关窗之间的额外等待
+        "match_threshold": 0.85,   # 弹窗标识、按钮与药水图标的匹配阈值
+        "step_settle_sec": 0.8,    # 每点一步后等界面切换的秒数（确定→商城、购买→可关窗、开背包→列表落定）
+        "step_timeout_sec": 12.0,  # 等「购买」按钮出现的超时；超时放弃本次处理（避免死循环），下次扫描重来
+        "bag_open_settle_sec": 0.8,  # 发 open_bag 后等背包面板打开的秒数
+        "double_click_gap_sec": 0.3, # 同一种药水双击后（若有多个命中）到下一步之间的间隔
+        "scroll_step": -3,         # 背包列表每次滚轮格数（负=向下翻）
+        "scroll_max_tries": 12,    # 背包里找一种药水最多翻几屏（背包通常不长，比整理背包的 30 保守）
+        "scroll_settle_sec": 0.35, # 每滚一屏后等画面落定
+        "scroll_end_diff": 2.0,    # 滚一屏后该区域帧差<此值=滚到底了
+        "scroll_reset_max": 20     # 「滚到顶」防死循环上限
     },
 
     # ---- 游戏快捷键：脚本按「动作名」调用的语义映射（ctx.send_hotkey("open_bag")，键名列表）----
@@ -846,10 +873,13 @@ DEFAULT_CONFIG = {
                 "daily_activity_tab": None, # 日常活动标签（可选，活动界面顶部的「日常活动」标签页）
                 "panel_close": None,     # 面板关闭按钮（可选，背包/商城/人物信息面板右上角「×」）
                 "gg_next": None,         # 抓鬼「确定」按钮（抓鬼必标）：「是否继续」弹窗里点它寻路回 NPC 领下一轮，也是本轮结束信号；红/蓝补充守卫第 1 步复用
-                "hpmp_popup": None,      # 红/蓝不足「补充」弹窗标识（可选）：守卫先认出它才走补充流程，只看到「确定」不会误触发
+                "hpmp_popup": None,      # 红/蓝不足「补充」弹窗标识（可选）：认出它=走「点确定→进购买界面」老形态；与 hpmp_shop_flag 至少标一个
+                "hpmp_shop_flag": None,  # 红/蓝不足【直接弹购买界面】的标识（可选）：认出它=跳过确定直接点购买；不能只凭通用购买按钮触发
+                "hp_potion": None,       # 红药图标（背包里的样子）：红/蓝补充点完购买后开背包找它双击使用，至少与蓝药标一个
+                "mp_potion": None,       # 蓝药图标（背包里的样子）：同上，开背包找到即双击一瓶
                 "gg_cancel": None,       # 抓鬼提醒弹窗「取消」按钮（可选）：领任务后概率弹窗，命中点掉防挡画面
                 "buy_button": None,      # 通用「购买」按钮（原抢关注 sniper 的购买按钮，已迁公共）：抢关注下单 + 红/蓝补充守卫第 2 步共用
-                # 红/蓝补充第 3 步「使用」复用 flag_next_map（「使用」按钮），关窗复用 panel_close，均不另列。
+                # 红/蓝补充关商城/关背包复用 panel_close（面板「×」，没标则 Esc 兜底），不再用 flag_next_map 点「使用」。
             },
         },
 
