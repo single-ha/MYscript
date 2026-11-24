@@ -16,11 +16,13 @@ __pycache__/
 # /captures/   命中截图
 # /templates/  用户自己截的装备模板图
 # /logs/      每次启动的日志文件（自动清理，保留份数见设置）
+# /recordings/ 任务录屏输出（按运行归组、自动只留最近 3 次，不入库）
 /config.json
 /captures/
 /captures_debug/
 /templates/
 /logs/
+/recordings/
 
 # ---- 本地个人设置（每台机不同，不入库）----
 .claude/settings.local.json
