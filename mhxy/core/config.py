@@ -1066,6 +1066,7 @@ DEFAULT_CONFIG = {
         #   → 有「节日奖励」就点它、等「领取节日奖励」出现再点、再点领奖弹窗里的「奖励」图标、
         #   等弹出的「使用」按钮出现并点它（走公共共享模板 flag_next_map，宝图同款）→ 收尾关面板。
         #   开刮前先确认在主界面（不在就逐层 Esc/右键带回，最多 ready_max 轮）。
+        #   scratch_ui「刮刮乐界面标识」可选：标了点完「打开刮刮乐」先轮询等识别到界面才刮，没标则照旧固定等 1 秒。
         #   节日奖励三张模板（festival_btn/claim_festival/reward_icon）全可选：任一没标=整段跳过领奖。
         "guaguale": {
             "loop": {
@@ -1085,6 +1086,7 @@ DEFAULT_CONFIG = {
             "templates": {
                 "welfare": None,                # 主界面「福利」按钮
                 "open_scratch": None,           # 福利面板「打开刮刮乐」按钮
+                "scratch_ui": None,             # 「刮刮乐界面标识」（可选）：标了就等识别到刮奖界面真打开才开刮，没标则点完固定等 1 秒
                 "festival_btn": None,           # 「节日奖励」按钮（可选）
                 "claim_festival": None,         # 「领取节日奖励」按钮（可选）
                 "reward_icon": None,            # 领奖弹窗里的「奖励」图标（可选）

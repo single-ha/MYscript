@@ -50,7 +50,7 @@ class GuagualeConfig(ctk.CTkFrame):
         bind_wraplength(self.lbl_calib)
 
         self.var_timeout, _ = param_entry(card, self.fonts, "等待超时（秒）", "20", self._on_timeout,
-                                          tooltip="等「福利」/「打开刮刮乐」按钮超过这么久就没认到（会跳过该号）")
+                                          tooltip="等「福利」/「打开刮刮乐」按钮、以及标了「刮刮乐界面标识」后等它出现，超过这么久没认到就跳过该号")
 
         ctk.CTkFrame(card, fg_color="transparent", height=14).pack()
 

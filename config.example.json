@@ -552,6 +552,7 @@
             "templates": {
                 "welfare": null,
                 "open_scratch": null,
+                "scratch_ui": null,
                 "festival_btn": null,
                 "claim_festival": null,
                 "reward_icon": null

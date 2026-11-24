@@ -5,7 +5,9 @@
 流程（每个所选窗口各刮一遍即完成今日刮刮乐）：
   先确认当前号在主界面（不在就用 ui_state.back_to_main_screen 逐层 Esc/右键带回主界面，
   最多 loop.ready_max 轮；判不了主界面时照旧开跑，别把没标的配置卡死）→
-  主界面点「福利」按钮 → 点「打开刮刮乐」按钮 → 在标定的「刮奖区域」里**一笔连贯斜蛇形**
+  主界面点「福利」按钮 → 点「打开刮刮乐」按钮 → 若标了可选「刮刮乐界面标识」(scratch_ui) 则
+  轮询等识别到刮奖界面真打开（识别到才刮、超时留截图跳过该号，绝不空刮；没标则照旧点完固定等约 1 秒）
+  → 在标定的「刮奖区域」里**一笔连贯斜蛇形**
   逐段扫（按住一次不抬笔，方向逐段交替：左→右、右→左、左→右……，纵向下沉均摊在每次横向扫动里、
   到边立即反向、没有独立的竖直下移段），整块区域**只刮一遍**即完成
   （user 2026-11-20 拍板：不再刮完后从上到下再刮第二遍，折角也不要先向下挪再反向），
@@ -26,9 +28,9 @@ should_stop()，可随时停；其余状态步仍是「一步一小动作」的�
 日常链对它走 blocking 连推，这一步内不再回主循环，避免行间触发弹窗守卫/切台把笔抬起）。
 
 标定：`scratch_area`「刮奖区域」是唯一必标区域（scene 留空=整窗当识别区）；`welfare`「福利」
-按钮、`open_scratch`「打开刮刮乐」按钮两张模板必标；节日奖励三张模板
-（festival_btn/claim_festival/reward_icon）**全部可选**——任一没标就整段跳过领奖、直接收尾，
-不拖累就绪度。
+按钮、`open_scratch`「打开刮刮乐」按钮两张模板必标；`scratch_ui`「刮刮乐界面标识」与节日奖励
+三张模板（festival_btn/claim_festival/reward_icon）**全部可选**——scratch_ui 没标就照旧点完固定
+等 1 秒再刮，节日奖励任一没标就整段跳过领奖、直接收尾，均不拖累就绪度。
 """
 
 import random
@@ -45,6 +47,7 @@ _NS = "guaguale"
 S_READY = "READY"                # 开刮前先确认在主界面（不在就逐层 Esc/右键兜底回来）
 S_WELFARE = "WELFARE"            # 主界面找「福利」按钮并点
 S_OPEN = "OPEN"                  # 等并点「打开刮刮乐」按钮
+S_UI_WAIT = "UI_WAIT"            # 点完按钮，等可选「刮刮乐界面标识」出现才开刮（没标该模板则跳过、照旧固定等待）
 S_SCRATCH = "SCRATCH"            # 一次调用内按住一笔连贯斜蛇形刮完整块区域、只刮一遍（折角立即反向、无竖直段）
 S_FESTIVAL = "FESTIVAL"          # 等「节日奖励」按钮（可选；超时=直接收尾）
 S_CLAIM_WAIT = "CLAIM_WAIT"      # 点完节日奖励，等「领取节日奖励」按钮出现
@@ -78,6 +81,7 @@ class GuagualeTask(Task):
         "templates": [
             ("welfare", "福利按钮", "主界面上的「福利」图标/按钮，框图标+文字，要和其他按钮区分开"),
             ("open_scratch", "打开刮刮乐按钮", "福利面板里那个「打开刮刮乐」按钮，框按钮本身、要独特"),
+            ("scratch_ui", "刮刮乐界面标识", "点「打开刮刮乐」后刮奖界面上独有的标题/图标（仅刮奖界面才有、要独特）；标了就等识别到它才开刮，避免界面没加载完就空刮。没标=照旧点完固定等 1 秒再刮", True),
             ("festival_btn", "节日奖励按钮", "刮奖界面上的「节日奖励」入口按钮；没标=今天没有节日奖励可领时直接收尾，不影响跑", True),
             ("claim_festival", "领取节日奖励按钮", "点开节日奖励后出现的「领取节日奖励」按钮；跟上一项配套，没标就跳过领奖", True),
             ("reward_icon", "奖励图标", "点完「领取节日奖励」弹出的领奖弹窗里的「奖励」图标，点它才真正领奖；配套可选，没标就跳过", True),
@@ -157,6 +161,7 @@ class GuagualeTask(Task):
                 "claim_wait": float(loop.get("claim_wait_sec", 6)),
                 "reward_wait": float(loop.get("reward_icon_wait_sec", 6)),
                 "use_wait": float(loop.get("use_wait_sec", 6)),
+                "ui_wait": float(loop.get("step_timeout_sec", 20)),
                 "regions": regions,
                 "area": area, "n_rows": n_rows,
                 "step": max(3, int(loop.get("scratch_sample_step", 8))),
@@ -180,6 +185,8 @@ class GuagualeTask(Task):
             self._do_welfare(ctx, rec)
         elif st == S_OPEN:
             self._do_open(ctx, rec)
+        elif st == S_UI_WAIT:
+            self._do_ui_wait(ctx, rec)
         elif st == S_SCRATCH:
             self._do_scratch(ctx, rec)
         elif st == S_FESTIVAL:
@@ -247,7 +254,11 @@ class GuagualeTask(Task):
         self._goto(rec, S_OPEN)
 
     def _do_open(self, ctx, rec):
-        """等并点「打开刮刮乐」按钮 → 进入刮奖界面（超时中止该号，绝不瞎点）。"""
+        """等并点「打开刮刮乐」按钮 → 进入刮奖界面（超时中止该号，绝不瞎点）。
+
+        点完之后两条路：
+          · 标了可选模板「刮刮乐界面标识」(scratch_ui) → 进 S_UI_WAIT 非阻塞轮询，识别到界面真打开了才刮；
+          · 没标 → 保持旧行为，拟人固定等约 1 秒（_jitter）后直接进刮奖步（向后兼容老配置）。"""
         scene_rect = self._scene_rect(ctx, rec["regions"])
         cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
         hit = self._match_scene(cur, scene_rect, "open_scratch", rec["threshold"])
@@ -258,9 +269,34 @@ class GuagualeTask(Task):
                 rec["done"] = True
             return
         self.click_after_hit(ctx, hit[0], hit[1])
-        ctx.log(f"点「打开刮刮乐」（{hit[2]:.3f}），开始刮奖…", level="hit")
-        self._interruptible_sleep(ctx, self._jitter(1.0, ctx))
-        self._goto(rec, S_SCRATCH)
+        ctx.log(f"点「打开刮刮乐」（{hit[2]:.3f}）。", level="hit")
+        if self.flags.get("scratch_ui") is not None:
+            # 标了界面标识：不在这固定等，交给 S_UI_WAIT 轮询确认刮奖界面真加载好
+            ctx.log("已点「打开刮刮乐」，等识别到「刮刮乐界面标识」再开刮…", level="info")
+            self._goto(rec, S_UI_WAIT)
+        else:
+            # 没标界面标识：照旧固定等约 1 秒让界面落定
+            self._interruptible_sleep(ctx, self._jitter(1.0, ctx))
+            self._goto(rec, S_SCRATCH)
+
+    def _do_ui_wait(self, ctx, rec):
+        """点完「打开刮刮乐」后轮询等可选「刮刮乐界面标识」(scratch_ui) 出现，识别到才开刮。
+
+        非阻塞：每访问一次只抓一帧匹配，没中就 return 等下一轮（由 run/日常链的节拍驱动），
+        期间急停/弹窗守卫照常生效。只有标了 scratch_ui 才会进这个状态（见 _do_open）。
+        超时仍没识别到=界面没真正打开（卡加载/被弹窗挡住/标识没标对），留诊断截图并跳过该号，
+        绝不在没确认界面的情况下空刮。"""
+        scene_rect = self._scene_rect(ctx, rec["regions"])
+        cur = ctx.window.grab_screen(scene_rect) if scene_rect else None
+        if self._match_scene(cur, scene_rect, "scratch_ui", rec["threshold"]) is not None:
+            ctx.log("已识别到「刮刮乐界面标识」，刮奖界面就绪，开始刮奖。", level="hit")
+            self._goto(rec, S_SCRATCH)
+            return
+        if time.time() - rec["t_state"] > rec["ui_wait"]:
+            cap = self._save_capture(ctx, cur, "guaguale_ui_flag_timeout") if cur is not None else None
+            ctx.log(f"点了「打开刮刮乐」但超 {rec['ui_wait']:.0f}s 没识别到「刮刮乐界面标识」"
+                    f"（现场截图 {cap}）——界面可能没打开或标识没标对，跳过该号、不空刮。", level="error")
+            rec["done"] = True
 
     def _do_scratch(self, ctx, rec):
         """刮奖（user 2026-11-20 拍板）：**一次调用内按住一笔连贯蛇形刮完整块区域、只刮一遍**。
@@ -459,8 +495,9 @@ class GuagualeTask(Task):
     # ---- 识别/刮奖工具 ----
     def _load_flags(self, tc):
         templates = tc.get("templates", {})
+        keys = _FESTIVAL_TPL + tuple(k for k, _ in _REQ_TPL) + ("scratch_ui", _USE_TPL_KEY)
         return {k: vision.load_template(templates.get(k)) if templates.get(k) else None
-                for k in _FESTIVAL_TPL + tuple(k for k, _ in _REQ_TPL) + (_USE_TPL_KEY,)}
+                for k in keys}
 
     def _scene_rect(self, ctx, regions):
         region = regions.get("scene")
