@@ -6,6 +6,11 @@ numpy
 opencv-python
 mss
 
+# OCR（抢非珍品读价格用；PP-OCRv6 识别模型随 wheel 离线携带，首次初始化约 1~2 秒）
+# 注意：rapidocr 声明依赖 opencv-python-headless，与上面的 opencv-python 共用 cv2 目录；
+# 本项目不用 cv2 的 GUI 功能，两者互相覆盖不影响识别。
+rapidocr>=3.10.0
+
 # 输入模拟（sendinput 为主，下面两个为备用后端 / 失败回退）
 pyautogui
 

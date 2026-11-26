@@ -32,6 +32,8 @@ class SniperTask(Task):
             ("market_tab_region", "商城标签页区域", "摆摊界面顶部一横排页签所在的滚动区域；找「关注」页签时在这里滚动"),
         ],
         "templates": [
+            ("market_ui", "摆摊界面标识(可选)", "摆摊/关注列表界面上独有的标题或图标（仅该界面才有、要独特）；标了启动进场会先检测："
+             "已在摆摊界面就跳过进商城、直接开始刷新抢货，没在则照常自动进商城。不标=每次都走自动进商城（兼容旧版）", True),
             ("market_tab", "摆摊页签", "点开商城后顶部的页签（如「摆摊」）；自动进商城的最后一步点它。"
              "不标=跳过这步（需手动已在摆摊页）"),
             ("focus_tab", "「关注」页签", "摆摊页签条里的「关注」；启动时在标签页区域滚动找到并点它"),
@@ -204,12 +206,37 @@ class SniperTask(Task):
             break  # 一轮处理一件即可
 
     # ---- 内部小工具（_is_admin/_jitter/_frame_diff/_click_region/_save_capture/_interruptible_sleep 已上移 Task 基类）----
+    def _already_on_market(self, ctx):
+        """启动进场前判断「是否已在摆摊/关注界面」（可选 market_ui 标识）。
+
+        标了 market_ui 就在整窗匹配该标识：命中=True（已在摆摊界面，跳过进场直接刷新）。
+        未标定/模板缺失/窗口失效/未命中均返回 False——交回原自动进商城流程，保证不标时零回归。
+        用整窗而非 listing 区：标识可能是面板标题等不在检测区内的元素（同 _click_market_tab 取整窗）。"""
+        tc = ctx.task_cfg(self.name)
+        tpl_path = (tc.get("templates") or {}).get("market_ui")
+        rect = ctx.window.rect()
+        if not tpl_path or rect is None:
+            return False
+        img = vision.load_template(tpl_path)
+        if img is None:
+            return False
+        scene = ctx.window.grab_screen(rect)
+        if scene is None:
+            return False
+        return vision.match(scene, img, 0.8) is not None
+
     def _open_market(self, ctx, regions):
         """自动进商城：先回主界面（ESC 关面板），再点「商城图标」进入商城——省去运行前手动开商城的一步。
         依赖共享标定「商城图标」(tasks.shared.templates.shop_icon)；未标定/模板缺失/屏幕上没识别到
-        → 打日志说明并按现状继续（相当于仍要求手动停在商城界面），绝不瞎点。已在商城界面也会先回主界面
-        再重新打开（页面上自带「×」，不做「是否已在商城」判定，保持逻辑简单可靠）。"""
+        → 打日志说明并按现状继续（相当于仍要求手动停在商城界面），绝不瞎点。
+        例外：若标了可选「摆摊界面标识」(market_ui) 且开局就识别到已在摆摊界面，则短路返回、不回主界面重开
+        （见开头 _already_on_market）；未标该标识时仍照旧先回主界面再重新打开，保持逻辑简单可靠。"""
         cfg = ctx.cfg or {}
+        # 先检测是否已在摆摊/关注界面（可选 market_ui 标识）：在就跳过自动进商城，主循环直接进刷新抢货，
+        # 省去「回主界面→点商城→切摆摊→进关注」一整套。未标定该标识则维持旧行为（每次都自动进商城）。
+        if self._already_on_market(ctx):
+            ctx.log("已识别到「摆摊界面标识」，当前就在摆摊界面，跳过进场、直接开始刷新。", level="hit")
+            return True
         tpl_path = (cfg.get("tasks", {}) or {}).get("shared", {}).get("templates", {}).get("shop_icon")
         if not tpl_path:
             ctx.log("未标定「商城图标」（任务配置页·全局共享标定），无法自动进商城——本次需手动停在商城界面再运行。",

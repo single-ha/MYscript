@@ -5,6 +5,8 @@ PyInstaller 打包配置。产出单文件、无黑窗、双击请求管理员�
 为什么这么配（每条都对应一个会让 exe 跑不起来的坑）：
   - collect_all('customtkinter')：customtkinter 自带主题 json + 图片资源，
     默认收集不全，onefile 启动会报缺资源直接崩 —— 必须显式整包收集。
+  - collect_all('rapidocr')：OCR 识别模型（PP-OCRv6 rec 约 20MB）与 config.yaml 在包目录里，
+    静态分析收不到；不收齐则抢非珍品读价时报模型文件缺失。
   - hiddenimports 里点名 cv2 / mss / pygetwindow / PIL 及任务模块：
     这些有的是动态 import / 插件注册，PyInstaller 静态分析可能漏，兜底加上。
   - 不打包 templates/ captures/ config.json：它们要在「运行时」生成在 exe 同级
@@ -22,12 +24,15 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 PROJECT_ROOT = os.path.dirname(SPECPATH)
 ENTRY = os.path.join(PROJECT_ROOT, "start.py")
 
-# customtkinter 整包（数据/子模块/隐藏导入）一次收齐
+# customtkinter / rapidocr 整包（数据/子模块/隐藏导入）一次收齐
 ctk_datas, ctk_binaries, ctk_hidden = collect_all("customtkinter")
+ocr_datas, ocr_binaries, ocr_hidden = collect_all("rapidocr")
 
-hiddenimports = ctk_hidden + [
+hiddenimports = ctk_hidden + ocr_hidden + [
     "cv2",
     "numpy",
+    "rapidocr",
+    "onnxruntime",
     "mss",
     "pygetwindow",
     "pyautogui",
@@ -41,8 +46,8 @@ hiddenimports = ctk_hidden + [
 a = Analysis(
     [ENTRY],
     pathex=[PROJECT_ROOT],
-    binaries=ctk_binaries,
-    datas=ctk_datas,
+    binaries=ctk_binaries + ocr_binaries,
+    datas=ctk_datas + ocr_datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

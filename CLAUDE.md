@@ -19,7 +19,9 @@
 本工具仅供学习交流。
 
 ## 用户拍板的关键约束（务必遵守）
-1. **命中即抢，不上 OCR**：模板匹配认不了“任意低于 X 价”，所以不做价格过滤。模板只框装备本身。
+1. **抢关注命中即抢，不上 OCR**：模板匹配认不了“任意低于 X 价”，所以不做价格过滤。模板只框装备本身。
+   （**抢非珍品例外，user 2026-11-26 拍板**：它必须按限价过滤，读价改用 `core/ocr.py` 的 RapidOCR，
+   省掉手框 0~9 数字模板；这里「不上 OCR」只约束 sniper。）
    - **刷新机制（用户拍板）**：游戏**没有固定刷新按钮**。看货架上新唯一办法是「点左侧类别→点右侧商品→进货架」，
      且货架进去后画面静止、不会自动上新，必须**退出重进**。故“刷新”=每轮重走这条两步路径（类别+商品，固定坐标点击）。
 2. **必须拟人化**：贝塞尔曲线移动、加减速、落点随机偏移、按下/抬起与各种间隔随机抖动、偶尔走神。
@@ -72,6 +74,7 @@ mhxy/
     config.py   配置读写（DEFAULT_CONFIG / load/save / task_config / set_task_config）
     window.py   GameWindow（locate/rect/activate/坐标换算）+ grab() 截图 + set_dpi_aware()
     vision.py   load_template / save_image / match() / frame_diff()（兼容中文路径）
+    ocr.py      RapidOCR 读价（PP-OCRv6 离线模型，只跑识别模型 + 自己做行切分；抢非珍品专用）
     scan.py     通用「滚动查找」scroll_search()（翻列表/翻包裹统一底层）；详见 docstring + memory scroll-search-scan
     input.py    Mouse 类：SendInput 底层 + human_move/click/sleep/maybe_idle
     context.py  TaskContext：打包 window/mouse/cfg/log/stop_event 给任务

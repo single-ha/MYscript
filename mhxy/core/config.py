@@ -143,7 +143,7 @@ SHARED_TPL_KEYS = (BATTLE_FLAG_TPL_KEY, CLOCK_TPL_KEY, FLAG_NEXT_MAP_TPL_KEY,
 # 同一个文件、互相覆盖（尤其 card/confirm 各活动图样不同）。故这些任务的模板文件
 # 按任务名加前缀 templates/tm_<task>_<key>.png（见 task_template_rel）。
 # dungeon 等其它任务键名已自带前缀或本就该跨副本共用，不在此列。
-TASK_SCOPED_TPL_TASKS = ("sect_gate", "maze_tower", "underwater")
+TASK_SCOPED_TPL_TASKS = ("sect_gate", "maze_tower", "underwater", "snipe_nonpremium")
 
 
 def task_template_rel(task_name, key):
@@ -581,7 +581,37 @@ DEFAULT_CONFIG = {
                 "buy_button": None,
                 "confirm_button": None
             },
+            "templates": {               # 抢关注私有模板（标定向导裁图写入，tm_ 前缀）
+                "market_ui": None        # 「摆摊界面标识」（可选）：标了启动先判是否已在摆摊界面，是则跳过进场直接刷新；不标=每次自动进商城
+            },
             "watchlist": []              # [{name, template, max_price}]
+        },
+
+        # ---- 抢非珍品（单物品、单窗口：在已打开的商品页循环刷新，读价格低于限价就买，买够个数自停）----
+        # 与抢关注的区别：不做模板认装备、而是 OCR 读价格数字（core.ocr / RapidOCR）做比价，
+        # 有明确完成条件（target_count）。运行前需手动在游戏里打开要抢物品的商品页（不自动进商城）。
+        "snipe_nonpremium": {
+            "loop": {
+                "refresh_interval_sec": 0.2,    # 两轮刷新之间的间隔（带抖动），与抢关注同档
+                "shelf_load_wait_sec": 1.2,     # 等列表加载的上限（自适应：画面静止即提前结束）
+                "shelf_load_min_sec": 0.15,     # 等列表加载的最短时间
+                "match_threshold": 0.85,        # 标志模板（坊/摊/购买/确认）匹配阈值
+                "ocr_threshold": 0.5,           # OCR 单行置信度阈值（低于此判认不出、跳过该行不瞎买；旧 digit_threshold 已迁移）
+                "after_buy_cooldown_sec": 2.0,  # 一次下单后的冷却
+                "confirm_timeout_sec": 1.5,     # 点「购买」后等「确认购买」弹窗的轮询上限
+                "max_price": 0,                 # 目标限价：刷出的价格严格低于此值才买（0=未设置，preflight 拦截）
+                "target_count": 0,              # 计划购买个数：成功计数达到即自动停止（0=未设置，preflight 拦截）
+                "dry_run": False                # 演练模式：只读价、打日志，不真正下单
+            },
+            "regions": {
+                "price_region": None,           # 价格列区域 [x,y,w,h]（相对窗口），逐行读价的范围（必标）
+                "listing": None                 # 点击商品行的区域（可选，留空=按价格行左端点击）
+            },
+            "templates": {                      # 全部由标定向导写入；读价已改 OCR，不再有数字模板
+                "refresh_1": None,              # 「坊」标识（刷新第 1 步）
+                "refresh_2": None,              # 「摊」标识（刷新第 2 步）
+                "confirm_button": None          # 「确认购买」按钮（可选；购买按钮走公共标定 buy_button）
+            }
         },
 
         # ---- 刷副本·宝图（一次性两阶段状态机；游戏自带自动战斗全托管，脚本只导航+监控+关键点击）----
@@ -1180,7 +1210,29 @@ def load_config():
         save_config(cfg)
     if _migrate_drop_target_hwnds(cfg):
         save_config(cfg)
+    if _migrate_snipe_nonpremium_ocr(cfg):
+        save_config(cfg)
     return cfg
+
+
+def _migrate_snipe_nonpremium_ocr(cfg):
+    """一次性迁移（2026-11-26）：抢非珍品读价从逐位数字模板匹配改为 OCR。
+    清掉旧 digit_0..9 模板键、删掉旧 digit_threshold（形状特征置信度与 OCR 分数不可比，
+    统一用新默认 ocr_threshold=0.5）。返回是否改动（改动由 load_config 存盘）。"""
+    tc = ((cfg.get("tasks") or {}).get("snipe_nonpremium") or {})
+    if not tc:
+        return False
+    changed = False
+    tpls = tc.get("templates") or {}
+    for d in range(10):
+        if f"digit_{d}" in tpls:
+            tpls.pop(f"digit_{d}")
+            changed = True
+    loop = tc.get("loop") or {}
+    if "digit_threshold" in loop:
+        loop.pop("digit_threshold")
+        changed = True
+    return changed
 
 
 def _migrate_dungeon_ready(cfg):

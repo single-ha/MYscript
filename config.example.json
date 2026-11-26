@@ -239,6 +239,9 @@
                     40
                 ]
             },
+            "templates": {
+                "market_ui": "templates/tm_market_ui.png"
+            },
             "watchlist": [
                 {
                     "name": "wujibie_xianglian",
@@ -246,6 +249,34 @@
                     "max_price": null
                 }
             ]
+        },
+        "snipe_nonpremium": {
+            "loop": {
+                "refresh_interval_sec": 0.2,
+                "shelf_load_wait_sec": 1.2,
+                "shelf_load_min_sec": 0.15,
+                "match_threshold": 0.85,
+                "ocr_threshold": 0.5,
+                "after_buy_cooldown_sec": 2.0,
+                "confirm_timeout_sec": 1.5,
+                "max_price": 50000,
+                "target_count": 3,
+                "dry_run": true
+            },
+            "regions": {
+                "price_region": [
+                    520,
+                    200,
+                    200,
+                    360
+                ],
+                "listing": null
+            },
+            "templates": {
+                "refresh_1": null,
+                "refresh_2": null,
+                "confirm_button": null
+            }
         },
         "treasure_map": {
             "loop": {
