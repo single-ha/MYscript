@@ -158,7 +158,7 @@ class GuagualeTask(Task):
                 "threshold": float(loop.get("match_threshold", 0.85)),
                 "timeout": float(loop.get("step_timeout_sec", 20)),
                 "festival_wait": float(loop.get("festival_wait_sec", 4)),
-                "claim_wait": float(loop.get("claim_wait_sec", 6)),
+                "claim_wait": 30.0,            # 点完节日奖励后等「领取节日奖励」按钮出现多久（硬编码，不开放配置）
                 "reward_wait": float(loop.get("reward_icon_wait_sec", 6)),
                 "use_wait": float(loop.get("use_wait_sec", 6)),
                 "ui_wait": float(loop.get("step_timeout_sec", 20)),
