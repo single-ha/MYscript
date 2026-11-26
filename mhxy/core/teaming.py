@@ -27,6 +27,8 @@ core 不依赖 tasks 层，故 _jitter/_sleep 在类内自带一份等价实现�
 import time
 import random
 
+import cv2
+
 from . import vision
 from . import window as win_mod
 from . import rotation
@@ -108,6 +110,7 @@ class TeamFormation:
         # 共享握手标志（编排器持有，号与号之间据此同步时序）
         self.team_ready = False     # 队长已建队并「申请」开放，队员才能开始申请
         self.joined = 0             # 队长已点过的「接受」次数（≈已入队人数）
+        self._arrow_diag_ts = {}    # 箭头匹配失败留证节流：窗口标签 -> 上次时间戳（避免每帧刷盘/刷屏）
         self.records = [self._new_record(wctx, role) for wctx, role in assignments]
 
     # ------------------------------------------------------------------
@@ -666,9 +669,44 @@ class TeamFormation:
         crop = scene[y0:y1, x0:x1]
         m = vision.match(crop, arrow_tpl, self.threshold)
         if m is None:
+            # 失败留证（节流）：存「裁剪带」+「整片好友列表」，并打印裁剪带内最高分，
+            # 用来区分「分数差一点（阈值太严）」还是「箭头根本不在这条带里（卡片几何/区域标定问题）」。
+            best, best_xy = vision.best_score(crop, arrow_tpl)
+            self._dump_arrow_miss(ctx, rect, scene, (x0, y0, x1, y1), best, best_xy)
             return fallback
         cx, cy, score = m
         return (rx + x0 + cx, ry + y0 + cy, score)
+
+    def _dump_arrow_miss(self, ctx, rect, scene, band, best, best_xy, min_interval=5.0):
+        """箭头模板在队长卡片带里没匹配到时的诊断留证（每窗口 min_interval 秒最多一次）。
+        band=(x0,y0,x1,y1) 为相对 friend_list 截图的裁剪带；best 为带内不卡阈值的最高分。"""
+        label = getattr(ctx, "label", None) or str(id(ctx))
+        now = time.time()
+        if now - self._arrow_diag_ts.get(label, 0.0) < min_interval:
+            return
+        self._arrow_diag_ts[label] = now
+        x0, y0, x1, y1 = band
+        ts = time.strftime("%H%M%S")
+        crop_raw = str(CAPTURES_DEBUG_DIR / f"diag_arrow_miss_band_{ts}.png")
+        full_raw = str(CAPTURES_DEBUG_DIR / f"diag_arrow_miss_list_{ts}.png")
+        try:
+            annotated = scene.copy()
+            cv2.rectangle(annotated, (x0, y0), (x1 - 1, y1 - 1), (0, 0, 255), 1)
+            if best_xy is not None:
+                bx, by = best_xy
+                cv2.circle(annotated, (x0 + bx, y0 + by), 4, (0, 200, 0), 1)
+            ok1 = vision.save_image(crop_raw, scene[y0:y1, x0:x1])
+            ok2 = vision.save_image(full_raw, annotated)
+        except Exception as e:
+            ctx.log(f"队员：箭头留证失败：{e}", level="warn")
+            return
+        if not (ok1 and ok2):
+            return
+        crop_path, full_path = vision.dated_path(crop_raw), vision.dated_path(full_raw)
+        ctx.log(f"队员：箭头模板在队长卡片带内未过阈值（带内最高分 {best:.2f} / 阈值 {self.threshold:.2f}）。"
+                f"裁剪带截图 {crop_path}，红框=裁剪带、绿点=最高分位置；整片好友列表 {full_path}。"
+                "若分差一点可调阈值/重标箭头；若绿点不在箭头上则是卡片几何或好友列表区域标定问题。",
+                level="warn")
 
     def _diag_dump(self, ctx, region_key, tpl_key, tag):
         """诊断：抓该区域截图存到 captures/，并打印模板在区域内的最高匹配分（不卡阈值）。
@@ -683,8 +721,10 @@ class TeamFormation:
         tpl = self.tpl.get(tpl_key)
         score = vision.best_score(scene, tpl)[0] if tpl is not None else 0.0
         ts = time.strftime("%H%M%S")
-        path = str(CAPTURES_DEBUG_DIR / f"diag_{tag}_{ts}.png")
-        vision.save_image(path, scene)
+        raw = str(CAPTURES_DEBUG_DIR / f"diag_{tag}_{ts}.png")
+        if not vision.save_image(raw, scene):
+            return
+        path = vision.dated_path(raw)
         ctx.log(f"诊断：『{tpl_key}』在 {region_key} 区域最高匹配分={score:.2f}（阈值 {self.threshold:.2f}）；"
                 f"该区域截图已存 {path}，可打开比对。", level="warn")
 
