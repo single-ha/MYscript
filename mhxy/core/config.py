@@ -900,6 +900,7 @@ DEFAULT_CONFIG = {
                 "create_timeout_sec": 15,    # 队长等「创建队伍/申请」按钮出现的超时
                 "accept_timeout_sec": 90,    # 队长等申请、点够人数的超时（每接受到一人会刷新计时）
                 "find_leader_timeout_sec": 60,  # 队员在好友列表找队长ID的总超时
+                "contact_timeout_sec": 5,    # 队员点「联系人」页签时等该页签出现的超时（超时兜底直接找队长）
                 "apply_timeout_sec": 15,     # 队员等「申请入队」按钮出现的超时
                 "scroll_step": -3,           # 好友列表每次滚轮格数（负=向下翻）
                 "scroll_max_tries": 10,      # 好友列表最多翻几屏找队长
@@ -924,6 +925,7 @@ DEFAULT_CONFIG = {
                 "team_apply": None,          # 「申请」标签页（点它切到队员入队申请列表）
                 "team_accept": None,         # 「同意」按钮（切到申请页后，队员申请那行右侧，见即点）
                 "team_apply_join": None,     # 队员点队长右侧箭头后弹出的「申请入队」按钮
+                "team_contact": None,        # 好友面板「联系人」页签（可选）：标了队员开好友后先点它再找队长，不标=直接找
                 "team_arrow": None,          # 好友列表里队长ID右侧的箭头按钮（在命中右侧小范围内找，可选）
                 "team_quit": None,           # 解散用：「退出队伍」按钮
                 "leader_id": None            # 队长ID（队员据此在好友列表定位队长）。由 leader_history 维护：

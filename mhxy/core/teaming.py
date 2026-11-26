@@ -4,7 +4,7 @@
 
 组队不是「每个号各跑同一条独立状态机」，而是几个号有时序依赖的握手：
   队长：开队伍 → 创建队伍 → 点「申请」标签页(切到入队申请列表) → 在申请页见「同意」就点、点够人数 → 右键关队伍弹窗
-  队员：开好友 → 滚轮找队长ID → 点其右侧箭头 → 申请入队 → 右键关好友弹窗
+  队员：开好友 → (可选)点「联系人」页签 → 滚轮找队长ID → 点其右侧箭头 → 申请入队 → 右键关好友弹窗
 
 注意（用户拍板的真实流程）：建好队伍后队员默认就能申请，「申请」不是「开放入队」按钮，
 而是队长队伍面板里的一个**标签页**——必须点它切过去才能看到队员的入队申请、才能逐个同意。
@@ -46,6 +46,8 @@ TEAM_CALIBRATION = {
         ("team_apply", "「申请」标签页", "队伍面板里的「申请」标签页——点它切过去才能看到队员的入队申请列表，框这个页签"),
         ("team_accept", "「同意」按钮", "切到申请标签页后，队员申请那行右侧的「同意」按钮，见即点、不认申请人"),
         ("team_apply_join", "「申请入队」按钮", "队员点队长右侧箭头后弹出的「申请入队」按钮"),
+        ("team_contact", "「联系人」页签(可选)", "好友面板顶部的「联系人」页签——队员打开好友后先点它切到联系人列表，"
+                                              "再滚轮找队长。不标=沿用旧行为（开好友后直接在当前列表找队长，兼容旧版）", True),
         ("team_arrow", "队长ID右侧箭头(可选)", "好友列表里ID右侧的箭头按钮；在命中右侧小范围内找它。"
                                           "不标则用固定偏移兜底点击"),
         ("leader_id", "队长ID", "队员据此在好友列表定位队长，框队长名字、要独特"),
@@ -55,8 +57,8 @@ TEAM_CALIBRATION = {
 }
 
 # 全部模板键
-_TPL_KEYS = ["team_create", "team_apply", "team_accept", "team_apply_join", "team_arrow",
-             "leader_id", "team_quit"]
+_TPL_KEYS = ["team_create", "team_apply", "team_accept", "team_apply_join", "team_contact",
+             "team_arrow", "leader_id", "team_quit"]
 # preflight 用：必备区域 / 必备模板（team_arrow 可选，缺失走固定偏移兜底）
 TEAM_REQUIRED_REGIONS = ["team_panel", "friend_list"]
 TEAM_REQUIRED_TEMPLATES = ["team_create", "team_apply", "team_accept", "team_apply_join", "leader_id"]
@@ -76,6 +78,7 @@ C_CLOSE = "C_CLOSE"           # 右键关队伍弹窗
 # 队员状态链
 M_WAIT_READY = "M_WAIT_READY"     # 门控：队长没就绪前不动
 M_OPEN_FRIEND = "M_OPEN_FRIEND"   # 发 open_friend 开好友面板
+M_CONTACT = "M_CONTACT"           # 点「联系人」页签（可选：标了 team_contact 才点，否则直接进找队长）
 M_FIND_LEADER = "M_FIND_LEADER"   # 滚轮找队长ID → 点右侧箭头
 M_APPLY_JOIN = "M_APPLY_JOIN"     # 点「申请入队」
 M_CLOSE = "M_CLOSE"               # 右键关好友弹窗
@@ -229,6 +232,7 @@ class TeamFormation:
             C_OPEN_TEAM: self._cap_open, C_CREATE: self._cap_create,
             C_APPLY: self._cap_apply, C_ACCEPT: self._cap_accept, C_CLOSE: self._cap_close,
             M_WAIT_READY: self._mem_wait, M_OPEN_FRIEND: self._mem_open,
+            M_CONTACT: self._mem_contact,
             M_FIND_LEADER: self._mem_find, M_APPLY_JOIN: self._mem_apply, M_CLOSE: self._mem_close,
         }
         h = handlers.get(rec["state"])
@@ -342,10 +346,33 @@ class TeamFormation:
             ctx.log("队员：打不开好友界面（open_friend 未配置），该号放弃。", level="error")
             rec["done"] = True
             return
-        ctx.log("队员：已开好友界面，滚轮翻找队长ID…")
+        ctx.log("队员：已开好友界面，先切「联系人」页签再翻找队长ID…")
         self._sleep(self._jitter(0.6))
         rec["scrolls"] = 0
-        self._goto(rec, M_FIND_LEADER)
+        self._goto(rec, M_CONTACT)
+
+    def _mem_contact(self, rec):
+        """点开好友面板后先切到「联系人」页签（可选 team_contact 模板）。
+
+        未标定 team_contact → 沿用旧行为、直接进滚轮找队长（向后兼容，老配置零回归）；
+        标定了就在整窗找该页签并点击，点到（或超时兜底）才进找队长，避免停在非联系人列表里空翻。
+        页签在好友面板顶部、位置随面板布局漂移，故用整窗匹配（同 team_apply_join 的处理）。"""
+        ctx = rec["ctx"]
+        if self.tpl.get("team_contact") is None:
+            self._goto(rec, M_FIND_LEADER)
+            return
+        hit = self._find_full(ctx, "team_contact")
+        if hit is not None:
+            self._click_after_hit(ctx, hit[0], hit[1])
+            ctx.log(f"队员：点「联系人」页签（{hit[2]:.2f}），再滚轮找队长ID。", level="hit")
+            self._sleep(self._jitter(0.5))
+            rec["scrolls"] = 0
+            self._goto(rec, M_FIND_LEADER)
+            return
+        # 没找到且没超时：state 不变 → 轮转器让出切下一号，下轮再试；超时则兜底直接找队长，不卡死。
+        if self._elapsed(rec) > self.loop.get("contact_timeout_sec", 5):
+            ctx.log("队员：没找到「联系人」页签，按已在联系人列表处理，直接找队长。", level="warn")
+            self._goto(rec, M_FIND_LEADER)
 
     def _mem_find(self, rec):
         """滚轮找队长ID（走通用 scan.scroll_search：先滚到顶→逐屏向下→帧差判到底/max_tries 兜底）。
@@ -676,7 +703,8 @@ class TeamFormation:
     # ------------------------------------------------------------------
     def _dry_run_selfcheck(self, multi, switch_delay):
         cap_keys = [("team_create", "创建队伍"), ("team_apply", "申请标签页"), ("team_accept", "同意")]
-        mem_keys = [("leader_id", "队长ID"), ("team_arrow", "箭头"), ("team_apply_join", "申请入队")]
+        mem_keys = [("leader_id", "队长ID"), ("team_contact", "联系人页签"),
+                    ("team_arrow", "箭头"), ("team_apply_join", "申请入队")]
         self.lead.log("组队演练：对每个号识别其角色相关标志，验证模板/阈值，不发快捷键/不点。", level="warn")
         rounds = 0
         while not self.lead.should_stop() and rounds < 1000:
