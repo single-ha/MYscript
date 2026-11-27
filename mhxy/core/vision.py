@@ -303,6 +303,59 @@ def best_score(scene_bgr, template_bgr):
     return (float(max_val), (max_loc[0] + tw // 2, max_loc[1] + th // 2))
 
 
+def _odd_ksize(k):
+    """把高斯核边长规整为合法奇数：<=1 视为关闭返回 0；偶数取最近的不小于 3 的奇数（cv2 偶数核会抛错）。"""
+    try:
+        k = int(k)
+    except (TypeError, ValueError):
+        return 0
+    if k <= 1:
+        return 0
+    return k if k % 2 == 1 else k + 1
+
+
+def soft_match(scene_bgr, template_bgr, threshold, blur_ksize=3):
+    """双边模糊归一化匹配：模板和场景【都】先做一次同档轻微高斯模糊再比 TM_CCOEFF_NORMED。
+
+    用途（队长ID 多开渲染差异，2026-11-27 实测定案）：各客户端抗锯齿/字体柔化度不同，同一名字模板
+    在清晰号 ~0.90、最柔的号只有 0.79 卡 0.85 阈值。两边都模糊到同一柔化档后，柔化号回到 0.89、
+    清晰号仍近满分，且队长名与其他好友名的区分度仍有 ~0.46（不会误匹配）。命中几何中心不变。
+
+    blur_ksize<=1（经 _odd_ksize 规整）= 关闭，退化为与 vision.match 等价的原始匹配。
+    返回同 match：命中 (cx, cy, score)（相对 scene 左上），未命中/不可用返回 None。"""
+    if scene_bgr is None or template_bgr is None:
+        return None
+    th, tw = template_bgr.shape[:2]
+    if scene_bgr.shape[0] < th or scene_bgr.shape[1] < tw:
+        return None
+    k = _odd_ksize(blur_ksize)
+    if k:
+        scene_bgr = cv2.GaussianBlur(scene_bgr, (k, k), 0)
+        template_bgr = cv2.GaussianBlur(template_bgr, (k, k), 0)
+    res = cv2.matchTemplate(scene_bgr, template_bgr, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+    if max_val >= threshold:
+        return (max_loc[0] + tw // 2, max_loc[1] + th // 2, float(max_val))
+    return None
+
+
+def soft_best_score(scene_bgr, template_bgr, blur_ksize=3):
+    """soft_match 的不卡阈值诊断版：返回 (最高分, 命中中心)，与 soft_match 用同一套模糊参数，
+    保证失败留证打印的分和实际匹配口径一致。不可用返回 (0.0, None)。"""
+    if scene_bgr is None or template_bgr is None:
+        return (0.0, None)
+    th, tw = template_bgr.shape[:2]
+    if scene_bgr.shape[0] < th or scene_bgr.shape[1] < tw:
+        return (0.0, None)
+    k = _odd_ksize(blur_ksize)
+    if k:
+        scene_bgr = cv2.GaussianBlur(scene_bgr, (k, k), 0)
+        template_bgr = cv2.GaussianBlur(template_bgr, (k, k), 0)
+    res = cv2.matchTemplate(scene_bgr, template_bgr, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+    return (float(max_val), (max_loc[0] + tw // 2, max_loc[1] + th // 2))
+
+
 def sqdiff_score(scene_bgr, template_bgr):
     """返回 TM_SQDIFF_NORMED 的最小值（0=逐像素相同，越小越像）。场景/模板不可用返回 1.0。
 

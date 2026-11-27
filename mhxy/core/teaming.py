@@ -111,6 +111,7 @@ class TeamFormation:
         self.team_ready = False     # 队长已建队并「申请」开放，队员才能开始申请
         self.joined = 0             # 队长已点过的「接受」次数（≈已入队人数）
         self._arrow_diag_ts = {}    # 箭头匹配失败留证节流：窗口标签 -> 上次时间戳（避免每帧刷盘/刷屏）
+        self._leader_diag_ts = {}   # 队长ID 翻找失败留证节流：窗口标签 -> 上次时间戳（同上）
         self.records = [self._new_record(wctx, role) for wctx, role in assignments]
 
     # ------------------------------------------------------------------
@@ -387,10 +388,22 @@ class TeamFormation:
             rec["done"] = True
             return
         deadline = rec["t_state"] + self.loop.get("find_leader_timeout_sec", 60)
+        # 队长ID 双边模糊归一化（默认开，核 3；置 1/0 关闭）：消除多开各客户端字体柔化度差异，
+        # 让最柔的号也能过阈值，而清晰号不受损、全局阈值不动。详见 vision.soft_match。
+        blur_k = self.loop.get("leader_match_blur", 3)
+        # 队长ID 找不到的留证（与箭头同款思路，先证据后调参）：probe 每屏都跑、最多十余屏，不能每屏刷盘，
+        # 只在内存里累计【全程不卡阈值的最高分】并留那一屏画面副本，失败收尾时统一存一张「最像的一屏」，
+        # 用来区分「压根没翻到（分很低）/ 翻到了但没认出（分接近阈值）/ 区域标错（绿点不在队长ID 上）」。
+        best = {"score": -1.0, "xy": None, "rect": None, "scene": None, "screens": 0}
 
         def probe(scene, rect):
-            hit = vision.match(scene, leader_tpl, self.threshold) if scene is not None else None
+            hit = vision.soft_match(scene, leader_tpl, self.threshold, blur_k) if scene is not None else None
             if hit is None:
+                if scene is not None:
+                    bs, bxy = vision.soft_best_score(scene, leader_tpl, blur_k)
+                    best["screens"] += 1
+                    if bs > best["score"]:
+                        best.update(score=bs, xy=bxy, rect=rect, scene=scene.copy())
                 return scan.SCROLL, None
             lx, ly, score = rect[0] + hit[0], rect[1] + hit[1], hit[2]
             arrow = self._find_arrow_on_row(ctx, "friend_list", (lx, ly))
@@ -431,6 +444,7 @@ class TeamFormation:
                 ctx.log("队员：找队长ID超时，放弃该号。", level="warn")
             elif res.outcome != "stopped":
                 ctx.log("队员：翻找队长ID多次未果，放弃该号。", level="warn")
+            self._dump_leader_miss(ctx, best, res)
             rec["done"] = True
 
     def _mem_apply(self, rec):
@@ -643,7 +657,10 @@ class TeamFormation:
         row_h = leader_tpl.shape[0] if leader_tpl is not None else 32
         right_edge_x = lx + name_w // 2          # 队长名字的右边缘（屏幕坐标）
         # 卡片几何：卡片高、队长ID 在卡片内的纵向位置（从顶算的占比）→ 推卡片顶/底/中心相对队长ID 的偏移
-        card_ratio = float(self.loop.get("arrow_card_ratio", 2.0))
+        # arrow_card_ratio 默认 3.0（2026-11-27 由 2.0 上调，见 _migrate_teaming_arrow_card_ratio）：
+        # 实测好友卡片高约为名字模板高的 ~3.7 倍、右侧圆形箭头按钮直径就有 ~3 倍，旧值 2.0 推出的
+        # 裁剪带只有约 2 倍模板高，会把圆按钮上下削平 → 箭头分总差一点（带内 0.84 < 阈值 0.85）。
+        card_ratio = float(self.loop.get("arrow_card_ratio", 3.0))
         leader_pos = min(0.95, max(0.05, float(self.loop.get("arrow_leader_pos", 0.4))))
         card_h = max(row_h, int(row_h * card_ratio))
         top_off = int(leader_pos * card_h)           # 队长ID 上方到卡片顶
@@ -661,6 +678,16 @@ class TeamFormation:
         ly_local = int(ly - ry)
         y0 = max(0, ly_local - top_off)            # 卡片顶
         y1 = min(sh, ly_local + bot_off)           # 卡片底（恰停在本卡片，不串下一张）
+        # 硬兜底（2026-11-27）：无论卡片几何参数怎么配，裁剪带高度都不得小于「箭头模板高 + 上下余量」，
+        # 否则圆按钮会被上下削平、匹配分永远差一点。以卡片纵向中心(ly_local+mid_off)为基准向上下对称撑开，
+        # 再 clamp 到截图边界；带高仍小于一张卡片，不会串到上下张卡片的箭头。
+        arrow_h = int(arrow_tpl.shape[0])
+        min_band_h = arrow_h + 16
+        if (y1 - y0) < min_band_h:
+            cy_card = ly_local + mid_off
+            half = min_band_h // 2
+            y0 = max(0, cy_card - half)
+            y1 = min(sh, cy_card + (min_band_h - half))
         x0 = max(0, int(right_edge_x - rx) - 2)            # 从名字右边缘起（留 2px 容差）
         band_w = int(self.loop.get("arrow_band_w", 0))
         x1 = min(sw, x0 + band_w) if band_w > 0 else sw    # 0=扫到区域右缘（整行右半部分）
@@ -706,6 +733,53 @@ class TeamFormation:
         ctx.log(f"队员：箭头模板在队长卡片带内未过阈值（带内最高分 {best:.2f} / 阈值 {self.threshold:.2f}）。"
                 f"裁剪带截图 {crop_path}，红框=裁剪带、绿点=最高分位置；整片好友列表 {full_path}。"
                 "若分差一点可调阈值/重标箭头；若绿点不在箭头上则是卡片几何或好友列表区域标定问题。",
+                level="warn")
+
+    def _dump_leader_miss(self, ctx, best, res, min_interval=5.0):
+        """翻完整段好友列表都没认出队长ID 时的诊断留证（每窗口 min_interval 秒最多一次）。
+        best 是 probe 在所有滚动屏里累计的【不卡阈值最高分】+ 那一屏画面；res 给滚动覆盖情况。
+        一张「全程最像的一屏」好友列表截图，绿点=最高分位置，绿框=该位置按模板尺寸估的名字范围。"""
+        label = getattr(ctx, "label", None) or str(id(ctx))
+        now = time.time()
+        if now - self._leader_diag_ts.get(label, 0.0) < min_interval:
+            return
+        self._leader_diag_ts[label] = now
+        scene, bxy, score = best.get("scene"), best.get("xy"), best.get("score")
+        # 一屏都没 probe 到（区域始终取不到/抓图全失败）：没有画面可存，只打日志点出方向。
+        if scene is None or bxy is None or score < 0:
+            ctx.log(f"队员：队长ID 留证无可用画面（共 probe {best.get('screens', 0)} 屏，"
+                    f"滚动 {res.scrolls} 屏、reached_end={res.reached_end}）；"
+                    "多为 friend_list 区域取不到或抓图失败，先查窗口/区域标定。", level="warn")
+            return
+        leader_tpl = self.tpl.get("leader_id")
+        th, tw = (leader_tpl.shape[:2] if leader_tpl is not None else (16, 68))
+        ts = time.strftime("%H%M%S")
+        raw = str(CAPTURES_DEBUG_DIR / f"diag_leader_miss_{ts}.png")
+        raw_frame = str(CAPTURES_DEBUG_DIR / f"diag_leader_miss_raw_{ts}.png")
+        try:
+            annotated = scene.copy()
+            bx, by = bxy
+            cv2.rectangle(annotated, (bx - tw // 2, by - th // 2),
+                          (bx + tw // 2, by + th // 2), (0, 200, 0), 1)
+            cv2.circle(annotated, (bx, by), 4, (0, 200, 0), 1)
+            # 同时存一份【未标注原始帧】：标注图的绿框会污染名字像素、无法离线干净复算匹配分，
+            # 原始帧才能拿去和候选模板重算/重标（与箭头留证「裁剪带+整片」两份的思路一致）。
+            ok1 = vision.save_image(raw, annotated)
+            ok2 = vision.save_image(raw_frame, scene)
+        except Exception as e:
+            ctx.log(f"队员：队长ID 留证失败：{e}", level="warn")
+            return
+        if not (ok1 and ok2):
+            return
+        path, raw_path = vision.dated_path(raw), vision.dated_path(raw_frame)
+        cover = "已滚到底（整段翻完）" if res.reached_end else \
+                f"max_tries 用尽（仅滚 {res.scrolls} 屏，可能没翻完，见 scroll 日志帧差）"
+        eff_k = vision._odd_ksize(self.loop.get("leader_match_blur", 3))
+        blur_note = "双边模糊归一化 k=%d" % eff_k if eff_k else "原始匹配（未模糊）"
+        ctx.log(f"队员：队长ID 全程最高匹配分 {score:.2f} / 阈值 {self.threshold:.2f}"
+                f"（{blur_note}，共看 {best['screens']} 屏、{cover}）。标注图 {path}（绿点/绿框=最高分位置）、"
+                f"未标注原始帧 {raw_path}（可离线复算/重标）。分接近阈值→重标 leader_id 或放宽阈值；"
+                "分很低且绿点不在队长ID 上→查 friend_list 区域/联系人页签/滚动覆盖。",
                 level="warn")
 
     def _diag_dump(self, ctx, region_key, tpl_key, tag):

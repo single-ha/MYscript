@@ -930,6 +930,11 @@ DEFAULT_CONFIG = {
                 "create_timeout_sec": 15,    # 队长等「创建队伍/申请」按钮出现的超时
                 "accept_timeout_sec": 90,    # 队长等申请、点够人数的超时（每接受到一人会刷新计时）
                 "find_leader_timeout_sec": 60,  # 队员在好友列表找队长ID的总超时
+                "leader_match_blur": 3,      # 找队长ID 的【双边模糊归一化】高斯核边长（奇数；1 或 0=关闭走原始匹配）。
+                                             # 2026-11-27 实测：多开各客户端抗锯齿/字体渲染柔化度不同，同一队长ID 模板
+                                             # 在清晰号 0.90、次号 0.87、最柔的号只有 0.79 卡阈值；模板与画面【都】做一次
+                                             # 轻微高斯模糊再比 NCC，可把柔化号拉到 0.89（清晰号仍近满分、队长/干扰名区分度
+                                             # 仍达 0.46），且不动全局阈值。偶数会被代码强制取最近奇数。详见 vision.soft_match
                 "contact_timeout_sec": 5,    # 队员点「联系人」页签时等该页签出现的超时（超时兜底直接找队长）
                 "apply_timeout_sec": 15,     # 队员等「申请入队」按钮出现的超时
                 "scroll_step": -3,           # 好友列表每次滚轮格数（负=向下翻）
@@ -940,7 +945,9 @@ DEFAULT_CONFIG = {
                 "scroll_reset_max": 20,      # 「滚到顶」最多上滚几屏的防死循环上限
                 "arrow_band_w": 0,           # 找箭头的横向范围：从名字右边缘往右多宽；0=扫到该区域右缘(整行右半)
                 "arrow_offset_x": 28,        # 箭头没匹配到时的兜底：点「名字右边缘 + 这么多像素」处
-                "arrow_card_ratio": 2.0,     # 好友【卡片】高 ≈ 队长ID模板高的几倍（撑开找箭头的竖直带、覆盖整张卡片）
+                "arrow_card_ratio": 3.0,     # 好友【卡片】高 ≈ 队长ID模板高的几倍（撑开找箭头的竖直带、覆盖整张卡片）。
+                                             # 2026-11-27 由 2.0 上调到 3.0：实测卡片高约 3.7 倍、圆箭头按钮直径约 3 倍，
+                                             # 旧值 2.0 会把箭头上下削平（带内 0.84 差一点过不了阈值）；旧配置由迁移函数升级
                 "arrow_leader_pos": 0.4,     # 队长ID 在卡片内的纵向位置(从顶算占比，0.4=中上)；兜底点落到卡片纵向中心而非队长ID 的 Y
                 "disband_timeout_sec": 60,   # 解散队伍整体超时（安全网）：到点仍没让所有号退完就结束
                 "disband_quit_wait_sec": 1.0,# 开队伍面板后等「退出队伍」出现的短等待：超这么久没找到就认为本就不在队、直接关面板
@@ -1212,6 +1219,8 @@ def load_config():
         save_config(cfg)
     if _migrate_snipe_nonpremium_ocr(cfg):
         save_config(cfg)
+    if _migrate_teaming_arrow_card_ratio(cfg):
+        save_config(cfg)
     return cfg
 
 
@@ -1233,6 +1242,26 @@ def _migrate_snipe_nonpremium_ocr(cfg):
         loop.pop("digit_threshold")
         changed = True
     return changed
+
+
+def _migrate_teaming_arrow_card_ratio(cfg):
+    """一次性迁移（2026-11-27）：组队找箭头的 arrow_card_ratio 旧默认 2.0 提到 3.0。
+    旧值推出的竖直裁剪带过矮、会把圆形箭头按钮上下削平，导致带内匹配分总差一点过不了阈值
+    （实测带内最高分 0.84 < 0.85）。只动「仍是旧默认值 2.0」的配置——用户手动调过的（≠2.0）
+    一律保留；且代码侧另有「裁剪带不小于箭头模板高+余量」的硬兜底，双保险。
+    判据走值：load_config 已 _deep_merge 默认值，键在不在分辨不出新旧配置。再次加载值已是
+    3.0，天然一次性。返回是否改动（改动由 load_config 存盘）。"""
+    loop = ((cfg.get("tasks") or {}).get("teaming", {}) or {}).get("loop")
+    if not isinstance(loop, dict) or not loop:
+        return False
+    try:
+        val = float(loop.get("arrow_card_ratio", 3.0))
+    except (TypeError, ValueError):
+        return False
+    if abs(val - 2.0) > 1e-6:
+        return False
+    loop["arrow_card_ratio"] = 3.0
+    return True
 
 
 def _migrate_dungeon_ready(cfg):
