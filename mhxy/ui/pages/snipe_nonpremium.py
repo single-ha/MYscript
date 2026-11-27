@@ -26,6 +26,7 @@ class SnipeNonpremiumPage(ctk.CTkFrame):
         self.fonts = app.fonts
         self.runner = None
         self._wait_until = None      # 延迟执行：晚于该时刻才真正启动（None=不在等待）
+        self._starting = False       # preflight 后台进行中标志（防重复点击起多个启动线程）
         self._cal_dialog = None
 
         self.grid_columnconfigure(0, weight=1)
@@ -210,6 +211,8 @@ class SnipeNonpremiumPage(ctk.CTkFrame):
     # 运行控制
     # ------------------------------------------------------------------
     def _toggle_run(self):
+        if getattr(self, "_starting", False):
+            return
         if self.runner and self.runner.is_running():
             self.runner.stop()
             self._log_line("正在停止…", "warn")
@@ -235,17 +238,28 @@ class SnipeNonpremiumPage(ctk.CTkFrame):
         self._start_run()
 
     def _start_run(self):
+        # 异步启动：preflight 含 select_windows/locate_all 的 Win32 窗口枚举，目标窗口无响应时
+        # 可能阻塞，放后台线程做，结论经 ui_call 回主线程，避免冻住整窗（延迟到点卡死的根因）。
+        if getattr(self, "_starting", False):
+            return
         task_cls = get_task(self.TASK_NAME)
         self.runner = TaskRunner(task_cls(), self.app.cfg)
-        ok, problems = self.runner.start()
-        if not ok:
-            for p in problems:
-                self._log_line("无法启动：" + p, "error")
-            self.runner = None
-            self.btn_run.configure(text="▶  开始抢非珍品", fg_color=T.ACCENT,
-                                   hover_color=T.ACCENT_HOVER, state="normal")
-            return
-        self.btn_run.configure(text="■  停止", fg_color=T.DANGER, hover_color=T.DANGER_HOVER, state="normal")
+        self._starting = True
+        self.btn_run.configure(text="启动中…", state="disabled")
+
+        def on_done(ok, problems):
+            self._starting = False
+            if not ok:
+                for p in problems:
+                    self._log_line("无法启动：" + p, "error")
+                self.runner = None
+                self.btn_run.configure(text="▶  开始抢非珍品", fg_color=T.ACCENT,
+                                       hover_color=T.ACCENT_HOVER, state="normal")
+                return
+            self.btn_run.configure(text="■  停止", fg_color=T.DANGER,
+                                   hover_color=T.DANGER_HOVER, state="normal")
+
+        self.runner.start_async(on_done, ui_marshal=self.app.ui_call)
 
     @staticmethod
     def _fmt_remaining(secs):
@@ -301,7 +315,8 @@ class SnipeNonpremiumPage(ctk.CTkFrame):
         if self.runner:
             for level, msg, _src in self.runner.drain_logs():
                 self._log_line(msg, level)
-            if not self.runner.is_running() and self.btn_run.cget("text") != "▶  开始抢非珍品":
+            if (not self.runner.is_running() and not self.runner.is_starting()
+                    and self.btn_run.cget("text") != "▶  开始抢非珍品"):
                 self._on_runner_finished()
         elif self._wait_until is not None:
             if datetime.now() >= self._wait_until:

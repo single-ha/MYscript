@@ -494,6 +494,8 @@ class TeamingCalibrationCard(ctk.CTkFrame):
         LeaderIdGallery.open(self.app)
 
     def _toggle_team(self):
+        if getattr(self, "_team_starting", False):
+            return
         if self.runner_team and self.runner_team.is_running():
             self.runner_team.stop()
             self.btn_team.configure(text="停止中…", state="disabled")
@@ -502,17 +504,28 @@ class TeamingCalibrationCard(ctk.CTkFrame):
         if task_cls is None:
             self.app.log_line("找不到组队任务。", "error", "组队")
             return
+        # 异步启动：preflight 的窗口枚举放后台，避免冻住配置窗。
         self.runner_team = TaskRunner(task_cls(), cfg_mod.load_config())
-        ok, problems = self.runner_team.start()
-        if not ok:
-            for p in problems:
-                self.app.log_line("无法开始组队：" + p, "error", "组队")
-            self.runner_team = None
-            return
-        self.btn_team.configure(text="■  停止组队", fg_color=T.DANGER,
-                                hover_color=T.DANGER_HOVER, state="normal")
+        self._team_starting = True
+        self.btn_team.configure(text="启动中…", state="disabled")
+
+        def on_done(ok, problems):
+            self._team_starting = False
+            if not ok:
+                for p in problems:
+                    self.app.log_line("无法开始组队：" + p, "error", "组队")
+                self.runner_team = None
+                self.btn_team.configure(text="▶  一键组队", fg_color=T.ACCENT,
+                                        hover_color=T.ACCENT_HOVER, state="normal")
+                return
+            self.btn_team.configure(text="■  停止组队", fg_color=T.DANGER,
+                                    hover_color=T.DANGER_HOVER, state="normal")
+
+        self.runner_team.start_async(on_done, ui_marshal=self.app.ui_call)
 
     def _toggle_disband(self):
+        if getattr(self, "_disband_starting", False):
+            return
         if self.runner_disband and self.runner_disband.is_running():
             self.runner_disband.stop()
             self.btn_disband.configure(text="停止中…", state="disabled")
@@ -521,28 +534,40 @@ class TeamingCalibrationCard(ctk.CTkFrame):
         if task_cls is None:
             self.app.log_line("找不到解散任务。", "error", "解散")
             return
+        # 异步启动：preflight 的窗口枚举放后台，避免冻住配置窗。
         self.runner_disband = TaskRunner(task_cls(), cfg_mod.load_config())
-        ok, problems = self.runner_disband.start()
-        if not ok:
-            for p in problems:
-                self.app.log_line("无法开始解散：" + p, "error", "解散")
-            self.runner_disband = None
-            return
-        self.btn_disband.configure(text="■  停止解散", fg_color=T.DANGER,
-                                   hover_color=T.DANGER_HOVER, text_color=T.ON_ACCENT,
-                                   border_width=0, border_color=T.DANGER, state="normal")
+        self._disband_starting = True
+        self.btn_disband.configure(text="启动中…", state="disabled")
+
+        def on_done(ok, problems):
+            self._disband_starting = False
+            if not ok:
+                for p in problems:
+                    self.app.log_line("无法开始解散：" + p, "error", "解散")
+                self.runner_disband = None
+                self.btn_disband.configure(text="▶  一键解散", fg_color=T.BTN,
+                                           hover_color=T.BTN_HOVER, text_color=T.TEXT,
+                                           border_width=1, border_color=T.BORDER, state="normal")
+                return
+            self.btn_disband.configure(text="■  停止解散", fg_color=T.DANGER,
+                                       hover_color=T.DANGER_HOVER, text_color=T.ON_ACCENT,
+                                       border_width=0, border_color=T.DANGER, state="normal")
+
+        self.runner_disband.start_async(on_done, ui_marshal=self.app.ui_call)
 
     def pump(self):
         if self.runner_team:
             for level, msg, _src in self.runner_team.drain_logs():
                 self.app.log_line(msg, level, "组队")
-            if not self.runner_team.is_running() and self.btn_team.cget("text") != "▶  一键组队":
+            if (not self.runner_team.is_running() and not self.runner_team.is_starting()
+                    and self.btn_team.cget("text") != "▶  一键组队"):
                 self.btn_team.configure(text="▶  一键组队", fg_color=T.ACCENT,
                                         hover_color=T.ACCENT_HOVER, state="normal")
         if self.runner_disband:
             for level, msg, _src in self.runner_disband.drain_logs():
                 self.app.log_line(msg, level, "解散")
-            if not self.runner_disband.is_running() and self.btn_disband.cget("text") != "▶  一键解散":
+            if (not self.runner_disband.is_running() and not self.runner_disband.is_starting()
+                    and self.btn_disband.cget("text") != "▶  一键解散"):
                 self.btn_disband.configure(text="▶  一键解散", fg_color=T.BTN,
                                            hover_color=T.BTN_HOVER, text_color=T.TEXT,
                                            border_width=1, border_color=T.BORDER, state="normal")

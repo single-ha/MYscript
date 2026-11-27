@@ -7,6 +7,7 @@
 
 import datetime
 import os
+import queue
 import threading
 import time
 
@@ -266,11 +267,19 @@ class App(ctk.CTk):
         self._log_filter_levels = set(self.LOG_LEVEL_ORDER)   # 启用的级别，默认全开
         self._log_filter_source = None              # None = 全部来源
         self._log_level_btns = {}
-        # 日志写盘（逐行同步 flush）：本次会话一个文件，路径在首次打开时生成
+        # 日志写盘：本次会话一个文件，路径在首次打开时生成。
+        # 关键：写盘放后台守护线程 + 队列消费，主线程 log_line 只入队、绝不做磁盘 I/O。
+        # 旧实现每条日志在 Tk 主线程同步 write+flush、首条还同步 rglob 清理旧日志，
+        # 磁盘忙/杀软扫描/网络盘时会直接冻住事件循环（整窗未响应），现全部移出纳管线程。
         self._log_fh = None
         self._log_path = None
         self._log_file_disabled = False             # 写盘出错后置 True（不再重试）
         self._log_file_warned = False               # 写盘失败只提示一次
+        self._log_write_q = queue.Queue()           # 待写盘条目：(datetime, source, level, msg)
+        self._log_writer_stop = threading.Event()
+        self._log_writer_thread = threading.Thread(
+            target=self._log_writer_loop, name="log-writer", daemon=True)
+        self._log_writer_thread.start()
 
         panel = ctk.CTkFrame(self, fg_color=T.SIDEBAR, corner_radius=0, width=340)
         panel.grid(row=0, column=2, sticky="nsew")
@@ -350,15 +359,11 @@ class App(ctk.CTk):
             return
         if getattr(self, "log", None) is None:
             return
-        # 落盘（逐行同步 flush）：config.log_to_file 打开才写。失败只提示一次、静默降级为只上屏。
-        if bool(getattr(self, "cfg", {}).get("log_to_file", True)):
-            try:
-                self._write_log_file(level, source, msg)
-            except Exception:
-                self._disable_log_file()
-                if not self._log_file_warned:
-                    self._log_file_warned = True
-                    self.log_line("日志写盘失败：本次会话不再写文件，仅上屏（可检查 logs/ 目录权限）。", "warn")
+        # 落盘：config.log_to_file 打开才写。只【入队】，由后台 log-writer 线程统一写，
+        # 主线程绝不碰磁盘（避免 flush/rglob 在磁盘忙时冻住 UI）。失败降级也在后台线程处理。
+        if (bool(getattr(self, "cfg", {}).get("log_to_file", True))
+                and not self._log_file_disabled):
+            self._log_write_q.put((datetime.datetime.now(), source, level, msg))
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         entry = (ts, source, level, msg)
         # 首次见到某来源时加进来源下拉（只是补选项，不影响当前选择）
@@ -377,10 +382,72 @@ class App(ctk.CTk):
         if self._log_passes(entry):
             self._append_log_entry(entry)
 
-    # ---- 日志写盘（逐行同步 flush，每次启动一个新文件）----
+    # ---- 日志写盘（后台 log-writer 线程：队列消费 + 批量落盘，主线程零磁盘 I/O）----
+    def _log_writer_loop(self):
+        """守护线程：阻塞等待日志条目，攒一批后一次性 write+flush，而不是每行刷一次盘。
+        建文件、清理旧日志(rglob)、写盘这些可能阻塞的活全在本线程，绝不进 Tk 事件循环。
+        任何异常都降级为「本次不再写盘」，并经 after(0) 回主线程提示一次（不直接碰控件）。"""
+        poll = 0.25          # 空闲时最多攒 0.25s 即落盘，兼顾实时性与刷盘频率
+        while not self._log_writer_stop.is_set():
+            try:
+                first = self._log_write_q.get(timeout=poll)
+            except queue.Empty:
+                continue
+            batch = [first]
+            # 顺手把队列里已就绪的条目一并取走（有界，避免单批无限大长期占着线程）
+            while len(batch) < 256:
+                try:
+                    batch.append(self._log_write_q.get_nowait())
+                except queue.Empty:
+                    break
+            try:
+                self._drain_log_batch(batch)
+            except Exception:
+                self._disable_log_file()
+                if not self._log_file_warned:
+                    self._log_file_warned = True
+                    try:
+                        self.after(0, lambda: self.log_line(
+                            "日志写盘失败：本次会话不再写文件，仅上屏（可检查 logs/ 目录权限）。", "warn"))
+                    except Exception:
+                        pass
+        # 关闭流程：停止信号到了，把残余条目尽力刷完再关句柄
+        self._flush_remaining_logs()
+
+    def _drain_log_batch(self, batch):
+        """把一批 (now, source, level, msg) 落盘。log_to_file 关着或已禁用则直接丢弃。"""
+        if self._log_file_disabled:
+            return
+        fh = self._ensure_log_file()
+        if fh is None:
+            return
+        for now, source, level, msg in batch:
+            fh.write(format_log_line(now, source, level, msg) + "\n")
+        fh.flush()
+
+    def _flush_remaining_logs(self):
+        """关闭时兜底：把队列里没写完的条目刷盘。任何异常都吞掉（进程都要退了）。"""
+        leftover = []
+        while True:
+            try:
+                leftover.append(self._log_write_q.get_nowait())
+            except queue.Empty:
+                break
+        if leftover:
+            try:
+                self._drain_log_batch(leftover)
+            except Exception:
+                pass
+        try:
+            if self._log_fh is not None:
+                self._log_fh.close()
+        except Exception:
+            pass
+
     def _ensure_log_file(self):
-        """按需打开本次会话的日志文件（UTF-8 追加）。log_to_file 关着返回 None（不建文件不写）；
-        打开失败抛异常（由 _write_log_file 的调用方禁用写盘）。首次打开顺带自动清理旧日志。"""
+        """按需打开本次会话的日志文件（UTF-8 追加）。仅由后台 log-writer 线程调用。
+        log_to_file 关着返回 None（不建文件不写）；打开失败抛异常由消费循环统一禁用+提示。
+        首次打开顺带自动清理旧日志。"""
         if self._log_fh is not None:
             return self._log_fh
         if not bool(getattr(self, "cfg", {}).get("log_to_file", True)):
@@ -396,6 +463,7 @@ class App(ctk.CTk):
         fh.flush()
         self._log_fh = fh
         # 自动清理旧日志：保留最近 N 份（含本次新文件）；keep<=0/非数=不清理（best-effort）。
+        # rglob 扫描放在后台线程，不再卡主线程。
         try:
             keep = getattr(self, "cfg", {}).get("log_keep_files", 20)
             prune_log_files(LOGS_DIR, int(keep) if keep else 0)
@@ -403,18 +471,8 @@ class App(ctk.CTk):
             pass
         return fh
 
-    def _write_log_file(self, level, source, msg):
-        """把一条日志写进本次会话文件并 flush。异常上抛给 log_line 统一禁用+提示。"""
-        if self._log_file_disabled:
-            return
-        fh = self._ensure_log_file()
-        if fh is None:
-            return
-        fh.write(format_log_line(datetime.datetime.now(), source, level, msg) + "\n")
-        fh.flush()
-
     def _disable_log_file(self):
-        """写盘出问题：关句柄、停写（后续 log_line 只上屏）。"""
+        """写盘出问题：关句柄、停写（后续 log_line 只入队后被消费循环丢弃/不再入队）。"""
         self._log_file_disabled = True
         try:
             if self._log_fh is not None:
@@ -783,6 +841,16 @@ class App(ctk.CTk):
             except Exception:
                 pass
 
+    def ui_call(self, fn):
+        """把 fn 投递到 Tk 主线程执行（线程安全）。供后台线程（如 TaskRunner.start_async 的
+        preflight 线程）在拿到结论后安全操作控件。主窗正在/已经销毁时静默丢弃回调
+        （此时操作控件必抛 TclError，且进程即将退出，回调已无意义），避免后台线程报错刷屏。"""
+        try:
+            if self.winfo_exists():
+                self.after(0, fn)
+        except Exception:
+            pass
+
     def toast(self, msg, color=None):
         """右下角浮层提示；color 指定背景色（默认主色），传 T.DANGER 显红。"""
         fg = color or T.ACCENT
@@ -807,17 +875,39 @@ class App(ctk.CTk):
                 text_color=T.SUCCESS if not titles else T.ON_ACCENT)
 
     def _tick(self):
-        # 抽日志：所有可运行任务页
-        for k in self.RUNNABLE_KEYS:
-            p = self.pages.get(k)
-            if p:
-                p.pump()
-        self._refresh_run_status()
-        # 每约 1.2s 检测一次游戏窗口（放后台线程，避免阻塞 UI 造成滑动卡顿）
-        self._tick_count += 1
-        if self._tick_count % 8 == 0:
-            self._kick_locate()
-        self.after(150, self._tick)
+        # 关键：after 重注册放 finally，任何一页 pump()/刷新抛异常都不能打断定时链——
+        # 否则 _tick 一旦中断，日志不再刷新、窗口检测停摆，外观就是「整窗卡死只能杀进程」。
+        try:
+            # 抽日志：所有可运行任务页
+            for k in self.RUNNABLE_KEYS:
+                p = self.pages.get(k)
+                if p:
+                    try:
+                        p.pump()
+                    except Exception as e:
+                        # 单页 pump 出错只记一次，不让它拖垮其它页与全局定时链
+                        self._log_swallowed("pump", k, e)
+            self._refresh_run_status()
+            # 每约 1.2s 检测一次游戏窗口（放后台线程，避免阻塞 UI 造成滑动卡顿）
+            self._tick_count += 1
+            if self._tick_count % 8 == 0:
+                self._kick_locate()
+        finally:
+            self.after(150, self._tick)
+
+    def _log_swallowed(self, where, key, exc):
+        """定时回调里吞掉的异常：限频写一条警告，便于排查且不刷屏。"""
+        now = time.monotonic()
+        last = getattr(self, "_swallow_ts", {})
+        sig = f"{where}:{key}:{type(exc).__name__}"
+        if now - last.get(sig, 0.0) < 5.0:
+            return
+        last[sig] = now
+        self._swallow_ts = last
+        try:
+            self.log_line(f"内部定时任务异常（已自动恢复，不影响运行）：{where}/{key} -> {exc}", "warn")
+        except Exception:
+            pass
 
     def _kick_locate(self):
         """在后台线程枚举窗口找游戏；getAllWindows 较慢，绝不能在主线程跑。"""
@@ -926,27 +1016,31 @@ class App(ctk.CTk):
 
     # ---- 全局急停轮询：鼠标甩到屏幕左上角 或 急停组合键 → 停止一切任务 ----
     def _poll_hotkey(self):
-        # ① 物理急停：鼠标甩到所选屏幕角（默认右上角，设置里可改/可关）。注意——默认 sendinput 后端走
-        #    SendInput 底层注入，【不经过 pyautogui，没有内置 FAILSAFE】，故必须在这里用真实光标位置自己兜
-        #    （覆盖所有后端）。仅在有任务跑时生效，避免空触发；任务停了 _any_running 转 False 不再重复触发。
-        corner = self.cfg.get("failsafe_corner", DEFAULT_FAILSAFE)
-        if corner != "off":
-            try:
-                cx, cy = get_cursor()
-            except Exception:
-                cx, cy = None, None
-            if _in_failsafe_corner(cx, cy, corner) and self._any_running():
-                self._emergency_stop(f"鼠标甩到{FAILSAFE_CORNERS.get(corner, '角落')}")
-        # ② 急停组合键（默认 Ctrl+Alt+F12）：所有修饰键+主键同时按下的瞬间触发一次。
-        mods, key_vk = _parse_stop_hotkey(self.cfg.get("hotkey_stop", DEFAULT_STOP_HOTKEY))
-        if key_vk is not None:
-            down = all(_vk_down(m) for m in mods) and _vk_down(key_vk)
-            if down and not self._hotkey_down:
-                self._emergency_stop()
-            self._hotkey_down = down
-        else:
-            self._hotkey_down = False
-        self.after(60, self._poll_hotkey)
+        # 同 _tick：重注册放 finally，急停轮询绝不能因单次异常而永久停摆（否则热键/甩角急停失效，
+        # 任务失控时只能杀进程）。
+        try:
+            # ① 物理急停：鼠标甩到所选屏幕角（默认右上角，设置里可改/可关）。注意——默认 sendinput 后端走
+            #    SendInput 底层注入，【不经过 pyautogui，没有内置 FAILSAFE】，故必须在这里用真实光标位置自己兜
+            #    （覆盖所有后端）。仅在有任务跑时生效，避免空触发；任务停了 _any_running 转 False 不再重复触发。
+            corner = self.cfg.get("failsafe_corner", DEFAULT_FAILSAFE)
+            if corner != "off":
+                try:
+                    cx, cy = get_cursor()
+                except Exception:
+                    cx, cy = None, None
+                if _in_failsafe_corner(cx, cy, corner) and self._any_running():
+                    self._emergency_stop(f"鼠标甩到{FAILSAFE_CORNERS.get(corner, '角落')}")
+            # ② 急停组合键（默认 Ctrl+Alt+F12）：所有修饰键+主键同时按下的瞬间触发一次。
+            mods, key_vk = _parse_stop_hotkey(self.cfg.get("hotkey_stop", DEFAULT_STOP_HOTKEY))
+            if key_vk is not None:
+                down = all(_vk_down(m) for m in mods) and _vk_down(key_vk)
+                if down and not self._hotkey_down:
+                    self._emergency_stop()
+                self._hotkey_down = down
+            else:
+                self._hotkey_down = False
+        finally:
+            self.after(60, self._poll_hotkey)
 
     def _emergency_stop(self, reason=None):
         """急停：停掉所有页面正在跑的后台任务，弹提示。reason 标明来源（甩角/热键）。"""
@@ -986,6 +1080,13 @@ class App(ctk.CTk):
 
     def _on_close(self):
         self.stop_all_tasks()
+        # 通知后台日志写线程收尾：刷完队列残余再关句柄（daemon 线程，join 设上限防极端磁盘卡死）
+        try:
+            self._log_writer_stop.set()
+            if self._log_writer_thread.is_alive():
+                self._log_writer_thread.join(timeout=2.0)
+        except Exception:
+            pass
         self.destroy()
 
 

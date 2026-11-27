@@ -581,6 +581,8 @@ class DailyPage(ctk.CTkFrame):
     def _toggle_run(self, save=True):
         """开始/停止整条日常。save=False：调用方（起始页日常卡）已在点击瞬间自行落盘设置，
         这里不再落盘，避免用过期值回写覆盖。"""
+        if getattr(self, "_starting", False):
+            return
         if self.runner and self.runner.is_running():
             self.runner.stop()
             self._log_line("正在停止…", "warn")
@@ -607,19 +609,28 @@ class DailyPage(ctk.CTkFrame):
         self._start_runner()
 
     def _start_runner(self):
-        """真正启动日常 runner（供：立即执行 / 定时到点执行）。"""
+        """真正启动日常 runner（供：立即执行 / 定时到点执行）。
+        异步：preflight 的窗口枚举放后台线程，结论回主线程，避免冻住 UI。"""
+        if getattr(self, "_starting", False):
+            return
         task_cls = get_task(self.TASK_NAME)
         self.runner = TaskRunner(task_cls(), self.app.cfg)
-        ok, problems = self.runner.start()
-        if not ok:
-            for p in problems:
-                self._log_line("无法启动：" + p, "error")
-            self.runner = None
-            self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
-                                   hover_color=T.ACCENT_HOVER, state="normal")
-            return
-        self.btn_run.configure(text="■  停止", fg_color=T.DANGER,
-                               hover_color=T.DANGER_HOVER, state="normal")
+        self._starting = True
+        self.btn_run.configure(text="启动中…", state="disabled")
+
+        def on_done(ok, problems):
+            self._starting = False
+            if not ok:
+                for p in problems:
+                    self._log_line("无法启动：" + p, "error")
+                self.runner = None
+                self.btn_run.configure(text=self.RUN_LABEL, fg_color=T.ACCENT,
+                                       hover_color=T.ACCENT_HOVER, state="normal")
+                return
+            self.btn_run.configure(text="■  停止", fg_color=T.DANGER,
+                                   hover_color=T.DANGER_HOVER, state="normal")
+
+        self.runner.start_async(on_done, ui_marshal=self.app.ui_call)
 
     def _on_runner_finished(self):
         self.runner = None
@@ -690,20 +701,27 @@ class DailyPage(ctk.CTkFrame):
         self._fire_single(name, self._single_build_cfg(self.app.cfg, name), title)
 
     def _fire_single(self, name, run_cfg, label, tag=None):
-        """共用启动：DailyTask + 单跑覆盖配置塞进专用 runner。start 失败（preflight/全局锁/无窗口）
-        记 problems 并复位。"""
-        runner = TaskRunner(get_task(self.TASK_NAME)(), run_cfg)
-        ok, problems = runner.start()
-        if not ok:
-            for p in problems:
-                self._log_line("无法启动单跑：" + p, "error")
+        """共用启动：DailyTask + 单跑覆盖配置塞进专用 runner。异步启动，preflight 的窗口枚举
+        放后台线程避免冻 UI；start 失败（preflight/全局锁/无窗口）记 problems 并复位。"""
+        if getattr(self, "_single_starting", False):
             return
-        self.single_runner = runner
-        self._single_name = name
-        self._single_label = label
-        self._single_tag = tag or self._SINGLE_SOURCE.get(name)
-        self._mark_single_row(name)
-        self._log_line(f"★ 单跑「{label}」：只跑这一个，其余不动（不改流程、配置不落盘）★", "warn")
+        runner = TaskRunner(get_task(self.TASK_NAME)(), run_cfg)
+        self._single_starting = True
+
+        def on_done(ok, problems):
+            self._single_starting = False
+            if not ok:
+                for p in problems:
+                    self._log_line("无法启动单跑：" + p, "error")
+                return
+            self.single_runner = runner
+            self._single_name = name
+            self._single_label = label
+            self._single_tag = tag or self._SINGLE_SOURCE.get(name)
+            self._mark_single_row(name)
+            self._log_line(f"★ 单跑「{label}」：只跑这一个，其余不动（不改流程、配置不落盘）★", "warn")
+
+        runner.start_async(on_done, ui_marshal=self.app.ui_call)
 
     def _mark_single_row(self, name):
         """把正在单跑的任务行高亮：标题胶囊变主题蓝（文字反白）+ 就绪标签改「▶ 正在单跑」。"""
@@ -759,7 +777,8 @@ class DailyPage(ctk.CTkFrame):
             for level, msg, src in self.runner.drain_logs():
                 tag = self._SINGLE_SOURCE.get(src, default_tag) if src else default_tag
                 self.app.log_line(msg, level, tag)
-            if not self.runner.is_running() and self.btn_run.cget("text") != self.RUN_LABEL:
+            if (not self.runner.is_running() and not self.runner.is_starting()
+                    and self.btn_run.cget("text") != self.RUN_LABEL):
                 self._on_runner_finished()
         elif self._wait_until is not None:
             # 定时等待中：到点才启动
@@ -771,7 +790,7 @@ class DailyPage(ctk.CTkFrame):
             tag = self._single_tag or getattr(self, "LOG_SOURCE", None)
             for level, msg, _src in self.single_runner.drain_logs():
                 self.app.log_line(msg, level, tag)
-            if not self.single_runner.is_running():
+            if not self.single_runner.is_running() and not self.single_runner.is_starting():
                 self._single_finished()
 
     def _log_line(self, msg, level="info"):

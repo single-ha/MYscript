@@ -133,6 +133,8 @@ class WeeklyTabPage(ctk.CTkFrame):
 
     # ---- 运行控制 ----
     def _toggle_run(self):
+        if getattr(self, "_starting", False):
+            return
         if self.runner and self.runner.is_running():
             self.runner.stop()
             self._log_line("正在停止…", "warn")
@@ -141,14 +143,24 @@ class WeeklyTabPage(ctk.CTkFrame):
         self._apply_params()
         self.app.cfg = cfg_mod.load_config()
         task_cls = get_task(self.TASK_NAME)
+        # 异步启动：preflight 的窗口枚举放后台，避免冻住 UI。
         self.runner = TaskRunner(task_cls(), self.app.cfg)
-        ok, problems = self.runner.start()
-        if not ok:
-            for p in problems:
-                self._log_line("无法启动：" + p, "error")
-            self.runner = None
-            return
-        self.btn_run.configure(text="■  停止", fg_color=T.DANGER, hover_color=T.DANGER_HOVER, state="normal")
+        self._starting = True
+        self.btn_run.configure(text="启动中…", state="disabled")
+
+        def on_done(ok, problems):
+            self._starting = False
+            if not ok:
+                for p in problems:
+                    self._log_line("无法启动：" + p, "error")
+                self.runner = None
+                self.btn_run.configure(text=getattr(self, "RUN_LABEL", "▶  开始"),
+                                       fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, state="normal")
+                return
+            self.btn_run.configure(text="■  停止", fg_color=T.DANGER,
+                                   hover_color=T.DANGER_HOVER, state="normal")
+
+        self.runner.start_async(on_done, ui_marshal=self.app.ui_call)
 
     def _apply_params(self):
         cfg = cfg_mod.load_config()
@@ -193,7 +205,8 @@ class WeeklyTabPage(ctk.CTkFrame):
         if self.runner:
             for level, msg, _src in self.runner.drain_logs():
                 self._log_line(msg, level)
-            if not self.runner.is_running() and self.btn_run.cget("text") != self.RUN_LABEL:
+            if (not self.runner.is_running() and not self.runner.is_starting()
+                    and self.btn_run.cget("text") != self.RUN_LABEL):
                 self._on_runner_finished()
 
     def _log_line(self, msg, level="info"):

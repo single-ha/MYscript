@@ -27,6 +27,7 @@ class StartPage(ctk.CTkFrame):
         self.fonts = app.fonts
         self._cal_dialog = None
         self.login_runner = None
+        self._login_starting = False   # 登录 preflight 后台进行中（防重复点击）
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -166,6 +167,8 @@ class StartPage(ctk.CTkFrame):
             self.btn_login.configure(text="▶  开始登录", fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER)
 
     def _toggle_login_run(self):
+        if getattr(self, "_login_starting", False):
+            return
         if self.login_runner and self.login_runner.is_running():
             self.login_runner.stop()
             self._sync_login_btn()
@@ -181,14 +184,21 @@ class StartPage(ctk.CTkFrame):
         from ...tasks import get_task
         from ...core.runner import TaskRunner
 
+        # 异步启动：preflight 的窗口枚举放后台线程，避免冻住登录窗。
         self.login_runner = TaskRunner(get_task(self.TASK_NAME)(), self.app.cfg)
-        ok, problems = self.login_runner.start()
-        if not ok:
-            for p in problems:
-                self.app.log_line("无法启动：" + p, "error", self.LOG_SOURCE)
-            self.login_runner = None
-            return
-        self._sync_login_btn()
+        self._login_starting = True
+        self.btn_login.configure(text="启动中…", state="disabled")
+
+        def on_done(ok, problems):
+            self._login_starting = False
+            self.btn_login.configure(state="normal")
+            if not ok:
+                for p in problems:
+                    self.app.log_line("无法启动：" + p, "error", self.LOG_SOURCE)
+                self.login_runner = None
+            self._sync_login_btn()
+
+        self.login_runner.start_async(on_done, ui_marshal=self.app.ui_call)
 
     def _status(self, tc):
         path = (tc.get("client_path") or "").strip()
@@ -246,7 +256,7 @@ class StartPage(ctk.CTkFrame):
             return
         for level, msg, _src in self.login_runner.drain_logs():
             self.app.log_line(msg, level, self.LOG_SOURCE)
-        if not self.login_runner.is_running():
+        if not self.login_runner.is_running() and not self.login_runner.is_starting():
             self._sync_login_btn()
 
     def stop_pending(self):

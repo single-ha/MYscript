@@ -37,6 +37,16 @@ class TaskRunner:
         self.log_queue = queue.Queue()
         self.stop_event = threading.Event()
         self.thread = None
+        # 异步启动（start_async）期间为 True：preflight 正在后台跑、任务线程尚未建立。
+        # 供 GUI 的 pump 区分「启动中」与「已结束」，避免把启动中误判成跑完而复位按钮。
+        self._starting = False
+        # 异步启动在 preflight 阶段被请求取消（急停/关窗）。不能复用 stop_event——start() 内会
+        # stop_event.clear()，会把 preflight 阻塞期间外部刚置上的停止信号清掉，导致任务无视急停照样启动。
+        self._async_cancel = False
+
+    def is_starting(self):
+        """是否正处于异步 preflight/启动阶段（任务线程还没起来）。"""
+        return self._starting
 
     def _log(self, msg, level="info"):
         # 日志来源短标签：任务可在运行中动态设 self.current_log_source（如「日常」链
@@ -120,5 +130,49 @@ class TaskRunner:
         self.thread.start()
         return True, []
 
+    def start_async(self, on_done, ui_marshal=None):
+        """异步启动：把【preflight（含 select_windows/locate_all 的 Win32 窗口枚举）】与
+        全局唯一锁检查整体挪到后台线程，避免目标窗口无响应时 EnumWindows 类调用阻塞 Tk 主线程
+        （现象：点「延迟执行」到点不启动、整窗未响应只能杀进程）。
+
+        - on_done(ok, problems)：启动结论回调。ui_marshal 给定时经它投递回主线程执行（安全操作 Tk）；
+          不给则在后台线程直接回调（调用方自行保证线程安全）。
+        - 立即返回，不返回启动结论（结论走回调）。重复点击由调用方置「启动中」状态自行防抖。
+        - 全局锁拒绝也走 on_done（不再依赖 _rejected_hook 的「天然主线程」假设，因为这里在后台线程）。
+        """
+        def _marshal(fn):
+            if ui_marshal is not None:
+                try:
+                    ui_marshal(fn)
+                    return
+                except Exception:
+                    pass
+            fn()
+
+        self._starting = True
+        self._async_cancel = False
+
+        def worker():
+            try:
+                # 启动前已被取消（极快连续点开始又急停）：直接放弃，不进 start()
+                if self._async_cancel:
+                    ok, problems = False, ["启动已被取消"]
+                else:
+                    ok, problems = self.start()
+                    # preflight 阻塞期间用户急停/关窗：即便 start 已成功也立即请求停止，
+                    # 并把结论改成未启动，避免任务无视急停跑起来。
+                    if ok and self._async_cancel:
+                        self.stop_event.set()
+                        ok, problems = False, ["启动过程中已被停止"]
+            except Exception as e:  # preflight 自身抛错也不能让后台线程静默死掉
+                ok, problems = False, [f"启动自检异常：{e}"]
+            finally:
+                self._starting = False
+            _marshal(lambda: on_done(ok, problems))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def stop(self):
+        # 异步 preflight 阶段也标记取消（任务线程起来后 stop_event 照常生效）
+        self._async_cancel = True
         self.stop_event.set()

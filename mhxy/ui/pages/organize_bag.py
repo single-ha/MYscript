@@ -168,6 +168,8 @@ class OrganizeBagPage(ctk.CTkFrame):
 
     # ---- 运行控制 ----
     def _toggle_run(self):
+        if getattr(self, "_starting", False):
+            return
         if self.runner and self.runner.is_running():
             self.runner.stop()
             self._log_line("正在停止整理…", "warn")
@@ -180,22 +182,33 @@ class OrganizeBagPage(ctk.CTkFrame):
         if task_cls is None:
             self._log_line("找不到整理背包任务。", "error")
             return
+        # 异步启动：preflight 的窗口枚举放后台，避免冻住 UI。
         self.runner = TaskRunner(task_cls(), self.app.cfg)
-        ok, problems = self.runner.start()
-        if not ok:
-            for p in problems:
-                self._log_line("无法开始整理：" + p, "error")
-            self.runner = None
-            return
-        self._log_line("开始一键整理背包…", "hit")
-        self.btn_run.configure(text="■  停止整理", fg_color=T.DANGER, hover_color=T.DANGER_HOVER, state="normal")
+        self._starting = True
+        self.btn_run.configure(text="启动中…", state="disabled")
+
+        def on_done(ok, problems):
+            self._starting = False
+            if not ok:
+                for p in problems:
+                    self._log_line("无法开始整理：" + p, "error")
+                self.runner = None
+                self.btn_run.configure(text="▶  一键整理", fg_color=T.ACCENT,
+                                       hover_color=T.ACCENT_HOVER, state="normal")
+                return
+            self._log_line("开始一键整理背包…", "hit")
+            self.btn_run.configure(text="■  停止整理", fg_color=T.DANGER,
+                                   hover_color=T.DANGER_HOVER, state="normal")
+
+        self.runner.start_async(on_done, ui_marshal=self.app.ui_call)
 
     def pump(self):
         """被 App._tick 周期调用：抽干日志队列、检测运行结束。"""
         if self.runner:
             for level, msg, _src in self.runner.drain_logs():
                 self._log_line(msg, level)
-            if not self.runner.is_running() and self.btn_run.cget("text") != "▶  一键整理":
+            if (not self.runner.is_running() and not self.runner.is_starting()
+                    and self.btn_run.cget("text") != "▶  一键整理"):
                 self.btn_run.configure(text="▶  一键整理", fg_color=T.ACCENT,
                                        hover_color=T.ACCENT_HOVER, state="normal")
 

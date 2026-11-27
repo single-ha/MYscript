@@ -518,23 +518,36 @@ class DailyRunCard(ctk.CTkFrame):
     # ------------------------------------------------------------------
     # 一键组队 / 一键解散（与任务配置页组队卡同源，runner 挂在本卡上）
     # ------------------------------------------------------------------
-    def _start_utility(self, task_name, runner_attr, btn, busy_text, log_tag):
-        """通用：启动一个工具型任务（组队=dungeon / 解散=disband）。返回 runner；启动失败返回 None。
+    def _start_utility(self, task_name, runner_attr, btn, busy_text, log_tag, normal_text):
+        """通用：异步启动一个工具型任务（组队=dungeon / 解散=disband）。
+        preflight 的窗口枚举放后台线程，避免冻住 UI；结论经 ui_call 回主线程刷按钮。
         全局唯一运行锁在 TaskRunner.start 内拦截并发（日常链在跑时这里会被拒绝并 toast）。"""
+        starting_attr = "_starting_" + runner_attr
+        if getattr(self, starting_attr, False):
+            return
         task_cls = get_task(task_name)
         if task_cls is None:
             self.app.log_line(f"找不到{log_tag}任务。", "error", log_tag)
-            return None
+            return
         runner = TaskRunner(task_cls(), cfg_mod.load_config())
-        ok, problems = runner.start()
-        if not ok:
-            for p in problems:
-                self.app.log_line(f"无法开始{log_tag}：" + p, "error", log_tag)
-            return None
         setattr(self, runner_attr, runner)
-        btn.configure(text=busy_text, fg_color=T.DANGER, hover_color=T.DANGER_HOVER,
-                      text_color=T.ON_ACCENT, border_width=0, state="normal")
-        return runner
+        setattr(self, starting_attr, True)
+        btn.configure(text="启动中…", state="disabled")
+
+        def on_done(ok, problems):
+            setattr(self, starting_attr, False)
+            if not ok:
+                for p in problems:
+                    self.app.log_line(f"无法开始{log_tag}：" + p, "error", log_tag)
+                setattr(self, runner_attr, None)
+                btn.configure(text=normal_text, fg_color=T.BTN, hover_color=T.BTN_HOVER,
+                              text_color=T.TEXT, border_width=1, border_color=T.BORDER,
+                              state="normal")
+                return
+            btn.configure(text=busy_text, fg_color=T.DANGER, hover_color=T.DANGER_HOVER,
+                          text_color=T.ON_ACCENT, border_width=0, state="normal")
+
+        runner.start_async(on_done, ui_marshal=self.app.ui_call)
 
     def _toggle_team(self):
         # 运行中再点 = 停止（与配置页组队卡一致）
@@ -543,7 +556,7 @@ class DailyRunCard(ctk.CTkFrame):
             self.btn_team.configure(text="停止中…", state="disabled")
             return
         self._start_utility("dungeon", "runner_team", self.btn_team,
-                            "■  停止组队", "组队")
+                            "■  停止组队", "组队", "👥  一键组队")
 
     def _toggle_disband(self):
         if self.runner_disband and self.runner_disband.is_running():
@@ -551,7 +564,7 @@ class DailyRunCard(ctk.CTkFrame):
             self.btn_disband.configure(text="停止中…", state="disabled")
             return
         self._start_utility("disband", "runner_disband", self.btn_disband,
-                            "■  停止解散", "解散")
+                            "■  停止解散", "解散", "✖  一键解散")
 
     def _pump_utility(self, runner, btn, normal_text, log_tag):
         """抽干一个工具 runner 的日志到全局面板，跑完把按钮复位。"""
@@ -559,7 +572,7 @@ class DailyRunCard(ctk.CTkFrame):
             return
         for level, msg, _src in runner.drain_logs():
             self.app.log_line(msg, level, log_tag)
-        if not runner.is_running() and btn.cget("text") != normal_text:
+        if not runner.is_running() and not runner.is_starting() and btn.cget("text") != normal_text:
             btn.configure(text=normal_text, fg_color=T.BTN, hover_color=T.BTN_HOVER,
                           text_color=T.TEXT, border_width=1, border_color=T.BORDER, state="normal")
 
