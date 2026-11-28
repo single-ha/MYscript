@@ -36,6 +36,9 @@ class TaskContext:
         self.hotkeys = cfg.get("hotkeys", {})   # 键名映射，任务用 ctx.send_hotkey(动作名) 发
         self.label = label                      # 多开时标识「号1/号2…」，单开为 None
         self._log_fn = log_fn or (lambda msg, level="info": None)
+        # 把日志出口接给底层 vision：匹配失败留证（_save_match_diagnostic）在无 ctx 的底层触发，
+        # 经此钩子也能进 GUI 日志面板，而不是只 print 到控制台。
+        vision.set_diag_logger(self._log_fn)
         self.stop_event = stop_event or threading.Event()
         self._last_bag_check = 0.0              # 「自动整理背包」节流：上次检测背包满的时刻（每号独立）
 

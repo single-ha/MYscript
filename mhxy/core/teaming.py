@@ -24,8 +24,10 @@
 core 不依赖 tasks 层，故 _jitter/_sleep 在类内自带一份等价实现。
 """
 
+import re
 import time
 import random
+import datetime
 
 import cv2
 
@@ -33,7 +35,7 @@ from . import vision
 from . import window as win_mod
 from . import rotation
 from . import scan
-from .config import CAPTURES_DEBUG_DIR
+from .config import CAPTURES_DIR
 from .input import TEAM_CLICK_DELAY
 
 
@@ -704,6 +706,18 @@ class TeamFormation:
         cx, cy, score = m
         return (rx + x0 + cx, ry + y0 + cy, score)
 
+    @staticmethod
+    def _diag_stem(ctx, tag):
+        """生成物理上不撞名的留证文件名主干（不含扩展名/目录）。
+
+        带「窗口标签 + 毫秒时间戳」：多号同秒失败时窗口标签区分各号，同号同毫秒再靠毫秒位区分，
+        杜绝旧的秒级 %H%M%S 命名在多开轮转时互相覆盖。
+        label 做文件名安全清洗（中文保留，仅剔 Windows 非法字符与空白），拿不到标签时用 win 兜底。"""
+        label = getattr(ctx, "label", None) or f"win{id(ctx)}"
+        safe_label = re.sub(r'[\\/:*?"<>|\s]+', "_", str(label)).strip("_") or f"win{id(ctx)}"
+        ts = datetime.datetime.now().strftime("%H%M%S_%f")[:-3]
+        return f"diag_{tag}_{safe_label}_{ts}"
+
     def _dump_arrow_miss(self, ctx, rect, scene, band, best, best_xy, min_interval=5.0):
         """箭头模板在队长卡片带里没匹配到时的诊断留证（每窗口 min_interval 秒最多一次）。
         band=(x0,y0,x1,y1) 为相对 friend_list 截图的裁剪带；best 为带内不卡阈值的最高分。"""
@@ -713,9 +727,9 @@ class TeamFormation:
             return
         self._arrow_diag_ts[label] = now
         x0, y0, x1, y1 = band
-        ts = time.strftime("%H%M%S")
-        crop_raw = str(CAPTURES_DEBUG_DIR / f"diag_arrow_miss_band_{ts}.png")
-        full_raw = str(CAPTURES_DEBUG_DIR / f"diag_arrow_miss_list_{ts}.png")
+        stem = self._diag_stem(ctx, "arrow_miss")
+        crop_raw = str(CAPTURES_DIR / f"{stem}_band.png")
+        full_raw = str(CAPTURES_DIR / f"{stem}_list.png")
         try:
             annotated = scene.copy()
             cv2.rectangle(annotated, (x0, y0), (x1 - 1, y1 - 1), (0, 0, 255), 1)
@@ -753,9 +767,9 @@ class TeamFormation:
             return
         leader_tpl = self.tpl.get("leader_id")
         th, tw = (leader_tpl.shape[:2] if leader_tpl is not None else (16, 68))
-        ts = time.strftime("%H%M%S")
-        raw = str(CAPTURES_DEBUG_DIR / f"diag_leader_miss_{ts}.png")
-        raw_frame = str(CAPTURES_DEBUG_DIR / f"diag_leader_miss_raw_{ts}.png")
+        stem = self._diag_stem(ctx, "leader_miss")
+        raw = str(CAPTURES_DIR / f"{stem}.png")
+        raw_frame = str(CAPTURES_DIR / f"{stem}_raw.png")
         try:
             annotated = scene.copy()
             bx, by = bxy
@@ -794,8 +808,7 @@ class TeamFormation:
             return
         tpl = self.tpl.get(tpl_key)
         score = vision.best_score(scene, tpl)[0] if tpl is not None else 0.0
-        ts = time.strftime("%H%M%S")
-        raw = str(CAPTURES_DEBUG_DIR / f"diag_{tag}_{ts}.png")
+        raw = str(CAPTURES_DIR / f"{self._diag_stem(ctx, tag)}.png")
         if not vision.save_image(raw, scene):
             return
         path = vision.dated_path(raw)

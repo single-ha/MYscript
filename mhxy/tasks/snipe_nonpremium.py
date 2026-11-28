@@ -19,7 +19,7 @@ import time
 
 from ..core import vision
 from ..core import ocr as ocr_mod
-from ..core.config import BUY_BUTTON_TPL_KEY, CAPTURES_DEBUG_DIR
+from ..core.config import BUY_BUTTON_TPL_KEY, CAPTURES_DIR
 from .base import Task, register
 
 
@@ -198,9 +198,9 @@ class SnipeNonpremiumTask(Task):
                 self._interruptible_sleep(ctx, self._jitter(cooldown, ctx))
         ctx.log(f"已停止。共刷新 {rounds} 轮，成功计数 {bought}/{target_count}。")
 
-    # ---- 读价诊断图落盘目录（captures_debug 下单独子目录）----
+    # ---- 读价诊断图落盘目录（captures 下单独子目录；业务留证、不受调试开关控制）----
     def _diag_dir(self, ctx):
-        return str(CAPTURES_DEBUG_DIR / "抢非珍品读价诊断")
+        return str(CAPTURES_DIR / "抢非珍品读价诊断")
 
     # ---- 单窗口上下文：只盯「选择窗口」里选的队长号，不做多开轮转 ----
     def _captain_index(self, ctx, n_wins):

@@ -512,7 +512,7 @@ class GuagualeTask(Task):
         if cur is None or tpl is None or scene_rect is None:
             return None
         m = vision.match(cur, tpl, threshold, template_name=flag_key, task_name=self.name,
-                         window_rect=scene_rect)
+                         window_rect=scene_rect, diagnose_on_miss=True)
         if m is None:
             return None
         return (scene_rect[0] + m[0], scene_rect[1] + m[1], m[2])

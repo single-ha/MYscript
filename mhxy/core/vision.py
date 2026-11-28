@@ -136,12 +136,33 @@ def save_image(path, img):
 _DIAG_THROTTLE_SEC = 8.0
 _diag_last_ts = {}
 
+# 留证日志出口钩子：底层 vision 不依赖 GUI/ctx，由 TaskContext 初始化时注入 set_diag_logger；
+# 未注入（如独立工具脚本）时回退 print，保证消息不丢。
+_diag_logger = None
+
+
+def set_diag_logger(fn):
+    """注入留证日志回调 fn(msg, level)。传 None 恢复成 print 兜底。"""
+    global _diag_logger
+    _diag_logger = fn
+
+
+def _diag_log(msg, level="warn"):
+    if _diag_logger is not None:
+        try:
+            _diag_logger(msg, level)
+            return
+        except Exception:
+            pass
+    print(msg)
+
 
 def _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, window_rect, max_val):
     """匹配失败时保存诊断截图到 captures/，并打印日志。
     不受 debug_log 控制，仅关键路径（diagnose_on_miss=True）且未命中时触发。
 
-    同一（任务, 模板）在 _DIAG_THROTTLE_SEC 秒内最多留证一张，避免轮询循环里每帧拿一张淋水账。"""
+    同一（任务, 模板）在 _DIAG_THROTTLE_SEC 秒内最多留证一张，避免轮询循环里每帧拿一张淋水账。
+    文件名带毫秒时间戳，物理上不会与既有文件互相覆盖。"""
     if scene_bgr is None:
         return
     _now = time.time()
@@ -174,9 +195,10 @@ def _save_match_diagnostic(scene_bgr, template_name, task_name, threshold, windo
             meta_path = fpath.replace(".png", ".json")
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
-            print(f"[诊断] 匹配失败已留证：{fpath}  (模板={template_name}, 任务={task_name}, 阈值={threshold:.2f}, 最高分={max_val:.3f})")
+            _diag_log(f"[诊断] 匹配失败已留证：{fpath}  (模板={template_name}, 任务={task_name}, "
+                      f"阈值={threshold:.2f}, 最高分={max_val:.3f})", level="warn")
     except Exception as e:
-        print(f"[诊断] 保存匹配失败截图异常：{e}")
+        _diag_log(f"[诊断] 保存匹配失败截图异常：{e}", level="warn")
 
 
 def match(scene_bgr, template_bgr, threshold, template_name="", task_name="", window_rect=None,
