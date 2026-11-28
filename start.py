@@ -60,22 +60,35 @@ def _elevate(executable):
 def _deps_present():
     """廉价探测依赖是否齐全：只用 find_spec 定位模块，**不执行/不加载**它们
     （cv2/numpy/customtkinter 的真正开销在 import 时加载原生 DLL，这里完全避开）。
-    全部能定位才返回 True。"""
-    try:
-        for m in _DEP_MODULES:
+    全部能定位才返回 True；把缺失项记到 _missing_deps 供启动时打印，便于定位是哪个包没装上。"""
+    missing = []
+    for m in _DEP_MODULES:
+        try:
             if importlib.util.find_spec(m) is None:
-                return False
-        return True
-    except (ImportError, ValueError):
-        return False
+                missing.append(m)
+        except (ImportError, ValueError):
+            missing.append(m)
+    _deps_present.missing = missing
+    return not missing
+
+
+_deps_present.missing = []
 
 
 def ensure_deps():
     """依赖缺失时联网安装。注意：探测用 _deps_present()（廉价），这里只负责装。"""
-    print("首次运行，正在安装依赖，请稍候（只需这一次）……\n")
+    missing = ", ".join(_deps_present.missing) or "（未知）"
+    print(f"检测到缺少依赖模块：{missing}")
+    print("正在安装依赖，请稍候（只需这一次）……\n")
     ret = subprocess.call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
     if ret != 0:
         print("\n依赖安装失败：请确认已联网、Python 安装正常。")
+        return False
+    # 安装后复查：仍缺就明确点出是哪个，避免下次启动无声地再次整轮重装。
+    if not _deps_present():
+        still = ", ".join(_deps_present.missing)
+        print(f"\n⚠ pip 已执行，但仍探测不到：{still}。")
+        print("  常见原因：该包未写进 requirements.txt、或装到了另一个 Python 环境。")
         return False
     return True
 

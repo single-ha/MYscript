@@ -10,6 +10,9 @@ mss
 # 注意：rapidocr 声明依赖 opencv-python-headless，与上面的 opencv-python 共用 cv2 目录；
 # 本项目不用 cv2 的 GUI 功能，两者互相覆盖不影响识别。
 rapidocr>=3.10.0
+# rapidocr 3.x 的 ONNX 推理后端运行时必需（其 inference_engine/onnxruntime 直接 import 它），
+# 但该包元数据漏声明、不会随 rapidocr 自动装；不显式列出会导致全新环境每次启动都误判缺依赖而反复 pip install。
+onnxruntime
 
 # 输入模拟（sendinput 为主，下面两个为备用后端 / 失败回退）
 pyautogui
