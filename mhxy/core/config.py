@@ -427,12 +427,12 @@ DEFAULT_CONFIG = {
     "appearance": "dark",                # 界面外观：dark(夜间) / light(白天)，侧栏可切换
     "debug_log": False,                  # 调试日志开关：开启后 level="debug" 的日志才进全局面板（设置页可勾）
     "record_screen": False,              # 录屏开关（类似调试日志，设置页可勾）：开启后每个任务自动录整个虚拟屏，
-                                         #   每次「运行」（任务单跑 / 日常任务链）归一个 run_时间戳 文件夹、每任务一个视频，
-                                         #   只保留最近 record_keep_runs 次运行（见 core/recorder）。关时零线程零抓帧。
+                                         #   每次「运行」（任务单跑 / 日常任务链）归一个 run_时间戳 文件夹、每任务一个视频。
+                                         #   旧录屏随统一保留策略按 data_keep_days 天清理（见 core/retention）。关时零线程零抓帧。
     "record_fps": 5,                     # 录屏帧率：屏幕录像对帧率不敏感，5fps 已够排查流程且文件小（user 2026-11-19 拍板）
-    "record_keep_runs": 3,               # 录屏自动清理：recordings/ 下只保留最近这么多次「运行」的文件夹，更早的整轮删除
     "log_to_file": True,                 # 日志同步落盘：每条日志写入 logs/日志-YYYYMMDD_HHMMSS.log（每次启动一个）并 flush，崩溃/强杀不丢
-    "log_keep_files": 20,                # 自动清理：logs/ 里只保留最近 N 个日志文件（按启动时间），0/负数=不清理（设置页可调）
+    "data_keep_days": 3,                 # 数据保留天数：日志/留证截图(captures、captures_debug)/录屏 只保留最近 N 天（按修改时间，启动时后台清理），
+                                         #   0/负数=不自动清理。旧的 log_keep_files / record_keep_runs 数量规则已废弃、不再生效。
     "grab_auto_activate": True,          # 任务识别抓图前若窗口不在前台先激活再抓（用户拍板 2026-09-26）：
                                          #   mss 抓屏是屏幕真实像素，窗口被盖时认错；多开轮询会频繁切前台，
                                          #   嫌闪可设 false 回到「只抓不激活」。见 core/window.set_grab_auto_activate

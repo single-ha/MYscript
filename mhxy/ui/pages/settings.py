@@ -125,7 +125,7 @@ class SettingsPage(ctk.CTkFrame):
         self.var_record = ctk.BooleanVar(value=bool(cfg.get("record_screen", False)))
         self.var_record_fps = ctk.StringVar(value=str(cfg.get("record_fps", 5)))
         self.var_logfile = ctk.BooleanVar(value=bool(cfg.get("log_to_file", True)))
-        self.var_keepfiles = ctk.StringVar(value=str(cfg.get("log_keep_files", 20)))
+        self.var_keepdays = ctk.StringVar(value=str(cfg.get("data_keep_days", 3)))
 
         ctk.CTkLabel(card, text="基础", font=self.fonts["h2"], text_color=T.TEXT).grid(
             row=0, column=0, columnspan=2, sticky="w", padx=16, pady=(14, 4))
@@ -169,11 +169,11 @@ class SettingsPage(ctk.CTkFrame):
         self._row(card, 8, "日志写入文件", self.var_logfile_sw)
         self._sync_logfile_text()
         keep_box = ctk.CTkFrame(card, fg_color="transparent")
-        ctk.CTkEntry(keep_box, textvariable=self.var_keepfiles, font=self.fonts["body"],
+        ctk.CTkEntry(keep_box, textvariable=self.var_keepdays, font=self.fonts["body"],
                      fg_color=T.SURFACE_2, border_color=T.BORDER, width=72).pack(side="left")
-        ctk.CTkLabel(keep_box, text="个（0=不清理）", font=self.fonts["small"],
+        ctk.CTkLabel(keep_box, text="天（0=不自动清理；日志/截图/录屏统一按天删）", font=self.fonts["small"],
                      text_color=T.TEXT_DIM).pack(side="left", padx=(6, 0))
-        self._row(card, 9, "日志保留份数", keep_box)
+        self._row(card, 9, "数据保留天数", keep_box)
 
         # 配置迁移：导出 / 导入（zip 打包 config.json + templates/，换机/换号搬标定）——用户拍板 2026-09-20。
         box = ctk.CTkFrame(card, fg_color="transparent")
@@ -592,19 +592,21 @@ class SettingsPage(ctk.CTkFrame):
             cfg["record_fps"] = 5
         cfg["log_to_file"] = bool(self.var_logfile.get())
         try:
-            keep = int(str(self.var_keepfiles.get()).strip() or "0")
+            keep_days = int(str(self.var_keepdays.get()).strip() or "0")
         except (TypeError, ValueError):
-            keep = 20
-        cfg["log_keep_files"] = max(0, keep)
+            keep_days = 3
+        cfg["data_keep_days"] = max(0, keep_days)
 
-        # 日志写盘开关/保留份数改了立刻生效：关=停写、开=下次 log_line 续写本次会话文件；
-        # 保留数改小后马上清理一次旧日志（best-effort）。
-        try:
-            from ..core.config import LOGS_DIR
-            from ..app import prune_log_files
-            prune_log_files(LOGS_DIR, cfg["log_keep_files"])
-        except Exception:
-            pass
+        # 保留天数改小后立刻按新规则全量清理一次（日志/截图/调试图/录屏，best-effort，后台线程不卡界面）。
+        if cfg["data_keep_days"] > 0:
+            from ...core import retention
+
+            def _prune():
+                try:
+                    retention.prune_all(cfg["data_keep_days"])
+                except Exception:
+                    pass
+            threading.Thread(target=_prune, daemon=True).start()
 
         hz = cfg.setdefault("humanize", {})
         tc = cfg_mod.task_config(cfg, _SNIPER_TASK)
@@ -641,7 +643,7 @@ class SettingsPage(ctk.CTkFrame):
         self.var_record_fps.set(str(self.app.cfg.get("record_fps", 5)))
         self._sync_record_text()
         self.var_logfile.set(bool(self.app.cfg.get("log_to_file", True)))
-        self.var_keepfiles.set(str(self.app.cfg.get("log_keep_files", 20)))
+        self.var_keepdays.set(str(self.app.cfg.get("data_keep_days", 3)))
         self._sync_logfile_text()
         thr = self._get_threshold()
         self.var_threshold.set(thr)

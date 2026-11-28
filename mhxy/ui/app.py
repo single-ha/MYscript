@@ -16,6 +16,7 @@ import customtkinter as ctk
 from . import theme as T
 from ..core import config as cfg_mod
 from ..core.config import LOGS_DIR
+from ..core import retention
 from ..core import window as win_mod
 from ..core.runner import TaskRunner, set_run_rejected_hook
 from ..core.input import get_cursor
@@ -28,7 +29,7 @@ from .pages import (StartPage, DailyPage, WeeklyPage, ConfigPage, ToolsPage,
 # 日志级别 -> 中文简称（筛选开关上显示；与 theme.LEVEL_COLOR 的键一致）
 LOG_LEVEL_LABELS = {"info": "信息", "hit": "命中", "warn": "警告", "error": "错误"}
 
-# 本次会话日志文件名的前缀/模式（prune_log_files 只清理匹配它的文件，不碰别的）
+# 本次会话日志文件名的前缀（日志-YYYYMMDD_HHMMSS.log）
 LOG_FILE_PREFIX = "日志-"
 _LOG_LEVEL_TAG = {"info": "INFO", "hit": "HIT", "warn": "WARN", "error": "ERROR", "debug": "DEBUG"}
 
@@ -39,36 +40,6 @@ def format_log_line(now, source, level, msg):
     level_tag = _LOG_LEVEL_TAG.get(level, str(level).upper())
     src = f" [{source}]" if source else ""
     return f"{now.strftime('%Y-%m-%d %H:%M:%S')} [{level_tag}]{src} {msg}"
-
-
-def prune_log_files(logs_dir, keep):
-    """自动清理旧日志：logs_dir 下（含 YYYY-MM-DD 子目录）只保留最新 keep 个 `日志-*.log`。
-    keep<=0=不清理。删掉旧日志后若日期目录空了，一并清理空目录。"""
-    if not keep or keep <= 0:
-        return
-    try:
-        if not logs_dir.exists():
-            return
-        files = [p for p in logs_dir.rglob("*")
-                 if p.is_file() and p.name.startswith(LOG_FILE_PREFIX)]
-        if len(files) <= keep:
-            return
-        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        for old in files[keep:]:
-            try:
-                old.unlink()
-            except OSError:
-                pass
-        # 顺手清空空的 YYYY-MM-DD 子目录（深的先删，避免父目录非空删不掉）
-        for d in sorted((p for p in logs_dir.rglob("*") if p.is_dir()),
-                        key=lambda p: len(p.parts), reverse=True):
-            try:
-                if not any(d.iterdir()):
-                    d.rmdir()
-            except OSError:
-                pass
-    except OSError:
-        pass
 
 
 # ----------------------------------------------------------------------
@@ -280,6 +251,8 @@ class App(ctk.CTk):
         self._log_writer_thread = threading.Thread(
             target=self._log_writer_loop, name="log-writer", daemon=True)
         self._log_writer_thread.start()
+        # 启动后后台清理一次过期数据（日志/截图/调试图/录屏，按 data_keep_days 天），不阻塞界面。
+        self._startup_prune()
 
         panel = ctk.CTkFrame(self, fg_color=T.SIDEBAR, corner_radius=0, width=340)
         panel.grid(row=0, column=2, sticky="nsew")
@@ -447,7 +420,7 @@ class App(ctk.CTk):
     def _ensure_log_file(self):
         """按需打开本次会话的日志文件（UTF-8 追加）。仅由后台 log-writer 线程调用。
         log_to_file 关着返回 None（不建文件不写）；打开失败抛异常由消费循环统一禁用+提示。
-        首次打开顺带自动清理旧日志。"""
+        首次打开顺带按保留天数清理过期日志（统一规则见 core.retention，全量清理在启动时另跑一次）。"""
         if self._log_fh is not None:
             return self._log_fh
         if not bool(getattr(self, "cfg", {}).get("log_to_file", True)):
@@ -462,14 +435,36 @@ class App(ctk.CTk):
         fh.write("===== 本次运行开始 %s =====\n" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         fh.flush()
         self._log_fh = fh
-        # 自动清理旧日志：保留最近 N 份（含本次新文件）；keep<=0/非数=不清理（best-effort）。
-        # rglob 扫描放在后台线程，不再卡主线程。
+        # 按保留天数清理过期日志（best-effort，后台线程内执行不卡 UI）。
         try:
-            keep = getattr(self, "cfg", {}).get("log_keep_files", 20)
-            prune_log_files(LOGS_DIR, int(keep) if keep else 0)
+            retention.prune_files_older_than(LOGS_DIR, self._keep_days())
         except Exception:
             pass
         return fh
+
+    def _keep_days(self):
+        """统一数据保留天数（data_keep_days，默认 3）；非数/<=0 表示关闭自动清理。"""
+        try:
+            return int(getattr(self, "cfg", {}).get("data_keep_days", 3))
+        except (TypeError, ValueError):
+            return 3
+
+    def _startup_prune(self):
+        """启动后在后台守护线程跑一次全量按天清理（日志/截图/调试图/录屏），绝不阻塞 Tk 事件循环。
+        任何异常都吞掉——清理是辅助功能，不能影响启动。"""
+        def _work():
+            try:
+                days = self._keep_days()
+                if days <= 0:
+                    return
+                stats = retention.prune_all(days)
+                deleted = sum(v for v in stats.values() if isinstance(v, int))
+                if deleted:
+                    detail = "、".join(f"{k} {v}" for k, v in stats.items() if v)
+                    self.log_line(f"已按保留 {days} 天清理过期数据（{detail}）。", "info")
+            except Exception:
+                pass
+        threading.Thread(target=_work, name="startup-prune", daemon=True).start()
 
     def _disable_log_file(self):
         """写盘出问题：关句柄、停写（后续 log_line 只入队后被消费循环丢弃/不再入队）。"""

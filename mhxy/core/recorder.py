@@ -9,14 +9,14 @@
     同一次运行里的各子任务视频都落在 recordings/run_YYYYMMDD_HHMMSS/ 下，**每个任务一个视频**。
   · 多窗口做同一子任务（日常每窗口独立链）只录一个文件：注册表按任务名引用计数去重，
     谁先 acquire 谁建录制器，最后一个 release 才停录落盘。
-  · 自动清理：recordings/ 只保留最近 record_keep_runs（默认 3）次运行的文件夹，更早的整轮删除。
+  · 自动清理：recordings/ 下的 run_* 文件夹按「修改时间」统一保留最近 data_keep_days 天（默认 3 天，
+    见 core/retention，与日志/截图同一规则），更早的整轮删除；非 run_ 目录不碰。
   · 全程容错：录屏任何异常都只记日志、绝不冒泡影响任务；开关关闭时零线程、零抓帧、零 VideoWriter。
 
 内存：边抓边写、不囤帧，任意时刻常驻仅一帧（1080p BGR≈6MB）+ 编码器缓冲，与录制时长无关。
 """
 
 import time
-import shutil
 import threading
 import datetime
 
@@ -25,6 +25,7 @@ import cv2
 import mss
 
 from .config import RECORDINGS_DIR
+from .retention import prune_recordings_older_than
 
 _RUN_PREFIX = "run_"
 _VIDEO_EXTS = (".mp4", ".avi")
@@ -275,18 +276,13 @@ class RecorderRegistry:
         return None
 
     def _prune_locked(self):
-        """只保留最近 record_keep_runs 个 run_* 文件夹（按修改时间），更早的整轮删除。keep<=0 不清理。"""
+        """按保留天数清理过期 run_* 文件夹（整个 run 同生共死）；data_keep_days<=0 不清理。
+        实际删除逻辑在 core.retention，本方法只在录屏运行结束时按当前配置触发一次。"""
         try:
-            keep = int((self._cfg or {}).get("record_keep_runs", 3))
+            keep_days = int((self._cfg or {}).get("data_keep_days", 3))
         except (TypeError, ValueError):
-            keep = 3
-        if keep <= 0 or not RECORDINGS_DIR.exists():
-            return
-        runs = sorted((p for p in RECORDINGS_DIR.iterdir()
-                       if p.is_dir() and p.name.startswith(_RUN_PREFIX)),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
-        for old in runs[keep:]:
-            shutil.rmtree(old, ignore_errors=True)
+            keep_days = 3
+        prune_recordings_older_than(RECORDINGS_DIR, keep_days)
 
 
 # 进程级单例
